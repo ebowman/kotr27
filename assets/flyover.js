@@ -69,6 +69,14 @@
       focus = null;
       angle = 0;
     }
+    const rate = () => total / 90 * Number(el('speed').value);
+    // Sample the same camera rail as playback, lazily (not every frame).
+    function upcoming() {
+      if (!playing || document.hidden) return;
+      const velocity = rate(), distance = Math.min(total, d + 2.5 * velocity);
+      if (distance - d < 180) return;
+      return {focus:rail(distance), distance, turn:.08 * (distance-d)/velocity};
+    }
     function render(seconds = 0) {
       const point = sample(d);
       const {x,y} = point;
@@ -109,12 +117,12 @@
     }
     function tick(now) {
       if (!playing) return;
-      const rate = total / 90 * Number(el('speed').value);
+      const velocity = rate();
       const gap = last === null ? 0 : (now-last)/1000;
       // A stalled foreground frame is not distance owed. Discard its backlog
       // for all consumers, including the orbit, and rebase on this timestamp.
-      const seconds = Math.min(gap > .15 ? 1/60 : gap, (total - d) / rate);
-      d = Math.min(total, d + seconds * rate);
+      const seconds = Math.min(gap > .15 ? 1/60 : gap, (total - d) / velocity);
+      d = Math.min(total, d + seconds * velocity);
       last = now;
       if (d === total) pause();
       render(seconds);
@@ -149,9 +157,12 @@
     });
     render();
     el('deck').hidden = false;
-    window.startTerrain?.(points, draw => { terrain = draw; render(); });
+    window.startTerrain?.(points, draw => { terrain = draw; render(); }, upcoming);
   }
   load().then(start).catch(() => {
     el('message').textContent += ' Playback is unavailable; the full route is shown above.';
   });
+  // Start the optional SDK alongside GPX, not before this deferred local
+  // player (a slow satellite stylesheet must not hold up the controls).
+  window.prepareTerrain?.();
 })();

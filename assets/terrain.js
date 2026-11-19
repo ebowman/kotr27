@@ -1,6 +1,25 @@
 // Enhance the already usable local preview. The controller owns playback time;
 // even a late load or mid-ride WebGL failure never starts a second clock.
-window.startTerrain = function (points, connect) {
+const savingTerrainData = () => navigator.connection?.saveData === true;
+const terrainSDK = (() => {
+  const sdk = 'https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl';
+  function resource(isScript) {
+    return new Promise((resolve, reject) => {
+      const tag = document.createElement(isScript ? 'script' : 'link');
+      tag.onload = resolve;
+      tag.onerror = reject;
+      if (isScript) tag.src = sdk + '.js';
+      else { tag.rel = 'stylesheet'; tag.href = sdk + '.css'; }
+      document.head.append(tag);
+    });
+  }
+  let ready;
+  return () => ready ??= Promise.all([resource(false), resource(true)]).then(() => true, () => false);
+})();
+window.prepareTerrain = () => {
+  if (window.KOTR_CONFIG && !savingTerrainData()) terrainSDK();
+};
+window.startTerrain = function (points, connect, upcoming) {
   const container = document.getElementById('map');
   const message = document.getElementById('message');
   let map, stopped = false;
@@ -13,19 +32,9 @@ window.startTerrain = function (points, connect) {
     message.textContent = 'Satellite terrain unavailable · Showing shaded relief.';
     map?.remove();
   }
-  const sdk = 'https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl';
-  function resource(isScript) {
-    return new Promise((resolve, reject) => {
-      const tag = document.createElement(isScript ? 'script' : 'link');
-      tag.onload = resolve;
-      tag.onerror = reject;
-      if (isScript) tag.src = sdk + '.js';
-      else { tag.rel = 'stylesheet'; tag.href = sdk + '.css'; }
-      document.head.append(tag);
-    });
-  }
   if (!window.KOTR_CONFIG) { fallback(); return; }
-  Promise.all([resource(false), resource(true)]).then(() => {
+  terrainSDK().then(ready => {
+    if (!ready) { fallback(); return; }
     if (stopped) return;
     const gl = window.mapboxgl;
     map = new gl.Map({
@@ -58,6 +67,25 @@ window.startTerrain = function (points, connect) {
           clearTimeout(timer);
           container.parentElement.classList.add('terrain');
           message.textContent = 'Satellite terrain · The orange line traces the ascent.';
+          let nextCheck = 0, lastDistance = -Infinity, disabled = false;
+          map.on('render', () => {
+            const now = performance.now();
+            if (stopped || disabled || inOverview || now < nextCheck || savingTerrainData()) return;
+            nextCheck = now + 200;
+            // After the visible render has selected/requested its tiles, never
+            // issue another viewport while visible sources are still loading.
+            if (!map.areTilesLoaded()) return;
+            const view = upcoming();
+            if (!view || Math.abs(view.distance-lastDistance) < 180) return;
+            nextCheck = now + 1500;
+            lastDistance = view.distance;
+            try {
+              // v2.15 jumpTo clones the live transform for preloadOnly.
+              // Inherit the actual cinematic zoom/pitch (including terrain).
+              map.jumpTo({preloadOnly:true, center:[view.focus.lon, view.focus.lat],
+                bearing:map.getBearing() - view.turn*180/Math.PI});
+            } catch { disabled = true; } // A failed hint must not stop the ride.
+          });
           connect((point, following, focus, angle, seconds, snap) => {
             if (stopped) return;
             try {

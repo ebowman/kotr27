@@ -14,11 +14,14 @@ test('phone-sized cinematic orbit, controls and asset fallbacks', {timeout: 6000
     'assets/semonzo.gpx':'application/xml','assets/ascent.svg':'image/svg+xml',
     'assets/grappa-relief.webp':'image/webp'};
   const omit = new Set(), served = new Set();
+  const sdkStarted = Promise.withResolvers();
   const server = createServer(async (req, res) => {
     const file = req.url.replace(/^\/kotr27\//, '') || 'index.html';
     if (!Object.hasOwn(files, file) || omit.has(file)) {
       res.writeHead(404).end(); return;
     }
+    // The pinned SDK must start without waiting for GPX parsing.
+    if (file === 'assets/semonzo.gpx') await sdkStarted.promise;
     // Never serve or inspect the provisioned config in a browser test.
     const data = file === 'js/config.js' ? 'window.KOTR_CONFIG = {};' :
       await readFile(new URL(`../${file}`, import.meta.url));
@@ -38,7 +41,10 @@ test('phone-sized cinematic orbit, controls and asset fallbacks', {timeout: 6000
       addLayer(layer) { this.layer = layer; }
       addSource(id, source) { this[id] = source; }
       setTerrain(value) { this.terrain = value; }
-      jumpTo() {}
+      hints = [];
+      jumpTo(options) { if (options.preloadOnly) this.hints.push(options); }
+      getBearing() { return 0; }
+      areTilesLoaded() { return this.ready; }
       fitBounds() { this.camera = null; }
       queryTerrainElevation() { return 2000; }
       getFreeCameraOptions() { return {lookAtPoint(target){this.target = target;}}; }
@@ -51,6 +57,7 @@ test('phone-sized cinematic orbit, controls and asset fallbacks', {timeout: 6000
   };`;
   const {cmd, js, exceptions} = await browser(t, (m, send) => {
     if (m.method === 'Fetch.requestPaused') {
+      sdkStarted.resolve();
       const script = m.params.request.url.endsWith('.js');
       send('Fetch.fulfillRequest',{requestId:m.params.requestId, responseCode:200,
         responseHeaders:[{name:'Content-Type',value:script?'text/javascript':'text/css'}],
@@ -71,6 +78,16 @@ test('phone-sized cinematic orbit, controls and asset fallbacks', {timeout: 6000
   const overview = await box();
   assert.equal(await js(`mode.textContent`),'Route overview');
   assert.match(await js(`stats.textContent`),/18\.\d km remaining/);
+  // Drive render notifications separately from playback. Pending visible
+  // tiles and data saver must both suppress hints even while playing.
+  await js(`speed.value='4'; play.click(); demo.events.render()`);
+  assert.equal(await js('demo.hints.length'),0);
+  await js(`demo.ready=true; Object.defineProperty(navigator.connection,'saveData',{value:true,configurable:true})`);
+  await sleep(220);
+  assert.equal(await js('demo.events.render(); demo.hints.length'),0);
+  assert.equal(await js(`delete navigator.connection.saveData; demo.events.render();
+    for(let i=0;i<100;i++) demo.events.render(); demo.hints.length`),1);
+  await js('reset.click()');
   // Drive the real playback callback with known foreground timestamps. Starting
   // at 2.45 km crosses the tight switchback at 2.536 km at either speed.
   async function orbit(speedValue, hz, start = 2450) {
