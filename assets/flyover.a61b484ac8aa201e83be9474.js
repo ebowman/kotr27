@@ -46,25 +46,74 @@
       const lerp = k => p[k] + f * (q[k] - p[k]);
       return { x:lerp('x'), y:lerp('y'), lon:lerp('lon'), lat:lerp('lat'), height:lerp('height') };
     }
-    let terrain, focus, angle = 0;
+    // A uniform cubic B-spline through distance-spaced control samples. Its
+    // centered support sees both sides of a switchback; position, velocity
+    // and acceleration stay continuous without a speed-dependent time lag.
+    const spans = Math.max(1, Math.ceil(total / 400)), step = total / spans;
+    const controls = Array.from({length:spans+1}, (_, i) => sample(i*step));
+    const keys = Object.keys(controls[0]);
+    function rail(distance) {
+      if (distance === 0 || distance === total) return sample(distance);
+      const i = Math.min(spans-1, Math.floor(distance/step)), u = distance/step-i;
+      const a = controls[i-1], b = controls[i], c = controls[i+1], e = controls[i+2];
+      const w0 = (1-u)**3/6, w3 = u**3/6;
+      const w1 = (4-6*u*u+3*u**3)/6, w2 = 1-w0-w1-w3;
+      const result = {};
+      // Linear ghost samples keep the endpoints exactly on the route.
+      for (const k of keys) result[k] = w0*(a?.[k] ?? 2*b[k]-c[k]) + w1*b[k]
+        + w2*c[k] + w3*(e?.[k] ?? 2*c[k]-b[k]);
+      return result;
+    }
+    let terrain, focus, offset, anchor, angle = 0;
+    const reliefHeight = 260 * 455 / 610;
+    // Both cameras aim at the viewport center. During a handoff pan the
+    // entire relief view (never the beacon alone) to match the perspective
+    // camera's framing of the current route point.
+    let panX = 0, panY = 0, startX, startY;
+    function frameRelief() {
+      scene.setAttribute('viewBox', following ?
+        `${focus.x-130-panX} ${focus.y-reliefHeight/2-panY} 260 ${reliefHeight}` : overview.join(' '));
+    }
+    function alignRelief(point, screen, blend) {
+      if (!blend) { startX = panX; startY = panY; }
+      const target = screen.matrixTransform(scene.getScreenCTM().inverse());
+      panX = startX + (panX + target.x-point.x-startX)*blend;
+      panY = startY + (panY + target.y-point.y-startY)*blend;
+      frameRelief();
+    }
     function resetCamera() {
       focus = null;
+      panX = panY = 0;
       angle = 0;
+    }
+    const rate = () => total / 90 * Number(el('speed').value);
+    // Sample the same camera rail as playback, lazily (not every frame).
+    function upcoming() {
+      if (!playing || document.hidden) return;
+      const velocity = rate(), distance = Math.min(total, d + 2.5 * velocity);
+      if (distance - d < 180) return;
+      return {focus:rail(distance), distance, turn:.08 * (distance-d)/velocity};
     }
     function render(seconds = 0) {
       const point = sample(d);
       const {x,y} = point;
-      if (!focus) focus = {...point};
-      else if (seconds > 0) {
-        // Smooth only the framing, never the rider, profile or distance.
-        const alpha = -Math.expm1(-seconds / .32);
-        for (const key of Object.keys(focus)) focus[key] += alpha * (point[key] - focus[key]);
+      const snap = !focus;
+      if (snap) {
+        focus = {...point};
+        offset = rail(d);
+        for (const k of keys) offset[k] = point[k] - offset[k];
+        anchor = d;
+      } else if (seconds > 0) {
+        focus = rail(d);
+        // A seek starts at the exact rider. Ease its offset out over the next
+        // span rather than popping onto the precomputed path on frame two.
+        const u = Math.min(1, (d-anchor)/Math.min(step,total-anchor));
+        for (const k of keys) focus[k] += offset[k]*(1-u)**2*(1+2*u);
       }
       angle = (angle + .08 * seconds) % (2 * Math.PI);
-      scene.setAttribute('viewBox', following ? `${focus.x - 130} ${focus.y - 110} 260 ${260 * 455 / 610}` : overview.join(' '));
-      const rider = el('rider');
-      rider.setAttribute('cx', x);
-      rider.setAttribute('cy', y);
+      frameRelief();
+      const rider = el('relief-beacon');
+      rider.setAttribute('transform', `translate(${x} ${y})`);
       rider.setAttribute('visibility', following ? 'visible' : 'hidden');
       const pos = (d / total * 1000).toFixed(2);
       el('cursor').setAttribute('x1', pos);
@@ -75,7 +124,7 @@
       seek.setAttribute('aria-valuetext', text);
       el('mode').textContent = playing ? 'Cinematic flyover' : !following ? 'Route overview' : d === total ? 'Summit' : 'Paused';
       play.textContent = playing ? 'Pause' : d === total ? 'Replay flyover' : 'Play flyover';
-      terrain?.(point, following, focus, angle);
+      terrain?.(point, following, focus, angle, seconds, snap);
     }
     function pause() {
       playing = false;
@@ -84,9 +133,12 @@
     }
     function tick(now) {
       if (!playing) return;
-      const rate = total / 90 * Number(el('speed').value);
-      const seconds = last === null ? 0 : Math.min((now - last) / 1000, (total - d) / rate);
-      d = Math.min(total, d + seconds * rate);
+      const velocity = rate();
+      const gap = last === null ? 0 : (now-last)/1000;
+      // A stalled foreground frame is not distance owed. Discard its backlog
+      // for all consumers, including the orbit, and rebase on this timestamp.
+      const seconds = Math.min(gap > .15 ? 1/60 : gap, (total - d) / velocity);
+      d = Math.min(total, d + seconds * velocity);
       last = now;
       if (d === total) pause();
       render(seconds);
@@ -121,9 +173,12 @@
     });
     render();
     el('deck').hidden = false;
-    window.startTerrain?.(points, draw => { terrain = draw; render(); });
+    window.startTerrain?.(points, draw => { terrain = draw; render(); }, upcoming, alignRelief);
   }
   load().then(start).catch(() => {
     el('message').textContent += ' Playback is unavailable; the full route is shown above.';
   });
+  // Start the optional SDK alongside GPX, not before this deferred local
+  // player (a slow satellite stylesheet must not hold up the controls).
+  window.prepareTerrain?.();
 })();
