@@ -8,7 +8,7 @@ import { once } from 'node:events';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { browser, until } from './browser.mjs';
 
-test('phone-sized preview, follow camera, controls and asset fallbacks', {timeout: 60000}, async t => {
+test('phone-sized cinematic orbit, controls and asset fallbacks', {timeout: 60000}, async t => {
   const files = {'index.html':'text/html','assets/flyover.js':'text/javascript',
     'assets/terrain.js':'text/javascript', 'js/config.js':'text/javascript',
     'assets/semonzo.gpx':'application/xml','assets/ascent.svg':'image/svg+xml',
@@ -71,16 +71,57 @@ test('phone-sized preview, follow camera, controls and asset fallbacks', {timeou
   const overview = await box();
   assert.equal(await js(`mode.textContent`),'Route overview');
   assert.match(await js(`stats.textContent`),/18\.\d km remaining/);
+  // Drive the real playback callback with known foreground timestamps. Starting
+  // at 2.45 km crosses the tight switchback at 2.536 km at either speed.
+  async function orbit(speedValue, hz) {
+    return js(`(() => {
+      const raf = window.requestAnimationFrame, cancel = window.cancelAnimationFrame;
+      let next;
+      window.requestAnimationFrame = cb => { next = cb; return 1; };
+      window.cancelAnimationFrame = () => { next = null; };
+      try {
+        seek.value = 2450; seek.dispatchEvent(new Event('input'));
+        speed.value = '${speedValue}'; play.click();
+        const samples = [];
+        for (let n = 0; n <= ${hz}; n++) {
+          next(1000 * n / ${hz});
+          const {position, target} = demo.camera;
+          const east = (position.xy[0]-target[0])*77450, south = (target[1]-position.xy[1])*111200;
+          samples.push([Math.atan2(east,south),Math.hypot(east,south),
+            Math.hypot((target[0]-demo.rider[0])*77450,(target[1]-demo.rider[1])*111200)]);
+        }
+        play.click();
+        const end = +seek.value, rider = demo.rider;
+        // The range rounds to metres. Seeking to the displayed distance
+        // should reproduce the moving marker, not its filtered camera focus.
+        seek.dispatchEvent(new Event('input'));
+        const markerError = Math.hypot((demo.rider[0]-rider[0])*77450,(demo.rider[1]-rider[1])*111200);
+        return {samples, end, total:+seek.max, markerError, pending:!!next};
+      } finally { window.requestAnimationFrame = raf; window.cancelAnimationFrame = cancel; }
+    })()`);
+  }
+  for (const [speedValue,hz] of [[1,60],[4,60],[4,10]]) {
+    const {samples,end,total,markerError,pending} = await orbit(speedValue,hz);
+    assert.ok(Math.abs(end - (2450 + speedValue * total/90)) < 1);
+    assert.ok(markerError <= .501);
+    assert.equal(pending,false);
+    assert.equal(samples[0][2],0,'seek snaps focus to exact rider');
+    assert.ok(samples.some(s => s[2] > 10),'framing smooths independently of marker');
+    samples.forEach(([angle,radius,lag],i) => {
+      assert.ok(Math.abs(angle - .08*i/hz) < 1e-8,'steady real-time orbit through hairpin');
+      assert.ok(Math.abs(radius-900) < .01 && lag < radius/3);
+    });
+  }
+  await js('reset.click()');
   await js(`speed.value = '4'; play.click()`);
   await until(() => js(`Number(seek.value) > 40`));
-  assert.ok(await js(`demo.camera.position.altitude === 2300 &&
-    JSON.stringify(demo.camera.target) === JSON.stringify(demo.rider) &&
-    Math.abs(Math.hypot((demo.camera.position.xy[0]-demo.rider[0])*77450,
-    (demo.camera.position.xy[1]-demo.rider[1])*111200)-200)<.01`));
+  assert.equal(await js('demo.camera.position.altitude'),2600);
   const firstFrame = await box(); assert.notEqual(firstFrame,overview);
   await until(async () => (await box()) !== firstFrame);
   await js('play.click()'); const paused = await box();
+  const pose = await js('[demo.camera, demo.rider, seek.value]');
   await sleep(100); assert.equal(await box(),paused);
+  assert.deepEqual(await js('[demo.camera, demo.rider, seek.value]'),pose);
   await js('seek.focus()');
   async function key(key,code) {
     for (const type of ['keyDown','keyUp']) await cmd('Input.dispatchKeyEvent',{type,key,windowsVirtualKeyCode:code});
@@ -91,7 +132,8 @@ test('phone-sized preview, follow camera, controls and asset fallbacks', {timeou
   assert.equal(await js('mode.textContent'),'Summit');
   assert.match(await js('stats.textContent'),/1746 m elevation · 0\.0 km remaining/);
   assert.deepEqual(await js('demo.camera.target'),await js('demo.ascent.data.coordinates.at(-1)'));
-  await js('play.click()'); await until(()=>js(`mode.textContent === 'Following' && +seek.value < 1000`));
+  assert.ok(await js(`play.click(); JSON.stringify(demo.camera.target) === JSON.stringify(demo.ascent.data.coordinates[0])
+    && mode.textContent === 'Cinematic flyover' && +seek.value === 0`));
   await js('reset.click()'); assert.equal(await box(),overview);
   assert.equal(await js('demo.camera'),null);
   // Tap the native range layered directly on the elevation profile.
