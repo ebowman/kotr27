@@ -47,11 +47,17 @@ test('phone-sized cinematic orbit, controls and asset fallbacks', {timeout: 6000
       areTilesLoaded() { return this.ready; }
       fitBounds() { this.camera = null; }
       queryTerrainElevation() { return 2000; }
+      project() { return {x:map.clientWidth/2,y:map.clientHeight/2}; }
+      triggerRepaint() { /* render events driven by test */ }
       getFreeCameraOptions() { return {lookAtPoint(target){this.target = target;}}; }
       setFreeCameraOptions(camera) { this.camera = camera; }
       remove() { this.removed = true; }
     },
-    Marker: class { setLngLat(xy){ demo.rider = xy; } addTo(){} remove(){demo.rider = null;} },
+    Marker: class {
+      constructor({element}) { this.el=element; this.el.style.cssText='position:absolute;left:50%;top:50%;transform:translate(-50%,-50%)'; }
+      getLngLat(){ return demo.rider; } setLngLat(xy){ demo.rider = xy; }
+      addTo(){map.append(this.el);} remove(){this.el.remove();demo.rider = null;}
+    },
     MercatorCoordinate:{fromLngLat:(xy, altitude) => ({xy, altitude})},
     LngLatBounds:class { extend(){return this;} }
   };`;
@@ -83,7 +89,8 @@ test('phone-sized cinematic orbit, controls and asset fallbacks', {timeout: 6000
   await js(`speed.value='4'; play.click(); demo.events.render()`);
   assert.equal(await js('demo.hints.length'),0);
   await js(`demo.ready=true; Object.defineProperty(navigator.connection,'saveData',{value:true,configurable:true})`);
-  await sleep(220);
+  await js('demo.events.render()');
+  await sleep(500);
   assert.equal(await js('demo.events.render(); demo.hints.length'),0);
   assert.equal(await js(`delete navigator.connection.saveData; demo.events.render();
     for(let i=0;i<100;i++) demo.events.render(); demo.hints.length`),1);

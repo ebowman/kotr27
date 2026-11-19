@@ -65,8 +65,25 @@
       return result;
     }
     let terrain, focus, offset, anchor, angle = 0;
+    const reliefHeight = 260 * 455 / 610;
+    // Both cameras aim at the viewport center. During a handoff pan the
+    // entire relief view (never the beacon alone) to match the perspective
+    // camera's framing of the current route point.
+    let panX = 0, panY = 0, startX, startY;
+    function frameRelief() {
+      scene.setAttribute('viewBox', following ?
+        `${focus.x-130-panX} ${focus.y-reliefHeight/2-panY} 260 ${reliefHeight}` : overview.join(' '));
+    }
+    function alignRelief(point, screen, blend) {
+      if (!blend) { startX = panX; startY = panY; }
+      const target = screen.matrixTransform(scene.getScreenCTM().inverse());
+      panX = startX + (panX + target.x-point.x-startX)*blend;
+      panY = startY + (panY + target.y-point.y-startY)*blend;
+      frameRelief();
+    }
     function resetCamera() {
       focus = null;
+      panX = panY = 0;
       angle = 0;
     }
     const rate = () => total / 90 * Number(el('speed').value);
@@ -94,10 +111,9 @@
         for (const k of keys) focus[k] += offset[k]*(1-u)**2*(1+2*u);
       }
       angle = (angle + .08 * seconds) % (2 * Math.PI);
-      scene.setAttribute('viewBox', following ? `${focus.x - 130} ${focus.y - 110} 260 ${260 * 455 / 610}` : overview.join(' '));
-      const rider = el('rider');
-      rider.setAttribute('cx', x);
-      rider.setAttribute('cy', y);
+      frameRelief();
+      const rider = el('relief-beacon');
+      rider.setAttribute('transform', `translate(${x} ${y})`);
       rider.setAttribute('visibility', following ? 'visible' : 'hidden');
       const pos = (d / total * 1000).toFixed(2);
       el('cursor').setAttribute('x1', pos);
@@ -157,7 +173,7 @@
     });
     render();
     el('deck').hidden = false;
-    window.startTerrain?.(points, draw => { terrain = draw; render(); }, upcoming);
+    window.startTerrain?.(points, draw => { terrain = draw; render(); }, upcoming, alignRelief);
   }
   load().then(start).catch(() => {
     el('message').textContent += ' Playback is unavailable; the full route is shown above.';

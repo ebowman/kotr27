@@ -19,7 +19,7 @@ const terrainSDK = (() => {
 window.prepareTerrain = () => {
   if (window.KOTR_CONFIG && !savingTerrainData()) terrainSDK();
 };
-window.startTerrain = function (points, connect, upcoming) {
+window.startTerrain = function (points, connect, upcoming, alignRelief) {
   const container = document.getElementById('map');
   const message = document.getElementById('message');
   let map, stopped = false;
@@ -53,24 +53,78 @@ window.startTerrain = function (points, connect, upcoming) {
         map.setTerrain({source:'dem', exaggeration:1});
         map.addSource('ascent', {type:'geojson', data:{type:'LineString', coordinates:coords}});
         map.addLayer({id:'ascent', type:'line', source:'ascent', paint:{'line-color':'#ff932e','line-width':4}});
-        const rider = new gl.Marker({color:'#ffdc56', scale:.65});
+        // This is a position indicator, not a feature on the terrain: keep
+        // it legible when the sightline crosses a ridge, without moving it.
+        const beacon = document.createElement('div');
+        beacon.className = 'rider-beacon';
+        beacon.setAttribute('aria-label', 'Rider position');
+        const rider = new gl.Marker({element:beacon, anchor:'center', occludedOpacity:1});
         let inOverview = false, altitude;
+        const viewport = container.parentElement;
+        let staging = false, stableSince, panSince, pendingPose, blend = 0;
+        function showTerrain(show) {
+          viewport.classList.toggle('terrain', show);
+          message.textContent = show ? 'Satellite terrain · The orange line traces the ascent.'
+            : 'Shaded relief · Loading terrain at the rider.';
+        }
         function overview() {
           rider.remove();
           map.jumpTo({pitch:0, bearing:0});
           map.fitBounds(bounds, {padding:40, duration:0});
           inOverview = true;
+          if (staging) { staging = false; pendingPose = null; showTerrain(true); }
         }
         overview();
         map.once('idle', () => {
           if (stopped) return;
           clearTimeout(timer);
-          container.parentElement.classList.add('terrain');
-          message.textContent = 'Satellite terrain · The orange line traces the ascent.';
+          showTerrain(true);
           let nextCheck = 0, lastDistance = -Infinity, disabled = false;
           map.on('render', () => {
+            if (stopped || inOverview) return;
             const now = performance.now();
-            if (stopped || disabled || inOverview || now < nextCheck || savingTerrainData()) return;
+            if (staging) {
+              // The SDK can project a marker against sea level (or a parent
+              // tile) before it has drawn the new viewport. Stay on the live
+              // GPX relief view until the rendered camera AND marker agree.
+              try {
+                const loaded = map.areTilesLoaded();
+                if (!loaded) stableSince = null;
+                if (!pendingPose || (!loaded && panSince == null)) return;
+                const {point,eye,target,eyeZ,targetZ,draw} = pendingPose;
+                const z = map.queryTerrainElevation(eye), aim = map.queryTerrainElevation(target);
+                if (z == null || aim == null || map.queryTerrainElevation(rider.getLngLat()) == null) {
+                  stableSince = null; return;
+                }
+                if (z !== eyeZ || aim !== targetZ) {
+                  stableSince = null;
+                  draw(); // Re-aim while hidden, even if playback is paused.
+                  return;
+                }
+                const p = map.project(rider.getLngLat());
+                const b = beacon.getBoundingClientRect(), m = container.getBoundingClientRect();
+                if (!(b.width && b.left >= m.left+2 && b.right <= m.right-2 &&
+                    b.top >= m.top+2 && b.bottom <= m.bottom-2 &&
+                    Math.hypot(b.x+b.width/2-m.x-p.x,b.y+b.height/2-m.y-p.y) < 2)) {
+                  stableSince = null; return;
+                }
+                // Neighboring tiles can stream in throughout a fast ride.
+                // Don't restart the pan on each request; keep the independent
+                // 150 ms loaded-camera check for the actual reveal.
+                if (loaded) stableSince ??= now;
+                panSince ??= now;
+                const progress = Math.min(1,(now-panSince)/450);
+                const alignedLastFrame = blend === 1;
+                blend = progress**2*(3-2*progress);
+                alignRelief(point,new DOMPoint(b.x+b.width/2,b.y+b.height/2),blend);
+                if (!alignedLastFrame || stableSince == null || now-stableSince < 150) {
+                  if (loaded) map.triggerRepaint();
+                  return;
+                }
+                staging = false; pendingPose = null; showTerrain(true);
+              } catch { fallback(); return; }
+            }
+            if (disabled || now < nextCheck || savingTerrainData()) return;
             nextCheck = now + 200;
             // After the visible render has selected/requested its tiles, never
             // issue another viewport while visible sources are still loading.
@@ -86,17 +140,21 @@ window.startTerrain = function (points, connect, upcoming) {
                 bearing:map.getBearing() - view.turn*180/Math.PI});
             } catch { disabled = true; } // A failed hint must not stop the ride.
           });
-          connect((point, following, focus, angle, seconds, snap) => {
+          function drawPose(point, following, focus, angle, seconds, snap) {
             if (stopped) return;
             try {
               if (!following) { if (!inOverview) overview(); return; }
+              if (snap || inOverview) {
+                if (!staging) showTerrain(false);
+                staging = true; stableSince = panSince = null; blend = 0;
+              }
               // Wide orbit about the filtered focus, independent of road heading.
               const radius = 900;
               const eye = [focus.lon + radius * Math.sin(angle) / 77450,
                 focus.lat - radius * Math.cos(angle) / 111200];
               const target = [focus.lon, focus.lat];
-              const floor = 600 + Math.max(focus.height, map.queryTerrainElevation(eye) ?? focus.height,
-                map.queryTerrainElevation(target) ?? focus.height);
+              const eyeZ = map.queryTerrainElevation(eye), targetZ = map.queryTerrainElevation(target);
+              const floor = 600 + Math.max(focus.height, eyeZ ?? focus.height, targetZ ?? focus.height);
               // Rise immediately for clearance, but release gently when DEM
               // samples fall or go missing at tile boundaries.
               if (snap || inOverview || altitude < floor) altitude = floor;
@@ -108,8 +166,19 @@ window.startTerrain = function (points, connect, upcoming) {
               rider.setLngLat([point.lon, point.lat]);
               if (inOverview) rider.addTo(map);
               inOverview = false;
+              if (staging) {
+                pendingPose = {point,eye,target,eyeZ,targetZ,
+                  draw:() => drawPose(point,true,focus,angle,0,false)};
+                // The playback RAF may follow the SDK render RAF in the same
+                // paint. Keep the relief registered to this newer pose too.
+                if (blend && eyeZ != null && targetZ != null) {
+                  const p = map.project(rider.getLngLat()), m = container.getBoundingClientRect();
+                  alignRelief(point,new DOMPoint(m.x+p.x,m.y+p.y),blend);
+                }
+              }
             } catch { fallback(); }
-          });
+          }
+          connect(drawPose);
         });
       } catch { fallback(); }
     });

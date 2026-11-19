@@ -32,10 +32,14 @@
     #map { position:absolute; inset:0; visibility:hidden }
     .terrain #map { visibility:visible }
     .terrain #scene { visibility:hidden }
+    .terrain #relief-beacon { display:none }
+    .rider-beacon { width:20px; height:20px; border-radius:50%; background:#ffdc56;
+      border:3px solid #163c34; box-shadow:0 0 0 2px white }
     figure { margin:1.2rem 0 0; border:1px solid var(--line) }
     .scene { display:block; width:100%; aspect-ratio:610/455; background:#e2e8d8 }
     @media (max-width:36rem) { .scene { aspect-ratio:1 } }
     .ribbon { display:flex; justify-content:space-between; gap:.5rem; padding:.6rem 1rem; background:var(--ink); color:white; font:600 .85rem/1.5 ui-monospace,monospace }
+    @media (max-width:36rem) { .ribbon { min-height:calc(3em + 1.2rem); align-items:center } }
     .controls { display:flex; flex-wrap:wrap; align-items:center; gap:.7rem; margin:.8rem 0 }
     button,select { color:var(--ink); font:inherit; border:1px solid; background:white; min-height:44px; padding:.4rem .8rem; cursor:pointer }
     #play { color:white; background:var(--ink); min-width:6rem }
@@ -63,7 +67,10 @@
       <svg id="scene" class="scene" viewBox="-290 -285 610 455" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Oblique relief of the provisional Semonzo ascent; north is up.">
         <image href="./assets/grappa-relief.webp" x="-360" y="-385" width="750" height="650"/>
         <image href="./assets/ascent.svg" x="-360" y="-385" width="750" height="650"/>
-        <circle id="rider" visibility="hidden" r="3" fill="#ffdc56" stroke="#163c34" stroke-width="1.5"/>
+        <g id="relief-beacon" visibility="hidden" fill="#ffdc56" stroke="#163c34">
+          <circle r="8" fill="white" stroke="none"/>
+          <circle r="5.5" stroke-width="2.5"/>
+        </g>
       </svg>
       <div id="map" aria-label="Satellite terrain view of the Semonzo ascent"></div>
       </div>
