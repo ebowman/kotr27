@@ -46,11 +46,22 @@
       const lerp = k => p[k] + f * (q[k] - p[k]);
       return { x:lerp('x'), y:lerp('y'), lon:lerp('lon'), lat:lerp('lat'), height:lerp('height') };
     }
-    let terrain;
-    function render() {
+    let terrain, focus, angle = 0;
+    function resetCamera() {
+      focus = null;
+      angle = 0;
+    }
+    function render(seconds = 0) {
       const point = sample(d);
       const {x,y} = point;
-      scene.setAttribute('viewBox', following ? `${x - 130} ${y - 110} 260 ${260 * 455 / 610}` : overview.join(' '));
+      if (!focus) focus = {...point};
+      else if (seconds > 0) {
+        // Smooth only the framing, never the rider, profile or distance.
+        const alpha = -Math.expm1(-seconds / .32);
+        for (const key of Object.keys(focus)) focus[key] += alpha * (point[key] - focus[key]);
+      }
+      angle = (angle + .08 * seconds) % (2 * Math.PI);
+      scene.setAttribute('viewBox', following ? `${focus.x - 130} ${focus.y - 110} 260 ${260 * 455 / 610}` : overview.join(' '));
       const rider = el('rider');
       rider.setAttribute('cx', x);
       rider.setAttribute('cy', y);
@@ -62,9 +73,9 @@
       const text = `${km(d)} km ridden · ${Math.round(point.height)} m elevation · ${km(total - d)} km remaining`;
       el('stats').textContent = text;
       seek.setAttribute('aria-valuetext', text);
-      el('mode').textContent = playing ? 'Following' : !following ? 'Route overview' : d === total ? 'Summit' : 'Paused';
+      el('mode').textContent = playing ? 'Cinematic flyover' : !following ? 'Route overview' : d === total ? 'Summit' : 'Paused';
       play.textContent = playing ? 'Pause' : d === total ? 'Replay flyover' : 'Play flyover';
-      terrain?.(d, point, following);
+      terrain?.(point, following, focus, angle);
     }
     function pause() {
       playing = false;
@@ -73,16 +84,18 @@
     }
     function tick(now) {
       if (!playing) return;
-      if (last !== null) d = Math.min(total, d + Math.min(now - last, 200) * total / 90000 * Number(el('speed').value));
+      const rate = total / 90 * Number(el('speed').value);
+      const seconds = last === null ? 0 : Math.min((now - last) / 1000, (total - d) / rate);
+      d = Math.min(total, d + seconds * rate);
       last = now;
       if (d === total) pause();
-      render();
+      render(seconds);
       if (playing) frame = requestAnimationFrame(tick);
     }
     play.addEventListener('click', () => {
       if (playing) pause();
       else {
-        if (d === total) d = 0;
+        if (d === total) { d = 0; resetCamera(); }
         following = playing = true;
         frame = requestAnimationFrame(tick);
       }
@@ -92,6 +105,7 @@
       pause();
       following = true;
       d = Math.max(0, Math.min(total, value));
+      resetCamera();
       render();
     }
     seek.addEventListener('input', () => scrub(Number(seek.value)));
@@ -100,14 +114,14 @@
       if (delta) { e.preventDefault(); scrub(d + delta); }
     });
     el('reset').addEventListener('click', () => {
-      pause(); following = false; d = 0; render();
+      pause(); following = false; d = 0; resetCamera(); render();
     });
     document.addEventListener('visibilitychange', () => {
       if (document.hidden && playing) { pause(); render(); }
     });
     render();
     el('deck').hidden = false;
-    window.startTerrain?.(points, sample, draw => { terrain = draw; render(); });
+    window.startTerrain?.(points, draw => { terrain = draw; render(); });
   }
   load().then(start).catch(() => {
     el('message').textContent += ' Playback is unavailable; the full route is shown above.';

@@ -1,6 +1,6 @@
 // Enhance the already usable local preview. The controller owns playback time;
 // even a late load or mid-ride WebGL failure never starts a second clock.
-window.startTerrain = function (points, sample, connect) {
+window.startTerrain = function (points, connect) {
   const container = document.getElementById('map');
   const message = document.getElementById('message');
   let map, stopped = false;
@@ -58,25 +58,22 @@ window.startTerrain = function (points, sample, connect) {
           clearTimeout(timer);
           container.parentElement.classList.add('terrain');
           message.textContent = 'Satellite terrain · The orange line traces the ascent.';
-          connect((d, point, following) => {
+          connect((point, following, focus, angle) => {
             if (stopped) return;
             try {
               if (!following) { if (!inOverview) overview(); return; }
-              // KOTR26 chase: measure the heading 50 m ahead, sit 200 m
-              // behind and 300 m above terrain, and look back at the rider.
-              const end = points.at(-1).d;
-              const a = sample(Math.min(d, end - 50)), b = sample(d + 50);
-              const east = (b.lon - a.lon) * 77450, north = (b.lat - a.lat) * 111200;
-              const length = Math.hypot(east, north) || 1;
-              const eye = [point.lon - 200 * east / length / 77450, point.lat - 200 * north / length / 111200];
-              const target = [point.lon, point.lat];
-              const altitude = 300 + Math.max(map.queryTerrainElevation(eye) ?? point.height,
-                map.queryTerrainElevation(target) ?? point.height);
+              // Wide orbit about the filtered focus, independent of road heading.
+              const radius = 900;
+              const eye = [focus.lon + radius * Math.sin(angle) / 77450,
+                focus.lat - radius * Math.cos(angle) / 111200];
+              const target = [focus.lon, focus.lat];
+              const altitude = 600 + Math.max(focus.height, map.queryTerrainElevation(eye) ?? focus.height,
+                map.queryTerrainElevation(target) ?? focus.height);
               const camera = map.getFreeCameraOptions();
               camera.position = gl.MercatorCoordinate.fromLngLat(eye, altitude);
               camera.lookAtPoint(target);
               map.setFreeCameraOptions(camera);
-              rider.setLngLat(target);
+              rider.setLngLat([point.lon, point.lat]);
               if (inOverview) rider.addTo(map);
               inOverview = false;
             } catch { fallback(); }
