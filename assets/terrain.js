@@ -45,7 +45,7 @@ window.startTerrain = function (points, connect) {
         map.addSource('ascent', {type:'geojson', data:{type:'LineString', coordinates:coords}});
         map.addLayer({id:'ascent', type:'line', source:'ascent', paint:{'line-color':'#ff932e','line-width':4}});
         const rider = new gl.Marker({color:'#ffdc56', scale:.65});
-        let inOverview = false;
+        let inOverview = false, altitude;
         function overview() {
           rider.remove();
           map.jumpTo({pitch:0, bearing:0});
@@ -58,7 +58,7 @@ window.startTerrain = function (points, connect) {
           clearTimeout(timer);
           container.parentElement.classList.add('terrain');
           message.textContent = 'Satellite terrain · The orange line traces the ascent.';
-          connect((point, following, focus, angle) => {
+          connect((point, following, focus, angle, seconds, snap) => {
             if (stopped) return;
             try {
               if (!following) { if (!inOverview) overview(); return; }
@@ -67,8 +67,12 @@ window.startTerrain = function (points, connect) {
               const eye = [focus.lon + radius * Math.sin(angle) / 77450,
                 focus.lat - radius * Math.cos(angle) / 111200];
               const target = [focus.lon, focus.lat];
-              const altitude = 600 + Math.max(focus.height, map.queryTerrainElevation(eye) ?? focus.height,
+              const floor = 600 + Math.max(focus.height, map.queryTerrainElevation(eye) ?? focus.height,
                 map.queryTerrainElevation(target) ?? focus.height);
+              // Rise immediately for clearance, but release gently when DEM
+              // samples fall or go missing at tile boundaries.
+              if (snap || inOverview || altitude < floor) altitude = floor;
+              else if (seconds > 0) altitude = floor + (altitude-floor)*Math.exp(-seconds/.6);
               const camera = map.getFreeCameraOptions();
               camera.position = gl.MercatorCoordinate.fromLngLat(eye, altitude);
               camera.lookAtPoint(target);

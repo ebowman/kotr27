@@ -46,7 +46,25 @@
       const lerp = k => p[k] + f * (q[k] - p[k]);
       return { x:lerp('x'), y:lerp('y'), lon:lerp('lon'), lat:lerp('lat'), height:lerp('height') };
     }
-    let terrain, focus, angle = 0;
+    // A uniform cubic B-spline through distance-spaced control samples. Its
+    // centered support sees both sides of a switchback; position, velocity
+    // and acceleration stay continuous without a speed-dependent time lag.
+    const spans = Math.max(1, Math.ceil(total / 400)), step = total / spans;
+    const controls = Array.from({length:spans+1}, (_, i) => sample(i*step));
+    const keys = Object.keys(controls[0]);
+    function rail(distance) {
+      if (distance === 0 || distance === total) return sample(distance);
+      const i = Math.min(spans-1, Math.floor(distance/step)), u = distance/step-i;
+      const a = controls[i-1], b = controls[i], c = controls[i+1], e = controls[i+2];
+      const w0 = (1-u)**3/6, w3 = u**3/6;
+      const w1 = (4-6*u*u+3*u**3)/6, w2 = 1-w0-w1-w3;
+      const result = {};
+      // Linear ghost samples keep the endpoints exactly on the route.
+      for (const k of keys) result[k] = w0*(a?.[k] ?? 2*b[k]-c[k]) + w1*b[k]
+        + w2*c[k] + w3*(e?.[k] ?? 2*c[k]-b[k]);
+      return result;
+    }
+    let terrain, focus, offset, anchor, angle = 0;
     function resetCamera() {
       focus = null;
       angle = 0;
@@ -54,11 +72,18 @@
     function render(seconds = 0) {
       const point = sample(d);
       const {x,y} = point;
-      if (!focus) focus = {...point};
-      else if (seconds > 0) {
-        // Smooth only the framing, never the rider, profile or distance.
-        const alpha = -Math.expm1(-seconds / .32);
-        for (const key of Object.keys(focus)) focus[key] += alpha * (point[key] - focus[key]);
+      const snap = !focus;
+      if (snap) {
+        focus = {...point};
+        offset = rail(d);
+        for (const k of keys) offset[k] = point[k] - offset[k];
+        anchor = d;
+      } else if (seconds > 0) {
+        focus = rail(d);
+        // A seek starts at the exact rider. Ease its offset out over the next
+        // span rather than popping onto the precomputed path on frame two.
+        const u = Math.min(1, (d-anchor)/Math.min(step,total-anchor));
+        for (const k of keys) focus[k] += offset[k]*(1-u)**2*(1+2*u);
       }
       angle = (angle + .08 * seconds) % (2 * Math.PI);
       scene.setAttribute('viewBox', following ? `${focus.x - 130} ${focus.y - 110} 260 ${260 * 455 / 610}` : overview.join(' '));
@@ -75,7 +100,7 @@
       seek.setAttribute('aria-valuetext', text);
       el('mode').textContent = playing ? 'Cinematic flyover' : !following ? 'Route overview' : d === total ? 'Summit' : 'Paused';
       play.textContent = playing ? 'Pause' : d === total ? 'Replay flyover' : 'Play flyover';
-      terrain?.(point, following, focus, angle);
+      terrain?.(point, following, focus, angle, seconds, snap);
     }
     function pause() {
       playing = false;
@@ -85,7 +110,10 @@
     function tick(now) {
       if (!playing) return;
       const rate = total / 90 * Number(el('speed').value);
-      const seconds = last === null ? 0 : Math.min((now - last) / 1000, (total - d) / rate);
+      const gap = last === null ? 0 : (now-last)/1000;
+      // A stalled foreground frame is not distance owed. Discard its backlog
+      // for all consumers, including the orbit, and rebase on this timestamp.
+      const seconds = Math.min(gap > .15 ? 1/60 : gap, (total - d) / rate);
       d = Math.min(total, d + seconds * rate);
       last = now;
       if (d === total) pause();

@@ -73,14 +73,14 @@ test('phone-sized cinematic orbit, controls and asset fallbacks', {timeout: 6000
   assert.match(await js(`stats.textContent`),/18\.\d km remaining/);
   // Drive the real playback callback with known foreground timestamps. Starting
   // at 2.45 km crosses the tight switchback at 2.536 km at either speed.
-  async function orbit(speedValue, hz) {
+  async function orbit(speedValue, hz, start = 2450) {
     return js(`(() => {
       const raf = window.requestAnimationFrame, cancel = window.cancelAnimationFrame;
       let next;
       window.requestAnimationFrame = cb => { next = cb; return 1; };
       window.cancelAnimationFrame = () => { next = null; };
       try {
-        seek.value = 2450; seek.dispatchEvent(new Event('input'));
+        seek.value = ${start}; seek.dispatchEvent(new Event('input'));
         speed.value = '${speedValue}'; play.click();
         const samples = [];
         for (let n = 0; n <= ${hz}; n++) {
@@ -88,18 +88,82 @@ test('phone-sized cinematic orbit, controls and asset fallbacks', {timeout: 6000
           const {position, target} = demo.camera;
           const east = (position.xy[0]-target[0])*77450, south = (target[1]-position.xy[1])*111200;
           samples.push([Math.atan2(east,south),Math.hypot(east,south),
-            Math.hypot((target[0]-demo.rider[0])*77450,(target[1]-demo.rider[1])*111200)]);
+            Math.hypot((target[0]-demo.rider[0])*77450,(target[1]-demo.rider[1])*111200),
+            ...target, ...demo.rider, +seek.value]);
         }
         play.click();
         const end = +seek.value, rider = demo.rider;
-        // The range rounds to metres. Seeking to the displayed distance
-        // should reproduce the moving marker, not its filtered camera focus.
+        // Seeking to the displayed metre should reproduce the moving marker.
         seek.dispatchEvent(new Event('input'));
         const markerError = Math.hypot((demo.rider[0]-rider[0])*77450,(demo.rider[1]-rider[1])*111200);
         return {samples, end, total:+seek.max, markerError, pending:!!next};
       } finally { window.requestAnimationFrame = raf; window.cancelAnimationFrame = cancel; }
     })()`);
   }
+  // Warm up both paths before the 2.536 km Semonzo hairpin. Reconstruct the
+  // former .32 s rider EMA from the very same frame positions.
+  const {samples} = await orbit(4,60,1900);
+  let old, oldPrev, newPrev, oldVel, newVel, oldPeak = 0, newPeak = 0, count = 0;
+  const diff = (a,b) => a.map((v,i) => (v-b[i])*60);
+  const xy = (x,y) => [(x-11.78)*77450,(y-45.84)*111200];
+  for (const [,,,lon,lat,rLon,rLat,metres] of samples) {
+    const target = xy(lon,lat), rider = xy(rLon,rLat);
+    old = old ? old.map((v,i) => v - Math.expm1(-1/60/.32)*(rider[i]-v)) : rider;
+    if (newPrev) {
+      const ov = diff(old,oldPrev), nv = diff(target,newPrev);
+      if (metres >= 2450 && metres <= 2650) {
+        count++;
+        oldPeak = Math.max(oldPeak, Math.hypot(...diff(ov,oldVel)));
+        newPeak = Math.max(newPeak, Math.hypot(...diff(nv,newVel)));
+      }
+      oldVel = ov; newVel = nv;
+    }
+    newPrev = target; oldPrev = old;
+  }
+  t.diagnostic(`4x/60 Hz, 2450–2650 m (${count} frames): peak planar target acceleration ${oldPeak.toFixed(1)} → ${newPeak.toFixed(1)} m/s²`);
+  assert.ok(count >= 12 && newPeak < oldPeak*.75);
+  // Inject a 2 s foreground stall and a sudden DEM drop, then a rise. The
+  // resumed clock owes no distance and the camera never dips below clearance.
+  const delayed = await js(`(() => {
+    const raf = window.requestAnimationFrame, cancel = window.cancelAnimationFrame;
+    const dem = demo.queryTerrainElevation;
+    let next;
+    window.requestAnimationFrame = cb => { next = cb; return 1; };
+    window.cancelAnimationFrame = () => { next = null; };
+    try {
+      seek.value = 2450; seek.dispatchEvent(new Event('input'));
+      speed.value = '4'; play.click();
+      next(0); next(1000/60);
+      const capture = () => [+seek.value,demo.camera.position.altitude];
+      const before = capture();
+      demo.queryTerrainElevation = () => null;
+      next(2000+1000/60); const after = capture();
+      demo.queryTerrainElevation = () => 2300;
+      next(2000+2000/60); const resumed = capture();
+      play.click(); return {before,after,resumed,step:+seek.max*4/90/60};
+    } finally { window.requestAnimationFrame = raf; window.cancelAnimationFrame = cancel; demo.queryTerrainElevation = dem; }
+  })()`);
+  const {before,after,resumed,step} = delayed;
+  assert.ok(Math.abs(after[0]-before[0]-step)<1 && Math.abs(resumed[0]-after[0]-step)<1);
+  assert.ok(after[1] < before[1] && after[1] > before[1]-60);
+  assert.equal(resumed[1],2900);
+  // A higher DEM sample can arrive between the last frame and the pause
+  // click. With no elapsed time only camera altitude should change.
+  const onPause = await js(`(() => {
+    const dem = demo.queryTerrainElevation;
+    const planar = () => [seek.value, demo.rider, demo.camera.position.xy, demo.camera.target];
+    try {
+      demo.queryTerrainElevation = () => 1000;
+      seek.value = 2450; seek.dispatchEvent(new Event('input'));
+      play.click();
+      const before = planar(), low = demo.camera.position.altitude;
+      demo.queryTerrainElevation = () => 2000;
+      play.click();
+      return {before, after:planar(), low, high:demo.camera.position.altitude};
+    } finally { demo.queryTerrainElevation = dem; }
+  })()`);
+  assert.deepEqual(onPause.after,onPause.before);
+  assert.deepEqual([onPause.low,onPause.high],[1600,2600]);
   for (const [speedValue,hz] of [[1,60],[4,60],[4,10]]) {
     const {samples,end,total,markerError,pending} = await orbit(speedValue,hz);
     assert.ok(Math.abs(end - (2450 + speedValue * total/90)) < 1);
