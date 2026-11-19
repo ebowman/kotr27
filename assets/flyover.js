@@ -18,7 +18,7 @@
       const prev = points.at(-1);
       const d = prev ? prev.d + Math.hypot(east - prev.east, north - prev.north) : 0;
       if (!Number.isFinite(d + height)) throw Error('Invalid route');
-      if (!prev || d > prev.d) points.push({ east, north, height, d,
+      if (!prev || d > prev.d) points.push({ lon, lat, east, north, height, d,
         x: east / 15, y: -(north * .68 + height * .8) / 15 });
     }
     if (points.length < 2) throw Error('Empty route');
@@ -35,15 +35,21 @@
     el('length').textContent = `${km(total)} km`;
 
     let d = 0, following = false, playing = false, last = null, frame = 0;
-    function render() {
+    function sample(distance) {
+      distance = Math.max(0, Math.min(total, distance));
       let a = 0, b = points.length - 1;
       while (b - a > 1) {
         const mid = (a + b) >> 1;
-        if (points[mid].d < d) a = mid; else b = mid;
+        if (points[mid].d < distance) a = mid; else b = mid;
       }
-      const p = points[a], q = points[b], f = (d - p.d) / (q.d - p.d);
+      const p = points[a], q = points[b], f = (distance - p.d) / (q.d - p.d);
       const lerp = k => p[k] + f * (q[k] - p[k]);
-      const x = lerp('x'), y = lerp('y');
+      return { x:lerp('x'), y:lerp('y'), lon:lerp('lon'), lat:lerp('lat'), height:lerp('height') };
+    }
+    let terrain;
+    function render() {
+      const point = sample(d);
+      const {x,y} = point;
       scene.setAttribute('viewBox', following ? `${x - 130} ${y - 110} 260 ${260 * 455 / 610}` : overview.join(' '));
       const rider = el('rider');
       rider.setAttribute('cx', x);
@@ -53,11 +59,12 @@
       el('cursor').setAttribute('x1', pos);
       el('cursor').setAttribute('x2', pos);
       seek.value = d === total ? seek.max : Math.round(d);
-      const text = `${km(d)} km ridden · ${Math.round(lerp('height'))} m elevation · ${km(total - d)} km remaining`;
+      const text = `${km(d)} km ridden · ${Math.round(point.height)} m elevation · ${km(total - d)} km remaining`;
       el('stats').textContent = text;
       seek.setAttribute('aria-valuetext', text);
       el('mode').textContent = playing ? 'Following' : !following ? 'Route overview' : d === total ? 'Summit' : 'Paused';
       play.textContent = playing ? 'Pause' : d === total ? 'Replay flyover' : 'Play flyover';
+      terrain?.(d, point, following);
     }
     function pause() {
       playing = false;
@@ -100,6 +107,7 @@
     });
     render();
     el('deck').hidden = false;
+    window.startTerrain?.(points, sample, draw => { terrain = draw; render(); });
   }
   load().then(start).catch(() => {
     el('message').textContent += ' Playback is unavailable; the full route is shown above.';
