@@ -2,15 +2,42 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="kotr-release" content="29402006705537bdd5876de5">
+  <script>// Inlined only in releases. The entry itself carries the freshness marker:
+// revalidate the ordinary cache key, even within Pages' HTML max-age.
+addEventListener('pageshow', async () => {
+  const here = new URL(location.href);
+  const release = document.querySelector('meta[name="kotr-release"]').content;
+  const key = '_kotr';
+  if (here.searchParams.has(key)) {
+    // At most one replacement, even if an edge serves unexpected HTML.
+    if (here.searchParams.get(key) === release) {
+      here.searchParams.delete(key);
+      history.replaceState(history.state, '', here);
+    }
+    return;
+  }
+  try {
+    const response = await fetch(here, {cache:'no-cache', mode:'same-origin'});
+    if (!response.ok) return;
+    const next = (await response.text()).match(/<meta name="kotr-release" content="([a-f0-9]{24})">/);
+    if (!next || next[1] === release) return;
+    here.searchParams.set(key, next[1]);
+    location.replace(here);
+  } catch {
+    // Keep using the rendered page if the freshness probe can't reach Pages.
+  }
+});
+</script>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="x-dns-prefetch-control" content="off">
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <link rel="icon" href="data:,">
   <title>Semonzo ascent · KOTR 2027 route preview</title>
   <meta name="description" content="Preview the provisional Semonzo ascent of Monte Grappa for KOTR 2027 Long groups.">
-  <script defer src="./js/config.js"></script>
-  <script defer src="./assets/terrain.js"></script>
-  <script defer src="./assets/flyover.js"></script>
+  <script defer src="./js/config.f9c66323124751eb70ba6b3b.js"></script>
+  <script defer src="./assets/terrain.355fc004f728a708989686b9.js"></script>
+  <script defer src="./assets/flyover.626a9da9dd015013be702e73.js"></script>
   <style>
     :root { color-scheme: light; --paper:#f9f6ec; --ink:#163c34; --line:#b6c3b4; --rust:#8a3c22 }
     * { box-sizing:border-box }
@@ -60,8 +87,8 @@
       <div class="ribbon"><span>SEMONZO / ASCENT STUDY</span><span id="mode">Route overview</span></div>
       <div class="viewport">
       <svg id="scene" class="scene" viewBox="-290 -285 610 455" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Oblique relief of the provisional Semonzo ascent; north is up.">
-        <image href="./assets/grappa-relief.webp" x="-360" y="-385" width="750" height="650"/>
-        <image href="./assets/ascent.svg" x="-360" y="-385" width="750" height="650"/>
+        <image href="./assets/grappa-relief.8603dada041f91618c7840a5.webp" x="-360" y="-385" width="750" height="650"/>
+        <image href="./assets/ascent.10c2a3f180e45343e77ce169.svg" x="-360" y="-385" width="750" height="650"/>
         <circle id="rider" visibility="hidden" r="3" fill="#ffdc56" stroke="#163c34" stroke-width="1.5"/>
       </svg>
       <div id="map" aria-label="Satellite terrain view of the Semonzo ascent"></div>

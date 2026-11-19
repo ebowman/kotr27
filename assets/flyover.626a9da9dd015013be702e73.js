@@ -7,7 +7,7 @@
   const km = metres => (metres / 1000).toFixed(1);
 
   async function load() {
-    const response = await fetch('./assets/semonzo.gpx');
+    const response = await fetch('./assets/semonzo.bd4f3a18bf36bed53229a3ef.gpx');
     if (!response.ok) throw Error('Route unavailable');
     const xml = new DOMParser().parseFromString(await response.text(), 'application/xml');
     const points = [];
