@@ -3,12 +3,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { spawn } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
 import { once } from 'node:events';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { browser, until } from './browser.mjs';
 
 test('phone-sized preview, follow camera, controls and asset fallbacks', {timeout: 60000}, async t => {
   const files = {'index.html':'text/html','assets/flyover.js':'text/javascript',
@@ -30,20 +28,6 @@ test('phone-sized preview, follow camera, controls and asset fallbacks', {timeou
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   t.after(() => { server.closeAllConnections(); server.close(); });
   const url = `http://127.0.0.1:${server.address().port}/kotr27/`;
-  const dir = await mkdtemp(join(tmpdir(), 'kotr27-test-'));
-  const chrome = spawn(process.env.CHROME || (process.platform === 'darwin'
-    ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' : 'google-chrome'),
-  ['--headless','--disable-background-networking','--disable-extensions','--disable-sync',
-    `--user-data-dir=${dir}`, '--remote-debugging-pipe', 'about:blank'], {stdio:['ignore','ignore','pipe','pipe','pipe']});
-  chrome.stderr.on('data', data => { if (process.env.DEBUG_CHROME) process.stderr.write(data); });
-  const closed = once(chrome, 'close');
-  t.after(async () => { chrome.kill(); await closed; await rm(dir, {recursive:true, force:true}); });
-  async function until(fn) {
-    for (let i=0;i<100;i++) { const v = await fn(); if (v) return v; await sleep(50); }
-    assert.fail(`Timed out: ${fn}`);
-  }
-  let id = 0, sessionId, incoming = '';
-  const pending = new Map(), exceptions = [];
   // Intercept the SDK only. Exercise the real DOM, GPX, controller, clock,
   // camera math and fallback without making authenticated network requests.
   const sdk = `window.mapboxgl = {
@@ -65,37 +49,14 @@ test('phone-sized preview, follow camera, controls and asset fallbacks', {timeou
     MercatorCoordinate:{fromLngLat:(xy, altitude) => ({xy, altitude})},
     LngLatBounds:class { extend(){return this;} }
   };`;
-  function dispatch(m) {
+  const {cmd, js, exceptions} = await browser(t, (m, send) => {
     if (m.method === 'Fetch.requestPaused') {
       const script = m.params.request.url.endsWith('.js');
-      cmd('Fetch.fulfillRequest',{requestId:m.params.requestId, responseCode:200,
+      send('Fetch.fulfillRequest',{requestId:m.params.requestId, responseCode:200,
         responseHeaders:[{name:'Content-Type',value:script?'text/javascript':'text/css'}],
         body:Buffer.from(script?sdk:'').toString('base64')});
     }
-    if (m.method === 'Runtime.exceptionThrown') exceptions.push(m.params.exceptionDetails.text);
-    if (!pending.has(m.id)) return;
-    const {resolve,reject} = pending.get(m.id); pending.delete(m.id);
-    if (m.error) reject(Error(m.error.message)); else resolve(m.result);
-  }
-  chrome.stdio[4].setEncoding('utf8').on('data', chunk => {
-    incoming += chunk;
-    let end;
-    while ((end = incoming.indexOf('\0')) >= 0) {
-      dispatch(JSON.parse(incoming.slice(0,end))); incoming = incoming.slice(end + 1);
-    }
   });
-  function cmd(method, params={}) {
-    return new Promise((resolve,reject) => {
-      pending.set(++id,{resolve,reject}); chrome.stdio[3].write(JSON.stringify({id,method,params,sessionId})+'\0');
-    });
-  }
-  async function js(expression) {
-    const r = await cmd('Runtime.evaluate',{expression,returnByValue:true});
-    assert.ok(!r.exceptionDetails,expression); return r.result.value;
-  }
-  const {targetId} = await cmd('Target.createTarget',{url:'about:blank'});
-  ({sessionId} = await cmd('Target.attachToTarget',{targetId,flatten:true}));
-  await cmd('Runtime.enable');
   await cmd('Fetch.enable',{patterns:[{urlPattern:'https://api.mapbox.com/*'}]});
   await cmd('Emulation.setDeviceMetricsOverride',{width:375,height:812,deviceScaleFactor:1,mobile:true});
   await cmd('Page.navigate',{url});
@@ -117,7 +78,7 @@ test('phone-sized preview, follow camera, controls and asset fallbacks', {timeou
     Math.abs(Math.hypot((demo.camera.position.xy[0]-demo.rider[0])*77450,
     (demo.camera.position.xy[1]-demo.rider[1])*111200)-200)<.01`));
   const firstFrame = await box(); assert.notEqual(firstFrame,overview);
-  await sleep(100); assert.notEqual(await box(),firstFrame);
+  await until(async () => (await box()) !== firstFrame);
   await js('play.click()'); const paused = await box();
   await sleep(100); assert.equal(await box(),paused);
   await js('seek.focus()');
