@@ -1,0 +1,8 @@
+.github/.domestique/
+.github/agents/domestique-v2-copilot-implementer.agent.md
+.github/agents/domestique-v2-copilot-reviewer.agent.md
+.github/skills/domestique-v2-copilot/SKILL.md
+.github/skills/domestique-v2-copilot-decompose/SKILL.md
+.github/skills/domestique-v2-copilot-goal/SKILL.md
+.github/domestique-model-setup.py
+.github/skills/domestique-v2-copilot-models/SKILL.md

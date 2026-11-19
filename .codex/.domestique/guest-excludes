@@ -1,0 +1,13 @@
+.codex/agents/implementer.toml
+.codex/agents/reviewer.toml
+.codex/.domestique/
+.codex/domestique-model-setup.py
+.agents/skills/domestique-models/SKILL.md
+.agents/skills/dom-models/SKILL.md
+.agents/skills/domestique/SKILL.md
+.agents/skills/domestique-decompose/SKILL.md
+.agents/skills/domestique-goal/SKILL.md
+.agents/skills/domestique-goal/agents/openai.yaml
+.agents/skills/dom-decompose/SKILL.md
+.agents/skills/dom-goal/SKILL.md
+.agents/skills/dom-goal/agents/openai.yaml

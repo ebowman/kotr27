@@ -1,0 +1,6 @@
+interface:
+  display_name: "Domestique Goal"
+  short_description: "Codex only: execute a named bead or epic with gated review"
+  default_prompt: "Use $domestique-goal with a named bead or epic objective."
+policy:
+  allow_implicit_invocation: false

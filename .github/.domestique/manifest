@@ -1,0 +1,7 @@
+snapshot_format=1
+platform=copilot
+domestique_version=0.4.4
+installed_ref=6cfda4b
+installed_at=2026-11-19T12:04:05Z
+script_sha256=unavailable
+files=.github/agents/domestique-v2-copilot-implementer.agent.md,.github/agents/domestique-v2-copilot-reviewer.agent.md,.github/skills/domestique-v2-copilot/SKILL.md,.github/skills/domestique-v2-copilot-decompose/SKILL.md,.github/skills/domestique-v2-copilot-goal/SKILL.md,.github/domestique-model-setup.py,.github/skills/domestique-v2-copilot-models/SKILL.md,.github/copilot-instructions.md

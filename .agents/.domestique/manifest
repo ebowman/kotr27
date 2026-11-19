@@ -1,0 +1,7 @@
+snapshot_format=1
+platform=shared
+domestique_version=0.4.4
+installed_ref=6cfda4b
+installed_at=2026-11-19T12:04:17Z
+script_sha256=unavailable
+files=.agents/skills/dom-decompose/SKILL.md,.agents/skills/dom-goal/SKILL.md,.agents/skills/dom-goal/agents/openai.yaml,.agents/skills/dom-models/SKILL.md

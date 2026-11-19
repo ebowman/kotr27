@@ -1,0 +1,7 @@
+snapshot_format=1
+platform=claude
+domestique_version=0.4.4
+installed_ref=6cfda4b
+installed_at=2026-11-19T12:04:02Z
+script_sha256=unavailable
+files=.claude/agents/implementer.md,.claude/agents/reviewer.md,.claude/commands/decompose.md,.claude/commands/goal.md,.claude/commands/dom-decompose.md,.claude/commands/dom-goal.md,.claude/domestique-model-setup.py,.claude/commands/dom-models.md,CLAUDE.md

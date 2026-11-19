@@ -1,0 +1,7 @@
+snapshot_format=1
+platform=codex
+domestique_version=0.4.4
+installed_ref=6cfda4b
+installed_at=2026-11-19T12:04:04Z
+script_sha256=unavailable
+files=.codex/agents/implementer.toml,.codex/agents/reviewer.toml,.agents/skills/domestique/SKILL.md,.agents/skills/domestique-decompose/SKILL.md,.agents/skills/domestique-goal/SKILL.md,.agents/skills/domestique-goal/agents/openai.yaml,.codex/domestique-model-setup.py,.agents/skills/domestique-models/SKILL.md,AGENTS.md
