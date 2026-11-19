@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="x-dns-prefetch-control" content="off">
+  <meta name="referrer" content="no-referrer">
+  <link rel="icon" href="data:,">
+  <title>Monte Grappa · KOTR 2027 field guide</title>
+  <style>
+    :root { color-scheme: light; --paper:#f9f6ec; --ink:#163c34; --line:#b6c3b4; --rust:#8a3c22 }
+    * { box-sizing:border-box }
+    body { margin:0; color:var(--ink); background:var(--paper); font:1.04rem/1.6 system-ui,sans-serif }
+    main { max-width:66rem; margin:auto; padding:1.5rem clamp(1rem,5vw,4rem) 4rem }
+    header { display:flex; flex-wrap:wrap; justify-content:space-between; gap:.3rem 1rem; border-bottom:2px solid; padding-bottom:.75rem }
+    header, .label { font:bold .78rem/1.5 ui-monospace,monospace; text-transform:uppercase; letter-spacing:.09em }
+    .label { color:var(--rust); margin:0 }
+    h1,h2,h3 { font-family:Georgia,serif; font-weight:normal; line-height:1.08; margin:.4rem 0 1rem }
+    h1 { font-size:clamp(3.2rem,10vw,7.6rem); letter-spacing:-.055em }
+    h2 { font-size:clamp(2rem,5vw,3.8rem); letter-spacing:-.04em }
+    h3 { font-size:1.6rem }
+    p { max-width:64ch; margin:.7rem 0 }
+    .hero { position:relative; isolation:isolate; overflow:hidden; background:#deeadb; padding:clamp(1.2rem,5vw,3.5rem); margin:1.25rem 0 0 }
+    .hero svg { position:absolute; z-index:-1; bottom:0; right:0; width:100%; height:58%; opacity:.38 }
+    .lead { max-width:38ch; font-size:1.22rem }
+    nav,.profiles { display:flex; flex-wrap:wrap; gap:.75rem; margin-top:1.4rem }
+    a { color:inherit; text-underline-offset:.2em }
+    nav a,.profiles a { padding:.65rem 1rem; min-height:44px; border:1px solid; background:var(--paper); font-weight:650 }
+    nav a:first-child { background:var(--ink); color:white }
+    aside { border-left:3px solid var(--rust); margin:1.4rem 0; padding-left:1rem }
+    section { border-top:1px solid var(--line); margin-top:2.4rem; padding-top:1.4rem; scroll-margin-top:1rem }
+    .profiles a { flex:1 1 17rem; padding:1rem; text-decoration:none }
+    .profiles span { display:block; font-size:1.22rem; text-decoration:underline }
+    .profiles small { font-weight:normal }
+    article { margin-top:1.25rem; border:1px solid var(--line); padding:clamp(1rem,3vw,2rem); background:#fffdf6 }
+    details { border-top:1px solid var(--line) }
+    summary { cursor:pointer; padding:.9rem .25rem; font-weight:700 }
+    details[open] { padding-bottom:.8rem }
+    :focus-visible { outline:3px solid #aa4320; outline-offset:3px }
+    @media (hover:hover) { a:hover,summary:hover { text-decoration:underline; text-decoration-thickness:2px } }
+  </style>
+</head>
+<body>
+<main>
+  <header><strong>KOTR / 2027</strong><span>Rider’s field notes · No. 01</span></header>
+  <div class="hero">
+    <svg viewBox="0 0 900 180" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+      <path fill="#bad1bb" d="M0 180L160 136 208 145 380 73 465 95 605 42 669 70 801 9 900 40V180Z"/>
+      <path fill="#a2bcab" d="M180 180L390 129 480 143 619 91 700 102 834 47 900 67V180Z"/>
+      <path fill="#87a492" d="M410 180L640 130 726 147 867 89 900 99V180Z"/>
+    </svg>
+    <p class="label">Northern Italy / Mountain study</p>
+    <h1>Monte Grappa</h1>
+    <p class="lead">Two ways to read a mountain. One ride to try on a road you already know.</p>
+    <nav aria-label="In this guide"><a href="#climb">Explore the climb</a><a href="#ride">Find this week’s ride</a></nav>
+  </div>
+  <aside aria-label="Event update">
+    <p class="label">Event note · 18 November 2026</p>
+    <p>The announcement places KOTR 2027 around Bassano del Grappa, the Prosecco hills and Monte Grappa, with a late-May window. Monte Grappa is the mountain; the event approach, stages and hotel are not confirmed.</p>
+  </aside>
+  <section id="climb" tabindex="-1" aria-labelledby="profile-title">
+    <p class="label">01 / Read the profiles</p>
+    <h2 id="profile-title">Look for length, not just steepness.</h2>
+    <p>Open each example and trace the profile from left to right. Where does the line keep rising before it levels off? Use the distance scale to compare those stretches: a brief ramp and a long pull ask different things of your legs.</p>
+    <div class="profiles">
+      <a href="https://climbfinder.com/en/climbs/monte-grappa-semonzo"><small>Example A · Climbfinder</small><span>From Semonzo ↗</span></a>
+      <a href="https://climbfinder.com/en/climbs/monte-grappa-romano-ezzelino"><small>Example B · Climbfinder</small><span>From Romano d’Ezzelino ↗</span></a>
+    </div>
+    <p>These are public climb profiles, not navigation files or official event routes.</p>
+  </section>
+  <section id="ride" tabindex="-1" aria-labelledby="ride-title">
+    <p class="label">02 / Week one · Consistency</p>
+    <h2 id="ride-title">Find a gear you can repeat.</h2>
+    <p>Choose a familiar, quiet stretch where you can pedal without chasing speed. Flat ground or an indoor trainer works just as well as a gentle rise.</p>
+    <article aria-labelledby="card-title">
+      <h3 id="card-title">Your first ride</h3>
+      <p>Start with 8 minutes of easy spinning. Pick one goal below, using either the feel cue or your usual power zones. Finish with 5 minutes easy.</p>
+      <details>
+        <summary>Social goal · Keep the conversation going</summary>
+        <p>Ride steadily for 5 minutes, spin easily for 3, then repeat the steady 5. Shift down before the road tilts so a companion never has to break off mid-story.</p>
+        <p><strong>By feel:</strong> You can answer in full sentences, even near the end. <strong>By power:</strong> Stay in low Zone 2 (endurance); recover in Zone 1 (easy).</p>
+        <p><strong>Short on time?</strong> Do one steady 5 before cooling down. Success is finishing ready for another conversation.</p>
+      </details>
+      <details>
+        <summary>Performance goal · Match two efforts</summary>
+        <p>Ride 6 minutes at a controlled tempo. Spin lightly for 4 minutes, then ride another 6 at the same effort. Resist the urge to surge in the final minute.</p>
+        <p><strong>By feel:</strong> Breathing deepens but short phrases come comfortably; the second finish should feel like the first. <strong>By power:</strong> Hold low Zone 3 (tempo) on both efforts, with Zone 1 between.</p>
+        <p><strong>Short on time?</strong> Make the efforts 3 minutes each and keep the full recovery. Aim to match them, not beat the first.</p>
+      </details>
+    </article>
+  </section>
+</main>
+</body>
+</html>
