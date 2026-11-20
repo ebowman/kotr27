@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="kotr-release" content="81b96ade9a2290c301e4f83c">
+  <meta name="kotr-release" content="2b534efadd0279e716302022">
   <script>// Inlined only in releases. The entry itself carries the freshness marker:
 // revalidate the ordinary cache key, even within Pages' HTML max-age.
 addEventListener('pageshow', async () => {
@@ -36,8 +36,8 @@ addEventListener('pageshow', async () => {
   <title>Semonzo ascent · KOTR 2027 route preview</title>
   <meta name="description" content="Preview the provisional Semonzo ascent of Monte Grappa for KOTR 2027 Long groups.">
   <script defer src="./js/config.f9c66323124751eb70ba6b3b.js"></script>
-  <script defer src="./assets/terrain.0443ae94a37b08982b65ee78.js"></script>
-  <script defer src="./assets/flyover.0f0bce25f8b1d6b224713166.js"></script>
+  <script defer src="./assets/terrain.c027827694c93e2ebe68da63.js"></script>
+  <script defer src="./assets/flyover.0ab8d0005add9b2e6c7fe126.js"></script>
   <style>
     :root { color-scheme: light; --paper:#f9f6ec; --ink:#163c34; --line:#b6c3b4; --rust:#8a3c22 }
     * { box-sizing:border-box }
@@ -57,6 +57,10 @@ addEventListener('pageshow', async () => {
     .viewport { position:relative; aspect-ratio:610/455; background:#e2e8d8 }
     #map { position:absolute; inset:0 }
     #map[aria-busy=true] { visibility:hidden }
+    /* Keep the pending camera's dimensions while giving the profile the
+       space. A late texture must prove the same lens before it is revealed. */
+    .viewport.satellite-standby { width:100%; height:0; overflow:hidden }
+    .satellite-standby #map { inset:0 0 auto; width:100%; aspect-ratio:inherit }
     #message { margin:0; padding:.3rem 1rem; font-size:.88rem }
     @media (max-width:36rem) { .viewport { aspect-ratio:1 } }
     .rider-beacon { width:20px; height:20px; border-radius:50%; background:#ffdc56;
@@ -96,6 +100,7 @@ addEventListener('pageshow', async () => {
         <div id="deck" hidden>
           <div class="controls">
             <button type="button" id="play">Play flyover</button>
+            <button type="button" id="retry" hidden>Retry satellite view</button>
             <label>Speed <select id="speed"><option value=".5">½×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label>
             <button type="button" id="reset">Route overview</button>
           </div>

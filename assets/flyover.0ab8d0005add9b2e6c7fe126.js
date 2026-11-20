@@ -61,21 +61,31 @@
         + w2*c[k] + w3*(e?.[k] ?? 2*c[k]-b[k]);
       return result;
     }
-    let terrain, focus, offset, anchor, angle = 0, availability = 'loading', overviewOnly=false;
+    let terrain, focus, offset, anchor, angle = 0, availability = 'loading';
     function resetCamera() {
       focus = null;
       angle = 0;
     }
-    const rate = () => total / 90 * Number(el('speed').value);
+    const duration = 150;
+    const rate = () => total / duration * Number(el('speed').value);
+    const ease = x => { x=Math.max(0,Math.min(1,x)); return x*x*(3-2*x); };
+    // Compose the ridge from its eastern flank *before* entering the bends.
+    // Distance-keyed yaw is reproducible on seek and doesn't chase the rider.
+    function composition(distance) {
+      const ridge=ease((distance-2600)/1400)*ease((8700-distance)/1700);
+      const phase=distance/total*2*Math.PI;
+      return {angle:phase+(2.4-phase)*ridge,ridge,opening:1-ease(distance/1500)};
+    }
     // Sample the same camera rail as playback, lazily (not every frame).
     function upcoming() {
       if (!playing || document.hidden) return;
-      const velocity = rate(), distance = Math.min(total, d + 2.5 * velocity);
-      if (distance - d < 180) return;
-      return {focus:rail(distance), distance, turn:.08 * (distance-d)/velocity};
+      const velocity = rate(), distance = Math.min(total, d + Math.min(1800,4 * velocity));
+      if (distance - d < 80) return;
+      return {focus:rail(distance), distance, turn:composition(distance).angle-angle};
     }
     function render(seconds = 0) {
       const point = sample(d);
+      point.d=d;
       const snap = !focus;
       if (snap) {
         focus = {...point};
@@ -89,7 +99,10 @@
         const u = Math.min(1, (d-anchor)/Math.min(step,total-anchor));
         for (const k of keys) focus[k] += offset[k]*(1-u)**2*(1+2*u);
       }
-      angle = (angle + .08 * seconds) % (2 * Math.PI);
+      const shot=composition(d);
+      angle=shot.angle;
+      focus.ridge=shot.ridge;
+      focus.opening=shot.opening;
       const pos = (d / total * 1000).toFixed(2);
       el('cursor').setAttribute('x1', pos);
       el('cursor').setAttribute('x2', pos);
@@ -98,26 +111,25 @@
       el('stats').textContent = text;
       seek.setAttribute('aria-valuetext', text);
       updateMode();
-      play.textContent = overviewOnly || availability==='unavailable' ? 'Flyover unavailable'
+      play.textContent = availability==='unavailable' ? 'Flyover unavailable'
         : playing ? 'Pause' : d === total ? 'Replay flyover' : 'Play flyover';
-      terrain?.(point, following, focus, angle, seconds, snap);
+      terrain?.(point, following, focus, angle, seconds, snap, playing);
     }
     function updateMode() {
-      el('mode').textContent = playing ? (availability==='ready' ? 'Cinematic flyover' : 'Buffering')
-        : !following ? 'Route overview' : overviewOnly ? 'Elevation profile' : d === total ? 'Summit' : 'Paused';
+      el('mode').textContent = availability==='standby' ? 'Elevation profile' : playing ? (availability==='ready' ? 'Cinematic flyover' :
+        availability==='flat' ? 'Flat satellite ride' : 'Buffering')
+        : !following ? 'Route overview' : availability==='unavailable' ? 'Elevation profile' : d === total ? 'Summit' : 'Paused';
     }
-    function setAvailability(state) {
+    let discardMap;
+    function setAvailability(state, retryable=false, discard) {
+      discardMap=discard;
+      el('retry').hidden=!retryable;
       if (state===availability) return;
       availability=state;
       last=null; // No elapsed buffering time is owed, even between two RAFs.
-      if (state==='overview-only') {
-        overviewOnly=true;
-        pause(); following=false; d=0; resetCamera();
-        play.disabled=true;
-        render();
-      }
       if (state==='unavailable') {
         pause();
+        terrain=null;
         play.disabled=true;
         play.textContent='Flyover unavailable';
       }
@@ -130,8 +142,8 @@
     }
     function tick(now) {
       if (!playing) return;
-      if (availability!=='ready' || last===null) {
-        last=availability==='ready' ? now : null;
+      if (availability==='loading' || availability==='standby' || last===null) {
+        last=availability==='loading' || availability==='standby' ? null : now;
         frame=requestAnimationFrame(tick);
         return;
       }
@@ -139,7 +151,7 @@
       const gap = last === null ? 0 : (now-last)/1000;
       // A stalled foreground frame is not distance owed. Discard its backlog
       // for all consumers, including the orbit, and rebase on this timestamp.
-      const seconds = Math.min(gap > .15 ? 1/60 : gap, (total - d) / velocity);
+      const seconds = Math.min(gap > .5 ? 1/60 : Math.min(.15,gap), (total - d) / velocity);
       d = Math.min(total, d + seconds * velocity);
       last = now;
       if (d === total) pause();
@@ -175,7 +187,20 @@
     });
     render();
     el('deck').hidden = false;
-    if (window.startTerrain) window.startTerrain(points, draw => { terrain = draw; render(); }, upcoming, setAvailability);
+    const startMap=()=>window.startTerrain(points, draw => { terrain = draw; render(); }, upcoming, setAvailability);
+    el('retry').addEventListener('click',()=>{
+      if (el('retry').hidden) return;
+      discardMap?.();
+      el('map').parentElement.classList.remove('satellite-standby');
+      setAvailability('loading');
+      el('map').setAttribute('aria-busy','true');
+      el('map').parentElement.hidden=false;
+      el('message').textContent='Loading satellite terrain…';
+      play.disabled=false;
+      render();
+      startMap(); // same clock and seek position; no automatic retry loop
+    });
+    if (window.startTerrain) startMap();
     else {
       setAvailability('unavailable');
       el('map').parentElement.hidden = true;
