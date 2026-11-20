@@ -1,9 +1,7 @@
-// All geometry and relief are local. The shaded image, route overlay and camera
-// use the same oblique projection (metres east, north and above sea level).
+// The local GPX drives playback and the elevation profile, with or without a map.
 (() => {
   const el = id => document.getElementById(id);
-  const scene = el('scene'), seek = el('seek'), play = el('play');
-  const overview = [-290, -285, 610, 455];
+  const seek = el('seek'), play = el('play');
   const km = metres => (metres / 1000).toFixed(1);
 
   async function load() {
@@ -18,8 +16,7 @@
       const prev = points.at(-1);
       const d = prev ? prev.d + Math.hypot(east - prev.east, north - prev.north) : 0;
       if (!Number.isFinite(d + height)) throw Error('Invalid route');
-      if (!prev || d > prev.d) points.push({ lon, lat, east, north, height, d,
-        x: east / 15, y: -(north * .68 + height * .8) / 15 });
+      if (!prev || d > prev.d) points.push({ lon, lat, east, north, height, d });
     }
     if (points.length < 2) throw Error('Empty route');
     return points;
@@ -44,7 +41,7 @@
       }
       const p = points[a], q = points[b], f = (distance - p.d) / (q.d - p.d);
       const lerp = k => p[k] + f * (q[k] - p[k]);
-      return { x:lerp('x'), y:lerp('y'), lon:lerp('lon'), lat:lerp('lat'), height:lerp('height') };
+      return { lon:lerp('lon'), lat:lerp('lat'), height:lerp('height') };
     }
     // A uniform cubic B-spline through distance-spaced control samples. Its
     // centered support sees both sides of a switchback; position, velocity
@@ -64,26 +61,9 @@
         + w2*c[k] + w3*(e?.[k] ?? 2*c[k]-b[k]);
       return result;
     }
-    let terrain, focus, offset, anchor, angle = 0;
-    const reliefHeight = 260 * 455 / 610;
-    // Both cameras aim at the viewport center. During a handoff pan the
-    // entire relief view (never the beacon alone) to match the perspective
-    // camera's framing of the current route point.
-    let panX = 0, panY = 0, startX, startY;
-    function frameRelief() {
-      scene.setAttribute('viewBox', following ?
-        `${focus.x-130-panX} ${focus.y-reliefHeight/2-panY} 260 ${reliefHeight}` : overview.join(' '));
-    }
-    function alignRelief(point, screen, blend) {
-      if (!blend) { startX = panX; startY = panY; }
-      const target = screen.matrixTransform(scene.getScreenCTM().inverse());
-      panX = startX + (panX + target.x-point.x-startX)*blend;
-      panY = startY + (panY + target.y-point.y-startY)*blend;
-      frameRelief();
-    }
+    let terrain, focus, offset, anchor, angle = 0, availability = 'loading';
     function resetCamera() {
       focus = null;
-      panX = panY = 0;
       angle = 0;
     }
     const rate = () => total / 90 * Number(el('speed').value);
@@ -96,7 +76,6 @@
     }
     function render(seconds = 0) {
       const point = sample(d);
-      const {x,y} = point;
       const snap = !focus;
       if (snap) {
         focus = {...point};
@@ -111,10 +90,6 @@
         for (const k of keys) focus[k] += offset[k]*(1-u)**2*(1+2*u);
       }
       angle = (angle + .08 * seconds) % (2 * Math.PI);
-      frameRelief();
-      const rider = el('relief-beacon');
-      rider.setAttribute('transform', `translate(${x} ${y})`);
-      rider.setAttribute('visibility', following ? 'visible' : 'hidden');
       const pos = (d / total * 1000).toFixed(2);
       el('cursor').setAttribute('x1', pos);
       el('cursor').setAttribute('x2', pos);
@@ -122,9 +97,25 @@
       const text = `${km(d)} km ridden · ${Math.round(point.height)} m elevation · ${km(total - d)} km remaining`;
       el('stats').textContent = text;
       seek.setAttribute('aria-valuetext', text);
-      el('mode').textContent = playing ? 'Cinematic flyover' : !following ? 'Route overview' : d === total ? 'Summit' : 'Paused';
-      play.textContent = playing ? 'Pause' : d === total ? 'Replay flyover' : 'Play flyover';
+      updateMode();
+      play.textContent = availability==='unavailable' ? 'Flyover unavailable'
+        : playing ? 'Pause' : d === total ? 'Replay flyover' : 'Play flyover';
       terrain?.(point, following, focus, angle, seconds, snap);
+    }
+    function updateMode() {
+      el('mode').textContent = playing ? (availability==='ready' ? 'Cinematic flyover' : 'Buffering')
+        : !following ? 'Route overview' : d === total ? 'Summit' : 'Paused';
+    }
+    function setAvailability(state) {
+      if (state===availability) return;
+      availability=state;
+      last=null; // No elapsed buffering time is owed, even between two RAFs.
+      if (state==='unavailable') {
+        pause();
+        play.disabled=true;
+        play.textContent='Flyover unavailable';
+      }
+      updateMode();
     }
     function pause() {
       playing = false;
@@ -133,6 +124,11 @@
     }
     function tick(now) {
       if (!playing) return;
+      if (availability!=='ready' || last===null) {
+        last=availability==='ready' ? now : null;
+        frame=requestAnimationFrame(tick);
+        return;
+      }
       const velocity = rate();
       const gap = last === null ? 0 : (now-last)/1000;
       // A stalled foreground frame is not distance owed. Discard its backlog
@@ -173,10 +169,16 @@
     });
     render();
     el('deck').hidden = false;
-    window.startTerrain?.(points, draw => { terrain = draw; render(); }, upcoming, alignRelief);
+    if (window.startTerrain) window.startTerrain(points, draw => { terrain = draw; render(); }, upcoming, setAvailability);
+    else {
+      setAvailability('unavailable');
+      el('map').parentElement.hidden = true;
+      el('message').textContent = 'Satellite terrain unavailable. Use the elevation profile below.';
+    }
   }
   load().then(start).catch(() => {
-    el('message').textContent += ' Playback is unavailable; the full route is shown above.';
+    el('map').parentElement.hidden = true;
+    el('message').textContent = 'Route data unavailable. Playback and satellite preview are unavailable.';
   });
   // Start the optional SDK alongside GPX, not before this deferred local
   // player (a slow satellite stylesheet must not hold up the controls).

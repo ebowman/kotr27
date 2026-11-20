@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="kotr-release" content="d8dd55cb79f6d18e59482947">
+  <meta name="kotr-release" content="92977cfe10d361c49032b3e2">
   <script>// Inlined only in releases. The entry itself carries the freshness marker:
 // revalidate the ordinary cache key, even within Pages' HTML max-age.
 addEventListener('pageshow', async () => {
@@ -36,8 +36,8 @@ addEventListener('pageshow', async () => {
   <title>Semonzo ascent · KOTR 2027 route preview</title>
   <meta name="description" content="Preview the provisional Semonzo ascent of Monte Grappa for KOTR 2027 Long groups.">
   <script defer src="./js/config.f9c66323124751eb70ba6b3b.js"></script>
-  <script defer src="./assets/terrain.42364e7b71891463396bcc01.js"></script>
-  <script defer src="./assets/flyover.a61b484ac8aa201e83be9474.js"></script>
+  <script defer src="./assets/terrain.639efb090cd5c1912c0bd900.js"></script>
+  <script defer src="./assets/flyover.b69144ed694bfd6dea7dc38a.js"></script>
   <style>
     :root { color-scheme: light; --paper:#f9f6ec; --ink:#163c34; --line:#b6c3b4; --rust:#8a3c22 }
     * { box-sizing:border-box }
@@ -54,16 +54,14 @@ addEventListener('pageshow', async () => {
     a { color:inherit; text-underline-offset:.2em }
     section { padding-top:1.4rem }
     .panel { background:#fffdf6; padding:clamp(1rem,3vw,1.8rem) }
-    .viewport { position:relative }
-    #map { position:absolute; inset:0; visibility:hidden }
-    .terrain #map { visibility:visible }
-    .terrain #scene { visibility:hidden }
-    .terrain #relief-beacon { display:none }
+    .viewport { position:relative; aspect-ratio:610/455; background:#e2e8d8 }
+    #map { position:absolute; inset:0 }
+    #map[aria-busy=true] { visibility:hidden }
+    #message { margin:0; padding:.3rem 1rem; font-size:.88rem }
+    @media (max-width:36rem) { .viewport { aspect-ratio:1 } }
     .rider-beacon { width:20px; height:20px; border-radius:50%; background:#ffdc56;
       border:3px solid #163c34; box-shadow:0 0 0 2px white }
     figure { margin:1.2rem 0 0; border:1px solid var(--line) }
-    .scene { display:block; width:100%; aspect-ratio:610/455; background:#e2e8d8 }
-    @media (max-width:36rem) { .scene { aspect-ratio:1 } }
     .ribbon { display:flex; justify-content:space-between; gap:.5rem; padding:.6rem 1rem; background:var(--ink); color:white; font:600 .85rem/1.5 ui-monospace,monospace }
     @media (max-width:36rem) { .ribbon { min-height:calc(3em + 1.2rem); align-items:center } }
     .controls { display:flex; flex-wrap:wrap; align-items:center; gap:.7rem; margin:.8rem 0 }
@@ -89,20 +87,12 @@ addEventListener('pageshow', async () => {
     <p>Approximately 19 km from Semonzo (212 m) to Monte Grappa (1,746 m). Only Long groups climb the mountain; the event route is not confirmed.</p>
     <figure>
       <div class="ribbon"><span>SEMONZO / ASCENT STUDY</span><span id="mode">Route overview</span></div>
+      <p id="message" role="status">Loading satellite terrain…</p>
       <div class="viewport">
-      <svg id="scene" class="scene" viewBox="-290 -285 610 455" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Oblique relief of the provisional Semonzo ascent; north is up.">
-        <image href="./assets/grappa-relief.8603dada041f91618c7840a5.webp" x="-360" y="-385" width="750" height="650"/>
-        <image href="./assets/ascent.10c2a3f180e45343e77ce169.svg" x="-360" y="-385" width="750" height="650"/>
-        <g id="relief-beacon" visibility="hidden" fill="#ffdc56" stroke="#163c34">
-          <circle r="8" fill="white" stroke="none"/>
-          <circle r="5.5" stroke-width="2.5"/>
-        </g>
-      </svg>
-      <div id="map" aria-label="Satellite terrain view of the Semonzo ascent"></div>
+        <div id="map" aria-busy="true" aria-label="Satellite terrain view of the Semonzo ascent"></div>
       </div>
       <figcaption class="panel">
         <p class="label">Provisional preview · Not for navigation</p>
-        <p id="message">Shaded relief · The orange line traces the ascent.</p>
         <div id="deck" hidden>
           <div class="controls">
             <button type="button" id="play">Play flyover</button>
@@ -118,7 +108,7 @@ addEventListener('pageshow', async () => {
           <div class="scale"><span>0 km</span><span id="length"></span></div>
           <p class="small" id="hint">Tap or drag across the profile. With the profile focused, use ← / → to move 100 m or Home / End to jump.</p>
         </div>
-        <p class="small">Approximate route and elevations: <a href="https://brouter.de/">BRouter</a> using © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors (ODbL)</a>. Shaded relief produced using <a href="https://registry.opendata.aws/copernicus-dem/">Copernicus WorldDEM-30</a> © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved.</p>
+        <p class="small">Approximate route and elevations: <a href="https://brouter.de/">BRouter</a> using © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors (ODbL)</a>.</p>
       </figcaption>
     </figure>
   </section>
