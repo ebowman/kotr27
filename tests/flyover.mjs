@@ -8,7 +8,7 @@ import { once } from 'node:events';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { browser, until } from './browser.mjs';
 
-test('phone-sized cinematic orbit, controls and asset fallbacks', {timeout: 60000}, async t => {
+test('phone-sized cinematic follow, controls and asset fallbacks', {timeout: 60000}, async t => {
   const files = {'index.html':'text/html','assets/flyover.js':'text/javascript',
     'assets/terrain.js':'text/javascript', 'js/config.js':'text/javascript',
     'assets/semonzo.gpx':'application/xml'};
@@ -267,7 +267,11 @@ test('phone-sized cinematic orbit, controls and asset fallbacks', {timeout: 6000
     assert.equal(samples[0][2],0,'seek snaps focus to exact rider');
     assert.ok(samples.some(s => s[2] > 10),'framing smooths independently of marker');
     samples.forEach(([angle,radius,lag],i) => {
-      assert.ok(Math.abs(angle - 2*Math.PI*samples[i][7]/total) < .001,'distance-planned orbit through hairpin');
+      if(i) {
+        const change=angle-samples[i-1][0], metres=samples[i][7]-samples[i-1][7];
+        assert.ok(Math.abs(Math.atan2(Math.sin(change),Math.cos(change))) <= .0015*(metres+1),
+          'no segment swivel or long-way rotation through the hairpin');
+      }
       assert.ok(Math.abs(radius-900) < .01 && lag < radius/3);
     });
   }

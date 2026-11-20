@@ -406,21 +406,40 @@ test('delayed DEM prepares during moving flat playback, promotes once usable; co
     assert.deepEqual(exceptions,[]);
   });
 
-test('opening flat ride keeps its textured shot past 147 m while new tiles and promotion are held',
+test('opening flat ride keeps visible road and imagery while new tiles and promotion are held',
   {skip:!process.env.MAPBOX_GL_215,timeout:30000},async t=>{
     const {js,hold,holdSat,release,exceptions}=await fixture(t,'cold');
     hold(); t.after(release);
     await js('play.click()');
     await until(()=>js(`mode.textContent==='Flat satellite ride' && +seek.value>0`));
     holdSat();
-    await js(`window.lens=JSON.stringify([testMap.getCenter(),testMap.getZoom(),testMap.getPitch()]);
-      window.badFrames=0;window.audit=()=>{
-        if(map.getAttribute('aria-busy')!=='false' || testMap.getTerrain() ||
-          JSON.stringify([testMap.getCenter(),testMap.getZoom(),testMap.getPitch()])!==lens) badFrames++;
+    await js(`window.badFrames=0;const covered=rasterCoverage(testMap);window.audit=()=>{
+        if(map.getAttribute('aria-busy')==='false' && (testMap.getTerrain() ||
+          !testMap.queryRenderedFeatures(testMap.project(beacon.getLngLat()),{layers:['ascent']}).length ||
+          !covered())) badFrames++;
       };testMap.on('render',audit);void 0`);
     await until(()=>js(`+seek.value>=350`));
     assert.ok(await js(`badFrames===0 && testMap.getPitch()>=32 && play.textContent==='Pause' && mode.textContent==='Flat satellite ride'`));
     await js(`testMap.off('render',audit);void 0`);
+    assert.deepEqual(exceptions,[]);
+  });
+
+test('mesh-free Play follows the changing ridge corridor, not just the seek bearing',
+  {skip:!process.env.MAPBOX_GL_215,timeout:30000},async t=>{
+    const {js,exceptions}=await fixture(t,'spike');
+    await js(`seek.value=3950;seek.dispatchEvent(new Event('input'));speed.value='4';play.click()`);
+    await until(()=>js(`mode.textContent==='Flat satellite ride'`));
+    const samples=[];
+    do {
+      await sleep(120);
+      samples.push(await js(`({b:testMap.getBearing(),d:+seek.value,flat:!testMap.getTerrain()})`));
+    } while (samples.at(-1).d<7000);
+    const turns=samples.slice(1).map((s,i)=>((s.b-samples[i].b+540)%360)-180);
+    assert.ok(samples.every(s=>s.flat));
+    const net=turns.reduce((sum,t)=>sum+t,0), travel=turns.reduce((sum,t)=>sum+Math.abs(t),0);
+    assert.ok(net>25 && net<70 && travel-net>3 && travel<105,
+      `follow the broad ridge and ease through its counterturn: net ${net}, total ${travel} degrees`);
+    assert.ok(turns.every((t,i)=>Math.abs(t)<.13*(samples[i+1].d-samples[i].d)+2),'no sudden yaw cut');
     assert.deepEqual(exceptions,[]);
   });
 
@@ -717,14 +736,20 @@ test('moving real-road ridge keeps the actual SDK lens composed and the rider on
           // Rounded seek metres can straddle a GPX vertex.
           [i-1,i,i+1].some(k=>k>0 && k<track.length && near(vertices[j-1],testMap.project(track[k-1])) &&
             near(vertices[j+1],testMap.project(track[k]))));
+        // Independent broad chord from the original GPX, not the camera rail.
+        const at=m=>track[chain.findIndex(z=>z>=m)], a=at(d-450), bAhead=at(d+750);
+        const course=Math.atan2((bAhead[0]-a[0])*77450,(bAhead[1]-a[1])*111200)*180/Math.PI;
+        const ahead=testMap.project(at(d+150));
         const sample={d,terrain:!!testMap.getTerrain(),vis:map.getAttribute('aria-busy')==='false',road,
+          quarter:((course-testMap.getBearing()+540)%360)-180,
+          aheadVisible:Math.min(ahead.x,ahead.y,m.width-ahead.x,m.height-ahead.y)>4,
           msg:message.textContent,unbound:testMap.transform.elevation?.proxyCoords.some(
             id=>!testMap.transform.elevation.terrainTileForTile[id.key]?.dem),
           hit:beacon.getLngLat().distanceTo(testMap.unproject(p)),
           markerError:Math.hypot(b.x+b.width/2-m.x-p.x,b.y+b.height/2-m.y-p.y),
           traceError:Math.min(...vertices.map(v=>Math.hypot(v.x-p.x,v.y-p.y))),
           opacity:+getComputedStyle(beacon.getElement()).opacity,eye:[eye.lng,eye.lat,cam.toAltitude()],
-          zoom:testMap.getZoom(),pitch:testMap.getPitch()};
+          zoom:testMap.getZoom(),pitch:testMap.getPitch(),bearing:testMap.getBearing()};
         stepRide(clock+=64); // ~8 m: measure the cut, don't stride over it
         return sample;
       })()`);
@@ -746,6 +771,11 @@ test('moving real-road ridge keeps the actual SDK lens composed and the rider on
     const missing=ridge.find(s=>!s.vis || s.opacity!==1 || !s.road);
     assert.ok(!missing,`road and rider at sampled moving positions: ${JSON.stringify(missing)}`);
     const pairs=terrain.slice(1).map((s,i)=>[s,terrain[i]]);
+    assert.ok(terrain.filter(s=>s.quarter>10 && s.quarter<80).length>.8*terrain.length &&
+      terrain.every(s=>s.aheadVisible),'road ahead in frame; lens predominantly on the trailing quarter');
+    const turns=pairs.map(([s,p])=>((s.bearing-p.bearing+540)%360)-180);
+    assert.ok(turns.reduce((sum,v)=>sum+Math.abs(v),0)>35 && Math.max(...turns.map(Math.abs))<3,
+      'actual terrain lens turns through the ridge without whipping on individual segments');
     const maxZoom=Math.max(...pairs.map(([s,p])=>Math.abs(s.zoom-p.zoom)));
     const maxEye=Math.max(...pairs.map(([s,p])=>Math.hypot((s.eye[0]-p.eye[0])*77450,
       (s.eye[1]-p.eye[1])*111200,s.eye[2]-p.eye[2])/(s.d-p.d)));
