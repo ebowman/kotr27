@@ -69,19 +69,31 @@
     const duration = 150;
     const rate = () => total / duration * Number(el('speed').value);
     const ease = x => { x=Math.max(0,Math.min(1,x)); return x*x*(3-2*x); };
-    // Compose the ridge from its eastern flank *before* entering the bends.
-    // Distance-keyed yaw is reproducible on seek and doesn't chase the rider.
+    // Block the shot in metres, not frames: the broad chord sees the exit of
+    // a bend before the rider gets there. Unwrap and ease its trailing-quarter
+    // angle on a fine distance grid so even a reversing chord can't spin the
+    // lens. Seeking and changing frame rate traverse the same camera track.
+    const clampD = v => Math.max(0, Math.min(total,v));
+    const aim = v => rail(clampD(v+100));
+    const count=Math.ceil(total/24), stride=total/count, yaw=[];
+    for (let i=0;i<=count;i++) {
+      const d=i*stride, a=rail(clampD(d-460)), b=rail(clampD(d+780));
+      const course=Math.atan2((b.lon-a.lon)*77450,(b.lat-a.lat)*111200);
+      const wanted=.72-course, prior=yaw[i-1] ?? wanted;
+      const delta=Math.atan2(Math.sin(wanted-prior),Math.cos(wanted-prior));
+      yaw.push(prior+stride*.0015*Math.tanh(delta/.35));
+    }
     function composition(distance) {
       const ridge=ease((distance-2600)/1400)*ease((8700-distance)/1700);
-      const phase=distance/total*2*Math.PI;
-      return {angle:phase+(2.4-phase)*ridge,ridge,opening:1-ease(distance/1500)};
+      const i=Math.min(count-1,Math.floor(distance/stride));
+      return {angle:yaw[i]+(yaw[i+1]-yaw[i])*(distance/stride-i),ridge,opening:1-ease(distance/1500)};
     }
     // Sample the same camera rail as playback, lazily (not every frame).
     function upcoming() {
       if (!playing || document.hidden) return;
       const velocity = rate(), distance = Math.min(total, d + Math.min(1800,4 * velocity));
       if (distance - d < 80) return;
-      return {focus:rail(distance), distance, turn:composition(distance).angle-angle};
+      return {focus:aim(distance), distance, turn:composition(distance).angle-angle};
     }
     function render(seconds = 0) {
       const point = sample(d);
@@ -89,11 +101,11 @@
       const snap = !focus;
       if (snap) {
         focus = {...point};
-        offset = rail(d);
+        offset = aim(d);
         for (const k of keys) offset[k] = point[k] - offset[k];
         anchor = d;
       } else if (seconds > 0) {
-        focus = rail(d);
+        focus = aim(d);
         // A seek starts at the exact rider. Ease its offset out over the next
         // span rather than popping onto the precomputed path on frame two.
         const u = Math.min(1, (d-anchor)/Math.min(step,total-anchor));

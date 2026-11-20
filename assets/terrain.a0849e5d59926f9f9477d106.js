@@ -306,7 +306,7 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
           return local.isConnected;
         }
         let inOverview = false, flatOnly=false, flatCamera, pose, current, dirty = false, revision=0;
-        let safeFlat, holdFlat=false, moving=false, standby=false;
+        let safeFlat, holdFlat=false, retryFollow=0, moving=false, standby=false;
         const rideDeadline=()=>moving ? 2000 : 3500;
         let quarantined=false, attempts=0, flatSince=0, generation=0, rollbackCamera;
         // GL 2.15 silently retains 404s as errored tiles. Its ordinary
@@ -473,8 +473,13 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
           // while an optional mesh prepares. The rider still moves on GPX.
           if (holdFlat) {
             const p=map.project([point.lon,point.lat]);
-            holdFlat=Math.min(p.x,p.y,container.clientWidth-p.x,container.clientHeight-p.y)>30;
-            if (!holdFlat) safeFlat=null;
+            holdFlat=Math.min(p.x,p.y,container.clientWidth-p.x,container.clientHeight-p.y)>30 &&
+              (!seconds || performance.now()<retryFollow);
+            if (!holdFlat && safeFlat) {
+              flatCamera.dx=safeFlat.center.lng-focus.lon;
+              flatCamera.dy=safeFlat.center.lat-focus.lat;
+              flatCamera.bearing=safeFlat.bearing;
+            }
           }
           const keep=snap ? 0 : Math.exp(-seconds/.8);
           flatCamera.dx*=keep;
@@ -482,7 +487,9 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
           const targetPitch=38+6*(focus.ridge || 0);
           flatCamera.pitch=targetPitch+(flatCamera.pitch-targetPitch)*keep;
           flatCamera.zoom=flatCamera.targetZoom+(flatCamera.zoom-flatCamera.targetZoom)*keep;
-          if (snap) flatCamera.bearing=-angle*180/Math.PI;
+          const desired=-angle*180/Math.PI;
+          const turn=((desired-flatCamera.bearing)%360+540)%360-180;
+          flatCamera.bearing+=turn*(1-keep);
           if (!holdFlat) map.jumpTo({center:snap ? [point.lon,point.lat] : [focus.lon+flatCamera.dx,focus.lat+flatCamera.dy],
             zoom:flatCamera.zoom,pitch:flatCamera.pitch,bearing:flatCamera.bearing});
           rider.setLngLat([point.lon,point.lat]);
@@ -635,6 +642,7 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
               // oblique viewport, then verify its actual draw before reveal.
               if (!imagery && safeFlat && !holdFlat) {
                 holdFlat=true;
+                retryFollow=now+800;
                 map.jumpTo(safeFlat);
                 loading(true,'Preparing flat satellite ride…');
                 drawFlat(...current);
@@ -657,7 +665,6 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
               }
               if (!drawLocal(current[0],p)) { loading(true,'Preparing local route trace…'); return; }
               safeFlat={center:map.getCenter(),zoom:map.getZoom(),pitch:map.getPitch(),bearing:map.getBearing()};
-              holdFlat=true;
               rendered();
               if (promotionEpoch===generation && moving && !quarantined) {
                 rollbackCamera={...flatCamera};
