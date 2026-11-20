@@ -11,12 +11,12 @@ import { browser, until } from './browser.mjs';
 test('phone-sized cinematic orbit, controls and asset fallbacks', {timeout: 60000}, async t => {
   const files = {'index.html':'text/html','assets/flyover.js':'text/javascript',
     'assets/terrain.js':'text/javascript', 'js/config.js':'text/javascript',
-    'assets/semonzo.gpx':'application/xml','assets/ascent.svg':'image/svg+xml',
-    'assets/grappa-relief.webp':'image/webp'};
-  const omit = new Set(), served = new Set();
+    'assets/semonzo.gpx':'application/xml'};
+  const omit = new Set(), served = new Set(), legacy = [];
   const sdkStarted = Promise.withResolvers();
   const server = createServer(async (req, res) => {
-    const file = req.url.replace(/^\/kotr27\//, '') || 'index.html';
+    const file = new URL(req.url,'http://localhost').pathname.replace(/^\/kotr27\//, '') || 'index.html';
+    if (/relief|ascent\.svg/.test(file)) legacy.push(file);
     if (!Object.hasOwn(files, file) || omit.has(file)) {
       res.writeHead(404).end(); return;
     }
@@ -42,29 +42,44 @@ test('phone-sized cinematic orbit, controls and asset fallbacks', {timeout: 6000
       addSource(id, source) { this[id] = source; }
       setTerrain(value) { this.terrain = value; }
       hints = [];
+      imagery=true;
+      getStyle(){return {layers:[{type:'raster',source:'sat'}]};}
+      transform={coveringTiles:()=>[1,2].map(key=>({key,children:()=>[{key:3}]}))};
+      style={_getSourceCache:()=>({getSource:()=>({tileSize:256,maxzoom:18}),
+        getRenderableIds:()=>this.imagery?[1,2]:[1],hasRenderableParent:()=>false})};
+      isSourceLoaded(){return true;}
       jumpTo(options) { if (options.preloadOnly) this.hints.push(options); }
       getBearing() { return 0; }
       areTilesLoaded() { return this.ready; }
       fitBounds() { this.camera = null; }
       queryTerrainElevation() { return 2000; }
       project() { return {x:map.clientWidth/2,y:map.clientHeight/2}; }
+      queryRenderedFeatures(box,{layers}) {return layers.includes(this.layer.id) && this.rider &&
+        box[0][0]<=map.clientWidth/2 && box[1][0]>=map.clientWidth/2 ? [{layer:this.layer}] : [];}
       triggerRepaint() { /* render events driven by test */ }
-      getFreeCameraOptions() { return {lookAtPoint(target){this.target = target;}}; }
+      getFreeCameraOptions() { return {position:{toLngLat:()=>({distanceTo:()=>1})},setPitchBearing(){},lookAtPoint(target){this.target = target;}}; }
+      unproject() { return this.rider; }
       setFreeCameraOptions(camera) { this.camera = camera; }
       remove() { this.removed = true; }
     },
     Marker: class {
       constructor({element}) { this.el=element; this.el.style.cssText='position:absolute;left:50%;top:50%;transform:translate(-50%,-50%)'; }
-      getLngLat(){ return demo.rider; } setLngLat(xy){ demo.rider = xy; }
+      getLngLat(){ return Object.assign(demo.rider,{distanceTo:()=>demo.pickError || 0}); } setLngLat(xy){ demo.rider = xy; }
       addTo(){map.append(this.el);} remove(){this.el.remove();demo.rider = null;}
     },
     MercatorCoordinate:{fromLngLat:(xy, altitude) => ({xy, altitude})},
     LngLatBounds:class { extend(){return this;} }
   };`;
-  const {cmd, js, exceptions} = await browser(t, (m, send) => {
+  let sdkGate, failSDK=false;
+  const {cmd, js, exceptions} = await browser(t, async (m, send) => {
     if (m.method === 'Fetch.requestPaused') {
       sdkStarted.resolve();
       const script = m.params.request.url.endsWith('.js');
+      if (sdkGate) await sdkGate.promise;
+      if (failSDK) {
+        send('Fetch.failRequest',{requestId:m.params.requestId,errorReason:'Failed'});
+        return;
+      }
       send('Fetch.fulfillRequest',{requestId:m.params.requestId, responseCode:200,
         responseHeaders:[{name:'Content-Type',value:script?'text/javascript':'text/css'}],
         body:Buffer.from(script?sdk:'').toString('base64')});
@@ -72,15 +87,39 @@ test('phone-sized cinematic orbit, controls and asset fallbacks', {timeout: 6000
   });
   await cmd('Fetch.enable',{patterns:[{urlPattern:'https://api.mapbox.com/*'}]});
   await cmd('Emulation.setDeviceMetricsOverride',{width:375,height:812,deviceScaleFactor:1,mobile:true});
+  sdkGate=Promise.withResolvers();
   await cmd('Page.navigate',{url});
   await until(() => js(`document.querySelector('#deck')?.hidden === false`));
   assert.equal(served.size, Object.keys(files).length);
   assert.ok(await js(`document.documentElement.scrollWidth <= innerWidth`));
-  await until(() => js(`!!document.querySelector('.terrain')`));
+  assert.ok(await js(`message.textContent.startsWith('Loading') && !document.querySelector('.viewport img,.viewport svg')`));
+  await js(`play.click()`); await sleep(350);
+  assert.ok(await js(`+seek.value===0 && mode.textContent==='Buffering'`));
+  sdkGate.resolve(); sdkGate=null;
+  await until(()=>js(`!!window.demo?.camera`));
+  assert.ok(await js(`+seek.value===0 && mode.textContent==='Buffering'`));
+  // Even when every source reports ready, a stale DOM pose or terrain
+  // pick must not unhide the map or let the clock escape.
+  await js(`window.dot=document.querySelector('.rider-beacon'); dot.style.marginLeft='10.9px';
+    demo.ready=true; demo.events.render()`);
+  assert.ok(await js(`map.getAttribute('aria-busy')==='true' && +seek.value===0`));
+  await js(`dot.style.marginLeft=''; demo.pickError=30; demo.events.render()`);
+  assert.ok(await js(`map.getAttribute('aria-busy')==='true' && +seek.value===0`));
+  await js(`demo.pickError=0; demo.ready=false`);
+  await sleep(60); await js('demo.events.render()');
+  await until(()=>js(`+seek.value>10 && mode.textContent==='Cinematic flyover'`));
+  // Losing visible imagery freezes the *existing* pose; unrelated pending
+  // requests (demo.ready=false) must not prevent a visible ride resuming.
+  const held=await js(`demo.imagery=false; demo.events.render(); +seek.value`);
+  await sleep(350);
+  assert.ok(await js(`+seek.value===${held} && mode.textContent==='Buffering'`));
+  await js('demo.imagery=true; demo.events.render()');
+  await until(()=>js(`+seek.value>${held}`));
+  await js(`reset.click()`);
   assert.ok(await js(`demo.options.style.includes('satellite') && demo.terrain.source === 'dem'
     && demo.dem.type === 'raster-dem' && demo.ascent.data.coordinates.length > 100 && demo.layer.source === 'ascent'`));
   assert.equal(await js(`document.querySelector('meta[name=referrer]').content`),'strict-origin-when-cross-origin');
-  const box = () => js(`scene.getAttribute('viewBox')`);
+  const box = () => js(`JSON.stringify(demo.camera)`);
   const overview = await box();
   assert.equal(await js(`mode.textContent`),'Route overview');
   assert.match(await js(`stats.textContent`),/18\.\d km remaining/);
@@ -105,7 +144,7 @@ test('phone-sized cinematic orbit, controls and asset fallbacks', {timeout: 6000
       window.cancelAnimationFrame = () => { next = null; };
       try {
         seek.value = ${start}; seek.dispatchEvent(new Event('input'));
-        speed.value = '${speedValue}'; play.click();
+        speed.value = '${speedValue}'; play.click(); demo.events.render();
         const samples = [];
         for (let n = 0; n <= ${hz}; n++) {
           next(1000 * n / ${hz});
@@ -156,18 +195,24 @@ test('phone-sized cinematic orbit, controls and asset fallbacks', {timeout: 6000
     window.cancelAnimationFrame = () => { next = null; };
     try {
       seek.value = 2450; seek.dispatchEvent(new Event('input'));
-      speed.value = '4'; play.click();
+      speed.value = '4'; play.click(); demo.events.render();
       next(0); next(1000/60);
       const capture = () => [+seek.value,demo.camera.position.altitude];
       const before = capture();
       demo.queryTerrainElevation = () => null;
       next(2000+1000/60); const after = capture();
+      demo.events.render(); const missing=message.textContent;
       demo.queryTerrainElevation = () => 2300;
-      next(2000+2000/60); const resumed = capture();
-      play.click(); return {before,after,resumed,step:+seek.max*4/90/60};
+      next(4000); const buffered=capture();
+      demo.events.sourcedata({sourceId:'dem'}); demo.events.render(); demo.events.render();
+      next(8000); const first=capture();
+      next(8000+1000/60); const resumed = capture();
+      play.click(); return {before,after,buffered,first,resumed,missing,step:+seek.max*4/90/60};
     } finally { window.requestAnimationFrame = raf; window.cancelAnimationFrame = cancel; demo.queryTerrainElevation = dem; }
   })()`);
   const {before,after,resumed,step} = delayed;
+  assert.match(delayed.missing,/Loading/);
+  assert.equal(delayed.buffered[0],after[0]); assert.equal(delayed.first[0],after[0]);
   assert.ok(Math.abs(after[0]-before[0]-step)<1 && Math.abs(resumed[0]-after[0]-step)<1);
   assert.ok(after[1] < before[1] && after[1] > before[1]-60);
   assert.equal(resumed[1],2900);
@@ -201,7 +246,7 @@ test('phone-sized cinematic orbit, controls and asset fallbacks', {timeout: 6000
     });
   }
   await js('reset.click()');
-  await js(`speed.value = '4'; play.click()`);
+  await js(`speed.value = '4'; play.click(); demo.events.render()`);
   await until(() => js(`Number(seek.value) > 40`));
   assert.equal(await js('demo.camera.position.altitude'),2600);
   const firstFrame = await box(); assert.notEqual(firstFrame,overview);
@@ -221,7 +266,7 @@ test('phone-sized cinematic orbit, controls and asset fallbacks', {timeout: 6000
   assert.match(await js('stats.textContent'),/1746 m elevation · 0\.0 km remaining/);
   assert.deepEqual(await js('demo.camera.target'),await js('demo.ascent.data.coordinates.at(-1)'));
   assert.ok(await js(`play.click(); JSON.stringify(demo.camera.target) === JSON.stringify(demo.ascent.data.coordinates[0])
-    && mode.textContent === 'Cinematic flyover' && +seek.value === 0`));
+    && mode.textContent === 'Buffering' && +seek.value === 0`));
   await js('reset.click()'); assert.equal(await box(),overview);
   assert.equal(await js('demo.camera'),null);
   // Tap the native range layered directly on the elevation profile.
@@ -230,18 +275,22 @@ test('phone-sized cinematic orbit, controls and asset fallbacks', {timeout: 6000
   assert.ok(await js(`Math.abs(seek.value/seek.max - .5) < .02`));
   const distance = await js('seek.value');
   await js(`demo.events.error({error:{status:403}})`);
-  assert.ok(await js(`demo.removed && !document.querySelector('.terrain') && message.textContent.includes('relief')`));
+  assert.ok(await js(`demo.removed && message.textContent.includes('unavailable')`));
   assert.equal(await js('seek.value'),distance);
-  await js('play.click()'); await until(()=>js(`+seek.value > ${distance}`));
+  assert.ok(await js(`play.disabled && +seek.value===${distance}`));
+  failSDK=true;
+  await cmd('Page.navigate',{url:url+'?sdk-failed'});
+  await until(()=>js(`location.search==='?sdk-failed' && document.querySelector('#message')?.textContent.includes('unavailable')`));
+  assert.ok(await js(`!deck.hidden && profile.getAttribute('d').length>100 && !window.demo`));
   omit.add('js/config.js');
-  omit.add('assets/grappa-relief.webp');
   await cmd('Page.navigate',{url:url+'index.html'});
   await until(()=>js(`location.pathname.endsWith('index.html') && document.querySelector('#deck')?.hidden === false`));
-  assert.ok(await js(`document.querySelector('image[href$="ascent.svg"]') !== null`));
-  await js('play.click()'); await until(()=>js('+seek.value > 0'));
+  assert.ok(await js(`message.getAttribute('role')==='status' && message.textContent.includes('unavailable')`));
+  assert.ok(await js(`play.disabled && !seek.disabled`));
   omit.add('assets/semonzo.gpx');
   await cmd('Page.navigate',{url});
-  await until(()=>js(`document.querySelector('#message')?.textContent.includes('Playback is unavailable')`));
+  await until(()=>js(`document.querySelector('#message')?.textContent.includes('Route data unavailable')`));
   assert.equal(await js('deck.hidden'),true);
+  assert.deepEqual(legacy,[]);
   assert.deepEqual(exceptions,[]);
 });

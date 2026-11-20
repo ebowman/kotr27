@@ -17,6 +17,9 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   await cp(new URL('../index.html', import.meta.url), join(src, 'index.html'));
   await writeFile(join(src, 'js/config.js'), 'window.KOTR_CONFIG = {};');
   await writeFile(join(src, 'assets/private.txt'), 'not public');
+  for (const legacy of ['grappa-relief.webp','ascent.svg']) {
+    await writeFile(join(src,'assets',legacy),'stale source asset, must not ship');
+  }
   const a = join(tmp, 'a'), b = join(tmp, 'b'), repeat = join(tmp, 'repeat');
   await build(src, a);
   const edit = async (file, before, after) => {
@@ -35,18 +38,22 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
     assert.deepEqual(await readFile(join(b, name)), await readFile(join(repeat, name)));
   }
   const names = await files(a);
-  assert.equal(names.length, 10); // two directories, six assets, entry, .nojekyll
+  assert.equal(names.length, 8); // two directories, four assets, entry, .nojekyll
+  assert.ok(!names.some(n=>/relief|\.svg$|\.webp$/.test(n)));
+  assert.doesNotMatch(await readFile(join(a,'index.html'),'utf8'), /grappa-relief|ascent\.svg|relief-beacon/);
   assert.ok(!names.includes('assets/private.txt'));
   const bNames = new Set(await files(b));
   assert.deepEqual(names.filter(n => !bNames.has(n)).sort(), names.filter(n =>
     /assets\/(?:flyover|semonzo)\./.test(n)).sort());
   let live = a, fail = false, probes = 0, plainNavigations = 0, replacements = 0;
+  const legacyRequests=[];
   const allowed = new Set([...names, ...bNames].filter(n => extname(n)));
   const types = {'.html':'text/html','.js':'text/javascript','.gpx':'application/xml',
     '.svg':'image/svg+xml','.webp':'image/webp'};
   const server = createServer(async (req, res) => {
     if (req.url === '/away') return res.writeHead(200, {'Content-Type':'text/html'}).end('<a href="/kotr27/">Return</a>');
     const url = new URL(req.url, 'http://localhost');
+    if (/grappa-relief|ascent\..*svg$/.test(url.pathname)) legacyRequests.push(url.pathname);
     const file = url.pathname.slice('/kotr27/'.length) || 'index.html';
     if (!url.pathname.startsWith('/kotr27/') || !allowed.has(file)) return res.writeHead(404).end();
     if (file === 'index.html') {
@@ -100,4 +107,5 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   assert.match(await summit(), /1846 m elevation/);
   assert.equal(replacements, 1);
   assert.deepEqual(exceptions, []);
+  assert.deepEqual(legacyRequests,[]);
 });

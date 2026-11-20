@@ -18,8 +18,7 @@ export async function build(source, destination) {
   if (!rel || !(rel === '..' || rel.startsWith('..' + sep))) throw Error('Output must be outside source');
   await mkdir(out);
   const names = new Map();
-  for (const file of ['assets/semonzo.gpx', 'js/config.js', 'assets/ascent.svg',
-    'assets/grappa-relief.webp', 'assets/terrain.js', 'assets/flyover.js']) {
+  for (const file of ['assets/semonzo.gpx', 'js/config.js', 'assets/terrain.js', 'assets/flyover.js']) {
     let data = await readFile(join(root, file));
     if (file === 'assets/flyover.js') {
       data = replace(data.toString(), './assets/semonzo.gpx', './' + names.get('assets/semonzo.gpx'));

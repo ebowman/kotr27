@@ -20,7 +20,7 @@ python3 -m http.server --bind 127.0.0.1 --directory "$stage" 8001
 Tests need Chrome (`CHROME` can specify its executable) and substitute a
 dummy config. Open `http://127.0.0.1:8001/kotr27/` for the packaged preview.
 Stop the preview with Ctrl-C. Build into a **new** directory for each release.
-Its only files are `index.html`, `.nojekyll`, and six fingerprinted files from
+Its only files are `index.html`, `.nojekyll`, and four fingerprinted files from
 `assets/` and `js/config.js`. Config is already browser-visible: use only the
 intended public, origin-restricted browser configuration there, never private
 credentials. The build does not need environment secrets.
