@@ -31,28 +31,49 @@ test('off-axis rider ray clears a spur missed by the focus ray; bounded approach
   }
 });
 
-test('a missing DEM band truncates the ray; missing rider DEM cannot verify it',()=>{
-  const dem=([,lat])=>y(lat)<-400 && y(lat)>-500 ? null : 500;
-  const pose=solve({queryTerrainElevation:dem},gps,focus,0,null,0);
-  assert.ok(pose.sampled && pose.reach<.45 && y(pose.eye[1])>-400);
+test('one missing sample on the ridge shot requires independent mesh proof, not a camera cut',()=>{
+  const ridge={...focus,ridge:1}, full=solve({queryTerrainElevation:()=>500},gps,ridge,0,null,0);
+  const dem=([,lat])=>lat<=full.eye[1] ? null : 500;
+  const pose=solve({queryTerrainElevation:dem},gps,ridge,0,full,.064);
+  assert.ok(!full.needsMeshProof && pose.needsMeshProof && pose.sampled);
+  assert.deepEqual(pose.eye,full.eye);
   const missing=solve({queryTerrainElevation:()=>null},gps,focus,0,null,0);
   assert.ok(Number.isFinite(missing.altitude) && !missing.sampled);
 });
 
-test('visible raster coverage accepts a drawn parent, not a loaded tile elsewhere',()=>{
+test('flat raster accepts the union of drawn textures, not loaded neighbours or a missing quadrant',()=>{
   const coverage=runInNewContext(source+'\nrasterCoverage',{window:{}});
-  let rendered=[],parent=false,sourceLoaded=false;
-  const cache={getSource:()=>({maxzoom:18}),getRenderableIds:()=>rendered,hasRenderableParent:()=>parent};
-  const ready=coverage({getStyle:()=>({layers:[{id:'sat',source:'sat',type:'raster'}]}),
-    setPaintProperty:(...args)=>assert.deepEqual(args,['sat','raster-fade-duration',0]),
-    style:{_getSourceCache:()=>cache},isSourceLoaded:()=>sourceLoaded,
-    transform:{coveringTiles:()=>[{key:3,children:()=>[4,5,6,7].map(key=>({key}))}]}});
+  const id=(z,x,y)=>({canonical:{z,x,y},wrap:0});
+  const west=id(12,2,4),east=id(12,3,4),sat=[],cover=[];
+  const cache=ids=>({getSource:()=>({}),getRenderableIds:()=>ids,getTileByID:tileID=>({tileID,texture:!tileID.missing})});
+  const ready=coverage({getStyle:()=>({layers:['sat','cover'].map(k=>({id:k,source:k,type:'raster'}))}),
+    setPaintProperty:(k,...args)=>assert.deepEqual(args,['raster-fade-duration',0]),
+    style:{_getSourceCache:k=>cache(k==='sat'?sat:cover)},
+    transform:{coveringTiles:()=>[west,east]}});
   assert.ok(!ready());
-  rendered=[2]; assert.ok(!ready());
-  parent=true; assert.ok(ready());
-  parent=false; rendered=[4,5,6]; assert.ok(!ready());
-  rendered.push(7); assert.ok(ready());
-  sourceLoaded=true; rendered=[]; assert.ok(!ready());
+  cover.push(id(11,1,1)); assert.ok(!ready()); // unrelated loaded tile
+  sat.push(id(11,1,2)); assert.ok(ready()); // drawn parent
+  sat.splice(0,1,west);
+  cover.push(id(13,6,8),id(13,7,8),id(13,6,9));
+  assert.ok(!ready());
+  const last=id(13,7,9); last.missing=true; sat.push(last); assert.ok(!ready());
+  last.missing=false; assert.ok(ready()); // neither cache suffices alone
+});
+
+test('draped raster follows textured proxy bindings, not an ideal flat selection',()=>{
+  const coverage=runInNewContext(source+'\nrasterCoverage',{window:{}});
+  const id=(z,x,y,texture=true)=>({canonical:{z,x,y},wrap:0,texture});
+  const proxy={...id(12,2,4),key:17};
+  const bound={sat:[],cover:[]};
+  const ready=coverage({getStyle:()=>({layers:['sat','cover'].map(id=>({id,type:'raster',source:id}))}),
+    setPaintProperty(){},style:{_getSourceCache:id=>({id,getTile:key=>({texture:key.texture})})},
+    transform:{elevation:{proxyCoords:[proxy],proxyToSource:{17:bound}}}});
+  bound.sat=[id(11,1,2)]; assert.ok(ready());
+  bound.sat=[id(11,1,2,false)]; assert.ok(!ready());
+  bound.sat=[id(13,4,8),id(13,5,8),id(13,4,9),id(13,4,9),id(14,8,18)];
+  assert.ok(!ready(),'duplicates and nested children cannot conceal a hole');
+  bound.cover.push({...id(13,5,9),wrap:1}); assert.ok(!ready(),'another world copy cannot fill a hole');
+  bound.cover.push(id(13,5,9)); assert.ok(ready(),'last bound quadrant comes from the coarse layer');
 });
 
 test('visible seam cache follows DEM replacement inside a drawn parent, in either axis',()=>{

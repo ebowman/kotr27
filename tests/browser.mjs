@@ -22,6 +22,14 @@ export async function browser(t, onEvent = () => {}) {
   t.after(async () => { chrome.kill(); await closed; await rm(dir, {recursive:true, force:true}); });
   let id = 0, sessionId, incoming = '';
   const pending = new Map(), exceptions = [];
+  let disconnected;
+  function disconnect() {
+    disconnected=Error('Chrome DevTools pipe closed');
+    for (const {reject} of pending.values()) reject(disconnected);
+    pending.clear();
+  }
+  chrome.once('exit',disconnect);
+  chrome.stdio[4].once('end',disconnect);
   function dispatch(m) {
     onEvent(m, cmd);
     if (m.method === 'Runtime.exceptionThrown') exceptions.push(m.params.exceptionDetails.text);
@@ -37,6 +45,7 @@ export async function browser(t, onEvent = () => {}) {
     }
   });
   function cmd(method, params={}) {
+    if (disconnected) return Promise.reject(disconnected);
     return new Promise((resolve,reject) => {
       pending.set(++id,{resolve,reject}); chrome.stdio[3].write(JSON.stringify({id,method,params,sessionId})+'\0');
     });
