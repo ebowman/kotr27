@@ -65,6 +65,9 @@ function terrainPose(map, point, focus, angle, prior, seconds, meshZoom=0) {
 function rasterCoverage(map) {
   const layer=map.getStyle().layers.find(l=>l.type==='raster');
   if (!layer) throw Error('Satellite layer unavailable');
+  // A renderable flat raster tile can still be transparent on its first
+  // paint during the default tile fade. Show its imagery on that paint.
+  map.setPaintProperty(layer.id,'raster-fade-duration',0);
   const cache=map.style._getSourceCache(layer.source), src=cache.getSource();
   return () => {
     const ids=cache.getRenderableIds();
@@ -79,11 +82,68 @@ function rasterCoverage(map) {
   };
 }
 
+// 2.15 can draw just part of a parent DEM beside a finer neighbour.
+// Compare the DEMs bound to the touching *drawn* proxy regions; neither
+// padding nor a comparison of canonical tile IDs captures that case.
+function visibleSeamCheck() {
+  const origin=id=>[(id.wrap || 0)+id.canonical.x/2**id.canonical.z,id.canonical.y/2**id.canonical.z];
+  let previous=new Map(), bindings=new Map();
+  return terrain=>{
+    const {proxyCoords,terrainTileForTile}=terrain;
+    if (bindings.size===proxyCoords.length &&
+        proxyCoords.every(id=>bindings.has(id.key) && bindings.get(id.key)===terrainTileForTile[id.key]?.dem)) return false;
+    bindings=new Map();
+    const checked=new Map(), regions=[], starts=[new Map(),new Map()];
+    for (const id of proxyCoords) {
+      const tile=terrainTileForTile[id.key];
+      bindings.set(id.key,tile?.dem);
+      if (!tile?.dem) continue;
+      const region={key:id.key, pos:origin(id), size:2**-id.canonical.z,
+        dem:tile.dem, src:origin(tile.tileID), pixel:2**-tile.tileID.canonical.z/tile.dem.dim};
+      regions.push(region);
+      for (let axis=0;axis<2;axis++) {
+        const k=region.pos[axis], index=starts[axis];
+        if (!index.has(k)) index.set(k,[]);
+        index.get(k).push(region);
+      }
+    }
+    for (const a of regions) for (let axis=0;axis<2;axis++) {
+      const edge=a.pos[axis]+a.size, along=1-axis;
+      for (const b of starts[axis].get(edge) || []) {
+        if (a.dem===b.dem) continue;
+        const lo=Math.max(a.pos[along],b.pos[along]), hi=Math.min(a.pos[along]+a.size,b.pos[along]+b.size);
+        if (lo>=hi) continue;
+        const key=a.key+':'+b.key, prior=previous.get(key);
+        if (prior?.[0]===a.dem && prior[1]===b.dem) { checked.set(key,prior); continue; }
+        // Last interior sample on the low side, first on the high side.
+        // Dyadic tile/pixel grids align, including clipped parent pixels.
+        const cell=(r,k,n)=>Math.max(0,Math.min(r.dem.dim-1,n((edge-r.src[k])/r.pixel)));
+        const ai=cell(a,axis,x=>Math.ceil(x)-1), bi=cell(b,axis,Math.floor);
+        const normal=b.src[axis]+(bi+.5)*b.pixel-(a.src[axis]+(ai+.5)*a.pixel);
+        const count=Math.ceil((hi-lo)/Math.min(a.pixel,b.pixel));
+        for (let i=0;i<count;i++) {
+          const at=lo+(i+.5)*(hi-lo)/count;
+          const aj=Math.floor((at-a.src[along])/a.pixel), bj=Math.floor((at-b.src[along])/b.pixel);
+          const delta=b.src[along]+(bj+.5)*b.pixel-(a.src[along]+(aj+.5)*a.pixel);
+          const meters=27800000*Math.hypot(normal,delta);
+          const za=axis ? a.dem.get(aj,ai) : a.dem.get(ai,aj);
+          const zb=axis ? b.dem.get(bj,bi) : b.dem.get(bi,bj);
+          if (Math.abs(za-zb)>80+8*meters) { bindings.clear(); return true; }
+        }
+        checked.set(key,[a.dem,b.dem]);
+      }
+    }
+    previous=checked; // retain only currently drawn seams
+    return false;
+  };
+}
+
 window.startTerrain = function (points, connect, upcoming, setAvailability) {
   const container = document.getElementById('map');
   const message = document.getElementById('message');
-  let map, stopped = false;
-  let timer = setTimeout(fallback, 20000);
+  let map, stopped = false, recoverRide;
+  const timedOut=()=>recoverRide ? recoverRide() : fallback();
+  let timer = setTimeout(timedOut, 20000);
   function fallback() {
     if (stopped) return;
     stopped = true;
@@ -103,48 +163,97 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
       container, style:'mapbox://styles/mapbox/satellite-v9',
       center:[points[0].lon, points[0].lat], zoom:12, interactive:false
     });
-    map.on('error', fallback);
+    map.on('error', e => {
+      // One DEM tile can 404 while its parent covers the draw. Let actual
+      // coverage (and its deadline), not the request, decide readiness.
+      if (e.sourceId==='dem' && e.error?.status===404) return;
+      if (recoverRide && ![401,403].includes(e.error?.status)) { recoverRide(); return; }
+      if (e.sourceId==='dem' && !map.getTerrain()) return; // stale disabled source
+      fallback();
+    });
     map.on('webglcontextlost', fallback);
     map.once('load', () => {
       if (stopped) return;
       try {
         const imageryReady=rasterCoverage(map);
         const coords = points.map(p => [p.lon, p.lat]);
+        const heights=points.map(p=>p.height);
+        const minDEM=Math.min(...heights)-600, maxDEM=Math.max(...heights)+1000;
+        const checked=new WeakSet();
+        const badSeam=visibleSeamCheck();
+        function implausible({dem,tileID}) {
+          if (!dem || checked.has(dem)) return false;
+          // Pinned 2.15's picking tree subsamples the DEM: a narrow spike
+          // between its samples could still displace rendered geometry.
+          // Check each new tile once, not its entire raster on every frame.
+          // Also reject impossible discontinuities inside that envelope:
+          // allow a near-vertical 8:1 slope plus 80 m tolerance. Ground
+          // resolution is evaluated at this route's latitude (~46°).
+          const step=80+8*27800000/(2**tileID.canonical.z*dem.dim);
+          // Interior samples are immutable; the SDK backfills its one-pixel
+          // padding from neighbours, whose interiors are checked separately.
+          for(let y=0;y<dem.dim;y++) {
+            let prev;
+            for(let x=0;x<dem.dim;x++) {
+              const z=dem.get(x,y);
+              if (!(z>=minDEM && z<=maxDEM) || Math.abs(z-prev)>step ||
+                  (y>0 && Math.abs(z-dem.get(x,y-1))>step)) return true;
+              prev=z;
+            }
+          }
+          checked.add(dem);
+          return false;
+        }
         const bounds = coords.reduce((b, xy) => b.extend(xy), new gl.LngLatBounds());
-        map.addSource('dem', {type:'raster-dem', url:'mapbox://mapbox.mapbox-terrain-dem-v1', tileSize:512, maxzoom:14});
-        map.setTerrain({source:'dem', exaggeration:1});
         map.addSource('ascent', {type:'geojson', data:{type:'LineString', coordinates:coords}});
         map.addLayer({id:'ascent', type:'line', source:'ascent', paint:{'line-color':'#ff932e','line-width':4}});
         const beacon = document.createElement('div');
         beacon.className = 'rider-beacon';
         beacon.setAttribute('aria-label', 'Rider position');
         const rider = new gl.Marker({element:beacon, anchor:'center'});
-        let inOverview = false, pose, current, dirty = false, revision=0;
+        let inOverview = false, flatOnly=false, pose, current, dirty = false, revision=0;
         function status(text) {
           if (message.textContent !== text) message.textContent = text;
         }
         // A discontinuous move can use stale parent tiles until the SDK's
         // first destination render. Only show a neutral loading surface in
-        // that gap; ordinary playback never switches or hides renderers.
+        // that gap or while a drawn terrain region has no DEM binding.
         function loading(cold=false,text='Loading satellite terrain…') {
-          setAvailability('loading');
+          if (!flatOnly) setAvailability('loading');
           if (cold) container.setAttribute('aria-busy','true');
           status(text);
-          if (!timer) timer = setTimeout(fallback,20000);
+          if (!timer) timer = setTimeout(timedOut,20000);
         }
         function rendered() {
           clearTimeout(timer); timer=0;
           if (container.getAttribute('aria-busy')==='true') container.setAttribute('aria-busy','false');
-          status('Satellite terrain · The orange line traces the ascent.');
-          setAvailability('ready');
+          status(flatOnly ? '3D flyover unavailable. Flat satellite overview · The orange line traces the ascent.'
+            : 'Satellite terrain · The orange line traces the ascent.');
+          if (!flatOnly) setAvailability('ready');
         }
         function overview() {
           loading(true);
           rider.remove();
+          if (recoverRide) {
+            recoverRide=null;
+            map.setTerrain(null);
+          }
           map.jumpTo({pitch:0, bearing:0});
           map.fitBounds(bounds, {padding:40, duration:0});
           inOverview = true;
           current = null;
+        }
+        function restoreFlat() {
+          if (stopped || flatOnly) return;
+          flatOnly=true;
+          // Hide the suspect frame before the browser composites it. Give the
+          // flat refit its own deadline; it must pass the normal overview gate.
+          container.setAttribute('aria-busy','true');
+          clearTimeout(timer); timer=0;
+          try {
+            overview();
+            setAvailability('overview-only');
+          } catch { fallback(); }
         }
         function attachCamera() {
           // A marker fade can arrive after the final idle render of a seek
@@ -157,24 +266,45 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
             if (!stopped && !inOverview) map.triggerRepaint();
           }).observe(beacon,{attributes:true,attributeFilter:['style']});
           map.on('sourcedata', e => {
-            if (e.sourceId==='dem') dirty=true;
-            if (timer && !stopped && e.sourceDataType==='content') {
-              clearTimeout(timer); timer=setTimeout(fallback,20000);
+            if (e.sourceId==='dem') {
+              if (!stopped && recoverRide && e.tile?.dem && implausible(e.tile)) {
+                restoreFlat(); return;
+              }
+              dirty=true;
+            }
+            // Only initial/ordinary overview loading uses a sliding timeout.
+            // Tile traffic is not evidence that a failed ride's refit can finish.
+            if (timer && !flatOnly && !recoverRide && !stopped && e.sourceDataType==='content') {
+              clearTimeout(timer); timer=setTimeout(timedOut,20000);
             }
           });
-          let nextCheck = 0, lastDistance = -Infinity, disabled = false;
+          let nextCheck = 0, lastDistance = -Infinity, disabled = false, demCovered=false;
           let meshZoom = 0, lastPick = -Infinity, adjusting = false, needsPick = false, lastMarkerRefresh=-Infinity;
           map.on('idle', () => {
             // A pause may end inside the moving camera's sampling interval.
-            if (!stopped && !inOverview && needsPick && pose.sampled && imageryReady()) {
+            if (!stopped && !inOverview && demCovered && needsPick && pose.sampled && imageryReady()) {
               lastPick = -Infinity;
               map.triggerRepaint();
             }
           });
           map.on('render', () => {
             if (stopped) return;
+            // Validate newly visible tiles off the rider ray as well. This
+            // render callback runs before the browser composites the frame.
+            const terrain=!inOverview && map.transform.elevation, tiles=terrain?.visibleDemTiles;
+            if (tiles?.length && (tiles.some(implausible) || badSeam(terrain))) { restoreFlat(); return; }
+            // visibleDemTiles omits unbound regions, even when a 404 has
+            // settled and the SDK reports source-loaded. The bindings are
+            // for this draw, including any parent DEM the SDK selected.
+            demCovered=!!terrain?.proxyCoords?.length &&
+              terrain.proxyCoords.every(id=>terrain.terrainTileForTile[id.key]?.dem);
             const imagery=imageryReady();
-            if (inOverview) { if (imagery) rendered(); else loading(); return; }
+            if (inOverview) {
+              if (imagery && map.isSourceLoaded('ascent') &&
+                  map.queryRenderedFeatures({layers:['ascent']}).length) rendered();
+              else loading(true);
+              return;
+            }
             const paintedRevision=revision;
             const now = performance.now();
             // A paused seek has no player RAF. Re-evaluate the *same* pose
@@ -183,14 +313,14 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
             if (refreshed) {
               dirty = false;
               drawPose(...current, 0, false);
-              if (stopped) return;
+              if (stopped || flatOnly) return;
             }
             // The SDK picks a simplified terrain mesh, not the underlying
             // raster samples. If that mesh still intercepts the rendered
             // ray, steepen the real camera gradually, with a hard upper
             // bound. Never infer an obstruction from unloaded tiles.
             const cold=container.getAttribute('aria-busy')==='true';
-            const demReady=pose.sampled && (!cold || map.isSourceLoaded('dem'));
+            const demReady=demCovered && pose.sampled && (!cold || map.isSourceLoaded('dem'));
             const dim=+getComputedStyle(beacon).opacity!==1;
             const gps=rider.getLngLat(), p=map.project(gps);
             const road=imagery && demReady && map.queryRenderedFeatures(
@@ -211,7 +341,7 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
                 if (cold) clear=clear && gps.distanceTo(hit)<Math.max(1,.01*distance);
                 // Marker occlusion uses its rounded DOM pixel, which can
                 // pick a different triangle on a steep terrain edge.
-                if (dim && distance>=1) clear=clear && eye.distanceTo(map.unproject(
+                if (dim) clear=clear && eye.distanceTo(map.unproject(
                   [Math.round(p.x),Math.round(p.y)]))>=.9*distance;
                 const framed=Math.min(p.x,p.y,container.clientWidth-p.x,container.clientHeight-p.y)>=12;
                 adjusting = (!clear || !framed || roadHidden) && meshZoom<1;
@@ -219,7 +349,7 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
               if (adjusting) {
                 meshZoom=Math.min(1,meshZoom+dt);
                 drawPose(...current,dt,false,true);
-                if (stopped) return;
+                if (stopped || flatOnly) return;
               }
             }
             // render follows the SDK's DOM queue, but a DEM refinement
@@ -245,7 +375,7 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
               registered && road && !dim;
             if (usable) rendered();
             else {
-              loading(false,!imagery ? 'Loading satellite imagery…' : !demReady ? 'Loading terrain elevation…'
+              loading(!demCovered,!imagery ? 'Loading satellite imagery…' : !demReady ? 'Loading terrain elevation…'
                 : registered && !road ? 'Loading ascent road…' : 'Loading rider view…');
               if (imagery && demReady && (!registered || road || roadHidden || dim)) map.triggerRepaint();
               return;
@@ -267,15 +397,26 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
             } catch { disabled = true; } // A failed hint must not stop the ride.
           });
           function drawPose(point, following, focus, angle, seconds, snap, correcting=false) {
-            if (stopped) return;
+            if (stopped || flatOnly) return;
             try {
               if (!following) { if (!inOverview) overview(); return; }
               if (snap || inOverview) { loading(true); adjusting=false; lastPick=-Infinity; }
+              if (inOverview) {
+                recoverRide=restoreFlat;
+                if (!map.getSource('dem')) map.addSource('dem', {type:'raster-dem',
+                  url:'mapbox://mapbox.mapbox-terrain-dem-v1', tileSize:512, maxzoom:14});
+                map.setTerrain({source:'dem', exaggeration:1});
+                if (stopped || flatOnly) return;
+              }
               if (snap || inOverview) meshZoom=0;
               else if (!correcting && !adjusting) meshZoom*=Math.exp(-seconds/3);
               current = [point, following, focus, angle];
               const prior = pose;
               pose = terrainPose(map,point,focus,angle,snap || inOverview ? null : prior,seconds,meshZoom);
+              // GPX is independent of the DEM decode. Allow resolution and
+              // registration differences, not a rider hundreds of metres off
+              // the road. Missing samples still take the buffering path.
+              if (pose.sampled && !(Math.abs(pose.z0-point.height)<=300)) { restoreFlat(); return; }
               const {eye,altitude,target,aimZ,z0} = pose;
               if (snap || inOverview || altitude!==prior.altitude || aimZ!==prior.aimZ || z0!==prior.z0 || meshZoom!==prior.meshZoom ||
                   eye.some((v,i)=>v!==prior.eye[i]) || target.some((v,i)=>v!==prior.target[i])) {
@@ -298,7 +439,7 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
               needsPick=true;
               if (inOverview) rider.addTo(map);
               inOverview = false;
-            } catch { fallback(); }
+            } catch { if (recoverRide) restoreFlat(); else fallback(); }
           }
           connect(drawPose);
         }

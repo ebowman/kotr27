@@ -40,11 +40,16 @@ test('phone-sized cinematic orbit, controls and asset fallbacks', {timeout: 6000
       on(name, fn) { this.events[name] = fn; }
       addLayer(layer) { this.layer = layer; }
       addSource(id, source) { this[id] = source; }
+      getSource(id) { return this[id]; }
+      setPaintProperty() {}
       setTerrain(value) { this.terrain = value; }
       hints = [];
       imagery=true;
       getStyle(){return {layers:[{type:'raster',source:'sat'}]};}
-      transform={coveringTiles:()=>[1,2].map(key=>({key,children:()=>[{key:3}]}))};
+      transform={elevation:{get proxyCoords(){return this.visibleDemTiles.map(t=>t.tileID);},
+        get terrainTileForTile(){return this.visibleDemTiles;},
+        visibleDemTiles:[{tileID:{key:0,canonical:{x:0,y:0,z:14}},dem:{dim:1,get:()=>500}}]},
+        coveringTiles:()=>[1,2].map(key=>({key,children:()=>[{key:3}]}))};
       style={_getSourceCache:()=>({getSource:()=>({tileSize:256,maxzoom:18}),
         getRenderableIds:()=>this.imagery?[1,2]:[1],hasRenderableParent:()=>false})};
       isSourceLoaded(){return true;}
@@ -52,9 +57,11 @@ test('phone-sized cinematic orbit, controls and asset fallbacks', {timeout: 6000
       getBearing() { return 0; }
       areTilesLoaded() { return this.ready; }
       fitBounds() { this.camera = null; }
-      queryTerrainElevation() { return 2000; }
+      height() {return +stats.textContent.match(/(\\d+) m elevation/)[1];}
+      queryTerrainElevation() { return this.height()+100; }
       project() { return {x:map.clientWidth/2,y:map.clientHeight/2}; }
-      queryRenderedFeatures(box,{layers}) {return layers.includes(this.layer.id) && this.rider &&
+      queryRenderedFeatures(box,opts) {if (!opts) return this.overviewRoad ? [this.layer] : [];
+        return opts.layers.includes(this.layer.id) && this.rider &&
         box[0][0]<=map.clientWidth/2 && box[1][0]>=map.clientWidth/2 ? [{layer:this.layer}] : [];}
       triggerRepaint() { /* render events driven by test */ }
       getFreeCameraOptions() { return {position:{toLngLat:()=>({distanceTo:()=>1})},setPitchBearing(){},lookAtPoint(target){this.target = target;}}; }
@@ -116,8 +123,11 @@ test('phone-sized cinematic orbit, controls and asset fallbacks', {timeout: 6000
   await js('demo.imagery=true; demo.events.render()');
   await until(()=>js(`+seek.value>${held}`));
   await js(`reset.click()`);
-  assert.ok(await js(`demo.options.style.includes('satellite') && demo.terrain.source === 'dem'
+  assert.ok(await js(`demo.options.style.includes('satellite') && demo.terrain === null
     && demo.dem.type === 'raster-dem' && demo.ascent.data.coordinates.length > 100 && demo.layer.source === 'ascent'`));
+  assert.equal(await js(`demo.events.render(); map.getAttribute('aria-busy')`),'true');
+  assert.equal(await js(`demo.overviewRoad=true; demo.imagery=false; demo.events.render(); map.getAttribute('aria-busy')`),'true');
+  assert.equal(await js(`demo.imagery=true; demo.events.render(); map.getAttribute('aria-busy')`),'false');
   assert.equal(await js(`document.querySelector('meta[name=referrer]').content`),'strict-origin-when-cross-origin');
   const box = () => js(`JSON.stringify(demo.camera)`);
   const overview = await box();
@@ -202,12 +212,12 @@ test('phone-sized cinematic orbit, controls and asset fallbacks', {timeout: 6000
       demo.queryTerrainElevation = () => null;
       next(2000+1000/60); const after = capture();
       demo.events.render(); const missing=message.textContent;
-      demo.queryTerrainElevation = () => 2300;
+      demo.queryTerrainElevation = () => demo.height()+220;
       next(4000); const buffered=capture();
       demo.events.sourcedata({sourceId:'dem'}); demo.events.render(); demo.events.render();
       next(8000); const first=capture();
       next(8000+1000/60); const resumed = capture();
-      play.click(); return {before,after,buffered,first,resumed,missing,step:+seek.max*4/90/60};
+      play.click(); return {before,after,buffered,first,resumed,missing,height:demo.height(),step:+seek.max*4/90/60};
     } finally { window.requestAnimationFrame = raf; window.cancelAnimationFrame = cancel; demo.queryTerrainElevation = dem; }
   })()`);
   const {before,after,resumed,step} = delayed;
@@ -215,24 +225,24 @@ test('phone-sized cinematic orbit, controls and asset fallbacks', {timeout: 6000
   assert.equal(delayed.buffered[0],after[0]); assert.equal(delayed.first[0],after[0]);
   assert.ok(Math.abs(after[0]-before[0]-step)<1 && Math.abs(resumed[0]-after[0]-step)<1);
   assert.ok(after[1] < before[1] && after[1] > before[1]-60);
-  assert.equal(resumed[1],2900);
+  assert.equal(resumed[1],delayed.height+820);
   // A higher DEM sample can arrive between the last frame and the pause
   // click. With no elapsed time only camera altitude should change.
   const onPause = await js(`(() => {
     const dem = demo.queryTerrainElevation;
     const planar = () => [seek.value, demo.rider, demo.camera.position.xy, demo.camera.target];
     try {
-      demo.queryTerrainElevation = () => 1000;
+      demo.queryTerrainElevation = () => demo.height()+50;
       seek.value = 2450; seek.dispatchEvent(new Event('input'));
       play.click();
       const before = planar(), low = demo.camera.position.altitude;
-      demo.queryTerrainElevation = () => 2000;
+      demo.queryTerrainElevation = () => demo.height()+250;
       play.click();
-      return {before, after:planar(), low, high:demo.camera.position.altitude};
+      return {before, after:planar(), low, high:demo.camera.position.altitude, height:demo.height()};
     } finally { demo.queryTerrainElevation = dem; }
   })()`);
   assert.deepEqual(onPause.after,onPause.before);
-  assert.deepEqual([onPause.low,onPause.high],[1600,2600]);
+  assert.deepEqual([onPause.low,onPause.high],[onPause.height+650,onPause.height+850]);
   for (const [speedValue,hz] of [[1,60],[4,60],[4,10]]) {
     const {samples,end,total,markerError,pending} = await orbit(speedValue,hz);
     assert.ok(Math.abs(end - (2450 + speedValue * total/90)) < 1);
@@ -248,7 +258,7 @@ test('phone-sized cinematic orbit, controls and asset fallbacks', {timeout: 6000
   await js('reset.click()');
   await js(`speed.value = '4'; play.click(); demo.events.render()`);
   await until(() => js(`Number(seek.value) > 40`));
-  assert.equal(await js('demo.camera.position.altitude'),2600);
+  assert.ok(await js('Math.abs(demo.camera.position.altitude-demo.height()-700)<2'));
   const firstFrame = await box(); assert.notEqual(firstFrame,overview);
   await until(async () => (await box()) !== firstFrame);
   await js('play.click()'); const paused = await box();
@@ -273,6 +283,13 @@ test('phone-sized cinematic orbit, controls and asset fallbacks', {timeout: 6000
   const [x,y] = await js(`seek.scrollIntoView({block:'center'}); (()=>{const r=seek.getBoundingClientRect();return [r.x+r.width*.5,r.y+r.height*.5]})()`);
   for (const type of ['mousePressed','mouseReleased']) await cmd('Input.dispatchMouseEvent',{type,x,y,button:'left',clickCount:1});
   assert.ok(await js(`Math.abs(seek.value/seek.max - .5) < .02`));
+  // A later DEM refinement can be within regional bounds but disagree
+  // with the independent GPX. Never leave that 3D frame visible.
+  await js(`demo.events.render(); demo.queryTerrainElevation=()=>demo.height()+600;
+    demo.events.sourcedata({sourceId:'dem'}); demo.events.render()`);
+  assert.ok(await js(`demo.terrain===null && play.disabled && +seek.value===0 && map.getAttribute('aria-busy')==='true'`));
+  await js(`demo.events.render()`);
+  assert.ok(await js(`map.getAttribute('aria-busy')==='false' && message.textContent.includes('Flat satellite overview')`));
   const distance = await js('seek.value');
   await js(`demo.events.error({error:{status:403}})`);
   assert.ok(await js(`demo.removed && message.textContent.includes('unavailable')`));

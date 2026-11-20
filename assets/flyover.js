@@ -61,7 +61,7 @@
         + w2*c[k] + w3*(e?.[k] ?? 2*c[k]-b[k]);
       return result;
     }
-    let terrain, focus, offset, anchor, angle = 0, availability = 'loading';
+    let terrain, focus, offset, anchor, angle = 0, availability = 'loading', overviewOnly=false;
     function resetCamera() {
       focus = null;
       angle = 0;
@@ -98,18 +98,24 @@
       el('stats').textContent = text;
       seek.setAttribute('aria-valuetext', text);
       updateMode();
-      play.textContent = availability==='unavailable' ? 'Flyover unavailable'
+      play.textContent = overviewOnly || availability==='unavailable' ? 'Flyover unavailable'
         : playing ? 'Pause' : d === total ? 'Replay flyover' : 'Play flyover';
       terrain?.(point, following, focus, angle, seconds, snap);
     }
     function updateMode() {
       el('mode').textContent = playing ? (availability==='ready' ? 'Cinematic flyover' : 'Buffering')
-        : !following ? 'Route overview' : d === total ? 'Summit' : 'Paused';
+        : !following ? 'Route overview' : overviewOnly ? 'Elevation profile' : d === total ? 'Summit' : 'Paused';
     }
     function setAvailability(state) {
       if (state===availability) return;
       availability=state;
       last=null; // No elapsed buffering time is owed, even between two RAFs.
+      if (state==='overview-only') {
+        overviewOnly=true;
+        pause(); following=false; d=0; resetCamera();
+        play.disabled=true;
+        render();
+      }
       if (state==='unavailable') {
         pause();
         play.disabled=true;

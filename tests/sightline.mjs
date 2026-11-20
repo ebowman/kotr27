@@ -43,7 +43,8 @@ test('visible raster coverage accepts a drawn parent, not a loaded tile elsewher
   const coverage=runInNewContext(source+'\nrasterCoverage',{window:{}});
   let rendered=[],parent=false,sourceLoaded=false;
   const cache={getSource:()=>({maxzoom:18}),getRenderableIds:()=>rendered,hasRenderableParent:()=>parent};
-  const ready=coverage({getStyle:()=>({layers:[{source:'sat',type:'raster'}]}),
+  const ready=coverage({getStyle:()=>({layers:[{id:'sat',source:'sat',type:'raster'}]}),
+    setPaintProperty:(...args)=>assert.deepEqual(args,['sat','raster-fade-duration',0]),
     style:{_getSourceCache:()=>cache},isSourceLoaded:()=>sourceLoaded,
     transform:{coveringTiles:()=>[{key:3,children:()=>[4,5,6,7].map(key=>({key}))}]}});
   assert.ok(!ready());
@@ -52,4 +53,30 @@ test('visible raster coverage accepts a drawn parent, not a loaded tile elsewher
   parent=false; rendered=[4,5,6]; assert.ok(!ready());
   rendered.push(7); assert.ok(ready());
   sourceLoaded=true; rendered=[]; assert.ok(!ready());
+});
+
+test('visible seam cache follows DEM replacement inside a drawn parent, in either axis',()=>{
+  const make=runInNewContext(source+'\nvisibleSeamCheck',{window:{}});
+  for (const axis of ['x','y']) {
+    const tileID=(key,z,x,y)=>({key,canonical:{z,x,y}});
+    const near=tileID(1,13,4362,2920), far=tileID(2,13,4362,2920);
+    far.canonical[axis]++;
+    let reads=0;
+    const dem=get=>({dim:256,get(x,y){
+      assert.ok(x>=0 && x<256 && y>=0 && y<256);
+      reads++; return get(axis==='x'?x:y,axis==='x'?y:x);
+    }});
+    const coarse={tileID:tileID(3,12,2181,1460),dem:dem(i=>500+i)};
+    const fine={tileID:far,dem:dem(i=>628+i/2)};
+    const terrain={proxyCoords:[near,far],terrainTileForTile:{1:coarse,2:fine}};
+    const bad=make();
+    assert.ok(!bad(terrain));
+    assert.equal(reads,2*256);
+    assert.ok(!bad(terrain));
+    assert.equal(reads,2*256,'unchanged render must not rescan the edge');
+    // Replacement has a narrow notch only on this child edge. The parent
+    // sample opposite it is *inside* the parent, not at column/row 255.
+    fine.dem=dem((i,j)=>i===0 && j===173 ? 150 : 628+i/2);
+    assert.ok(bad(terrain),'refinement at same proxy IDs must invalidate the previous pass');
+  }
 });
