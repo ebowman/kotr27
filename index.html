@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="kotr-release" content="e38a0b87140bfe970e9f8648">
+  <meta name="kotr-release" content="d310b6e30533b80e3bc014d6">
   <script>// Inlined only in releases. The entry itself carries the freshness marker:
 // revalidate the ordinary cache key, even within Pages' HTML max-age.
 addEventListener('pageshow', async () => {
@@ -36,7 +36,7 @@ addEventListener('pageshow', async () => {
   <title>Semonzo ascent · KOTR 2027 route preview</title>
   <meta name="description" content="Preview the provisional Semonzo ascent of Monte Grappa for KOTR 2027 Long groups.">
   <script defer src="./js/config.f9c66323124751eb70ba6b3b.js"></script>
-  <script defer src="./assets/terrain.a0849e5d59926f9f9477d106.js"></script>
+  <script defer src="./assets/terrain.19ea6dd5866697159a0a8fe6.js"></script>
   <script defer src="./assets/flyover.96a096bf37a03ab2341f0de1.js"></script>
   <style>
     :root { color-scheme: light; --paper:#f9f6ec; --ink:#163c34; --line:#b6c3b4; --rust:#8a3c22 }
@@ -57,6 +57,7 @@ addEventListener('pageshow', async () => {
     .viewport { position:relative; aspect-ratio:610/455; background:#e2e8d8 }
     #map { position:absolute; inset:0 }
     #map[aria-busy=true] { visibility:hidden }
+    .orbit-hold { position:absolute; inset:0; width:100%; height:100%; pointer-events:none }
     /* Keep the pending camera's dimensions while giving the profile the
        space. A late texture must prove the same lens before it is revealed. */
     .viewport.satellite-standby { width:100%; height:0; overflow:hidden }
@@ -100,6 +101,7 @@ addEventListener('pageshow', async () => {
         <div id="deck" hidden>
           <div class="controls">
             <button type="button" id="play">Play flyover</button>
+            <button type="button" id="preview-motion" aria-controls="map" hidden>Pause preview</button>
             <button type="button" id="retry" hidden>Retry satellite view</button>
             <label>Speed <select id="speed"><option value=".5">½×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label>
             <button type="button" id="reset">Route overview</button>
