@@ -18,14 +18,26 @@ export async function browser(t, onEvent = () => {}) {
   ['--headless','--disable-background-networking','--disable-extensions','--disable-sync',
     `--user-data-dir=${dir}`, '--remote-debugging-pipe', 'about:blank'], {stdio:['ignore','ignore','pipe','pipe','pipe']});
   chrome.stderr.on('data', data => { if (process.env.DEBUG_CHROME) process.stderr.write(data); });
-  const closed = once(chrome, 'close');
-  t.after(async () => { chrome.kill(); await closed; await rm(dir, {recursive:true, force:true}); });
+  // 'close' also waits for every inherited pipe, which need not coincide
+  // with the test browser's exit. Never let a stuck GPU/renderer keep a
+  // fixture's after hook (and hence the next test) waiting indefinitely.
+  const exited = once(chrome, 'exit');
+  t.after(async () => {
+    chrome.kill();
+    const force=setTimeout(()=>chrome.kill('SIGKILL'),3000);
+    try { await exited; }
+    finally {
+      clearTimeout(force);
+      for (const pipe of chrome.stdio) pipe?.destroy();
+      await rm(dir, {recursive:true, force:true});
+    }
+  });
   let id = 0, sessionId, incoming = '';
   const pending = new Map(), exceptions = [];
   let disconnected;
   function disconnect() {
     disconnected=Error('Chrome DevTools pipe closed');
-    for (const {reject} of pending.values()) reject(disconnected);
+    for (const {reject,timer} of pending.values()) { clearTimeout(timer); reject(disconnected); }
     pending.clear();
   }
   chrome.once('exit',disconnect);
@@ -34,7 +46,7 @@ export async function browser(t, onEvent = () => {}) {
     onEvent(m, cmd);
     if (m.method === 'Runtime.exceptionThrown') exceptions.push(m.params.exceptionDetails.text);
     if (!pending.has(m.id)) return;
-    const {resolve,reject} = pending.get(m.id); pending.delete(m.id);
+    const {resolve,reject,timer} = pending.get(m.id); pending.delete(m.id); clearTimeout(timer);
     if (m.error) reject(Error(m.error.message)); else resolve(m.result);
   }
   chrome.stdio[4].setEncoding('utf8').on('data', chunk => {
@@ -47,7 +59,11 @@ export async function browser(t, onEvent = () => {}) {
   function cmd(method, params={}) {
     if (disconnected) return Promise.reject(disconnected);
     return new Promise((resolve,reject) => {
-      pending.set(++id,{resolve,reject}); chrome.stdio[3].write(JSON.stringify({id,method,params,sessionId})+'\0');
+      const key=++id;
+      const timer=setTimeout(()=>{
+        pending.delete(key); reject(Error(`Chrome did not answer ${method} in 15 s`));
+      },15000);
+      pending.set(key,{resolve,reject,timer}); chrome.stdio[3].write(JSON.stringify({id:key,method,params,sessionId})+'\0');
     });
   }
   async function js(expression) {

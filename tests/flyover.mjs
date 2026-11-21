@@ -117,6 +117,13 @@ test('phone-sized cinematic follow, controls and asset fallbacks', {timeout: 600
   assert.ok(await js(`+seek.value===0 && mode.textContent==='Buffering'`));
   sdkGate.resolve(); sdkGate=null;
   await until(()=>js(`!!window.demo?.camera`));
+  // Early Play uses the road and imagery first. Enter the explicit
+  // terrain seek path for the stale DOM and mesh-pick checks below.
+  await js(`demo.imagery=false;demo.events.render()`);
+  assert.ok(await js(`!demo.terrain && map.getAttribute('aria-busy')==='true' && +seek.value===0`));
+  await js(`demo.imagery=true;demo.events.render()`);
+  await until(()=>js(`mode.textContent==='Flat satellite ride' && +seek.value>0`));
+  await js(`reset.click(); seek.value=0;seek.dispatchEvent(new Event('input'));play.click()`);
   assert.ok(await js(`const firstDraw=demo.events.render;demo.initialLoad();firstDraw===demo.events.render`),
     'a late global load must not install a second ride controller');
   assert.ok(await js(`+seek.value===0 && mode.textContent==='Buffering'`));
@@ -162,7 +169,7 @@ test('phone-sized cinematic follow, controls and asset fallbacks', {timeout: 600
   // Data saver suppresses speculative hints; otherwise one bounded job
   // is allowed even if unrelated visible-source requests haven't finished.
   await js(`demo.hints=[]; Object.defineProperty(navigator.connection,'saveData',{value:true,configurable:true})`);
-  await js(`speed.value='4'; play.click(); demo.events.render()`);
+  await js(`seek.value=0;seek.dispatchEvent(new Event('input'));speed.value='4'; play.click(); demo.events.render()`);
   assert.equal(await js('demo.hints.length'),0);
   await js('demo.events.render()');
   await sleep(1550);
@@ -287,7 +294,7 @@ test('phone-sized cinematic follow, controls and asset fallbacks', {timeout: 600
     });
   }
   await js('reset.click()');
-  await js(`speed.value = '4'; play.click(); demo.events.render()`);
+  await js(`seek.value=0;seek.dispatchEvent(new Event('input'));speed.value = '4'; play.click(); demo.events.render()`);
   await until(() => js(`Number(seek.value) > 40`));
   assert.ok(await js('demo.camera.position.altitude>demo.height()+900'),'wider opening shot');
   const firstFrame = await box(); assert.notEqual(firstFrame,overview);

@@ -1,6 +1,8 @@
 // Optional real-engine integration: download the pinned public mapbox-gl.js
 // and run MAPBOX_GL_215=/path/to/mapbox-gl.js node --test tests/preload.mjs.
-// No account/config, real basemap or authenticated tile requests.
+// Offline fixtures use no account/config. The painted-viewport test additionally
+// needs PAINT_RIDE_URL: the normally provisioned package served on loopback.
+// It uses local synthetic rasters and the site's ordinary SDK session.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -23,6 +25,42 @@ const png = rows => Buffer.concat([Buffer.from('89504e470d0a1a0a','hex'),
   chunk('IHDR',Buffer.from('00000100000001000802000000','hex')),
   chunk('IDAT',deflateSync(Buffer.concat(rows))),chunk('IEND',Buffer.alloc(0))]);
 const tile = png(Array(256).fill(row));
+const coarseTile=png(Array(256).fill(Buffer.concat([Buffer.alloc(1),
+  Buffer.alloc(256*3,Buffer.from([1,94,40]))])));
+
+// Evaluate *inside render*, before GL discards its drawing buffer. This
+// oracle knows only the fixture's paint colours; no tile IDs, cache state,
+// production coverage function, or SDK layer order. Sample the full lens,
+// including its perimeter. The ascent and its antialiased edge may replace
+// green pixels. A sprinkle of edge pixels isn't a blank region, but even
+// one largely empty local patch fails, not just a large average loss.
+function makePaintProbe() {
+  let buffer;
+  return surface=>{
+    const gl=surface===testMap.getCanvas() && testMap.painter.context.gl;
+    const w=surface.width,h=surface.height;
+    let px;
+    if(gl) {
+      if(buffer?.length!==4*w*h) buffer=new Uint8Array(4*w*h);
+      gl.readPixels(0,0,w,h,gl.RGBA,gl.UNSIGNED_BYTE,buffer); px=buffer;
+    } else px=surface.getContext('2d').getImageData(0,0,w,h).data;
+    let bad=0,worst=0,fine=0,coarse=0;
+    for(let y=0;y<h;y+=16) for(let x=0;x<w;x+=16) {
+      let n=0,miss=0;
+      for(let j=y;j<Math.min(y+16,h);j+=2) for(let i=x;i<Math.min(x+16,w);i+=2) {
+        const k=4*(j*w+i),r=px[k],g=px[k+1],b=px[k+2];
+        n++;
+        if(px[k+3]>245 && r<18 && Math.abs(b-40)<16 && Math.abs(g-154)<16) fine++;
+        else if(px[k+3]>245 && r<18 && Math.abs(b-40)<16 && Math.abs(g-94)<16) coarse++;
+        else if(!(px[k+3]>245 && r>=15 && g>=89 && g<=167 && b>=30 && b<=58)) miss++;
+      }
+      bad+=miss; worst=Math.max(worst,miss/n);
+    }
+    const total=Math.ceil(w/2)*Math.ceil(h/2);
+    return {ok:w>0 && h>0 && fine+coarse>total*.75 && bad<total*.01 && worst<.45,
+      fine,coarse,bad,worst};
+  };
+}
 const seaLevelTile=png(Array(256).fill(Buffer.concat([Buffer.alloc(1),
   Buffer.alloc(256*3,Buffer.from([1,134,160]))])));
 // At km 8.771 the rider is south of this Mercator boundary. Its northern
@@ -114,6 +152,7 @@ sys.stdout.buffer.write(im.crop((2300,300,3300,900)).convert("I").convert("I;16"
         +Math.max(0,Math.min(999,Math.floor((lon-11)*3600)-2300))));
     }
     let demGate, held = 0, coldDestination = false, missingSat=false, sat404s=0, northGate, missingNorth=false, dem404s=0, denied=0;
+    let pendingDetail=0,cover404s=0;
     const outageFailures=new Set();
     let restoredReplies=0;
     let satGate=scenario==='slow' ? Promise.withResolvers() : null;
@@ -122,7 +161,7 @@ sys.stdout.buffer.write(im.crop((2300,300,3300,900)).convert("I").convert("I;16"
       '302ee91531bc123693caa52eb74f71a2fb9ff61311f54d59ec3c04325dc5b2f7');
     const server = createServer(async (req,res) => {
       const path = req.url;
-      if (/^\/(sat|dem)\//.test(path)) {
+      if (/^\/(sat|dem|cover)\//.test(path)) {
         if (scenario==='dem-denied' && path.startsWith('/dem/')) {
           denied++; res.writeHead(403).end(); return;
         }
@@ -132,21 +171,26 @@ sys.stdout.buffer.write(im.crop((2300,300,3300,900)).convert("I").convert("I;16"
         if (northGate && path.startsWith('/dem/') && acrossBoundary(path)) { held++; await northGate.promise; }
         if (path.startsWith('/sat/')) {
           const [, , z,x]=path.split('/').map(Number);
-          if ((missingSat && (scenario==='outage' || z<15 || x%2)) || (scenario==='parent' && z>13)) {
+          if ((missingSat && scenario!=='opening' && (scenario==='outage' || z<15 || x%2)) || (scenario==='parent' && z>13) ||
+              (scenario==='opening' && x/2**z<17455/2**15)) {
             sat404s++;
             if (scenario==='outage') outageFailures.add(path);
             res.writeHead(404).end(); return;
           }
           if (outageFailures.has(path)) restoredReplies++;
         }
-        if (satGate && path.startsWith('/sat/')) { held++; await satGate.promise; }
+        if (path.startsWith('/cover/') && missingSat) { cover404s++; res.writeHead(404).end(); return; }
+        if (satGate && path.startsWith('/sat/')) {
+          held++; pendingDetail++; await satGate.promise; pendingDetail--;
+        }
         if (demGate && path.startsWith('/dem/')) { held++; await demGate.promise; }
         await sleep(20);
-        res.writeHead(200,{'Content-Type':'image/png','Cache-Control':['cold','partial','dem-hole','outage'].includes(scenario)?'no-store':'public, max-age=3600'})
+        res.writeHead(200,{'Content-Type':'image/png','Cache-Control':['opening','cold','partial','dem-hole','outage'].includes(scenario)?'no-store':'public, max-age=3600'})
           .end(path.startsWith('/dem/') ? (roadHeight ? elevationTile(path,roadHeight) :
             ['ridge','ride'].includes(scenario) ? elevationTile(path) :
             scenario==='seam' && acrossBoundary(path) ? seaLevelTile :
-            scenario==='spike' ? spikedTile : coldDestination ? raisedTile : scenario==='cold' ? coldBase : tile) : tile);
+            scenario==='spike' ? spikedTile : coldDestination ? raisedTile : scenario==='cold' ? coldBase : tile)
+            : path.startsWith('/cover/') ? coarseTile : tile);
       } else if (path === '/sdk.js') res.end(Buffer.concat([sdk,Buffer.from('\n'+instrument+
         (scenario==='overview' ? overviewProbe : ''))]));
       // Only SDK layout rules needed by the local fixture (no CDN requests).
@@ -169,15 +213,37 @@ sys.stdout.buffer.write(im.crop((2300,300,3300,900)).convert("I").convert("I;16"
     });
     server.listen(0,'127.0.0.1'); await once(server,'listening');
     t.after(() => {server.closeAllConnections();server.close();});
-    const {cmd,js,exceptions} = await browser(t);
+    const origin=`http://127.0.0.1:${server.address().port}`;
+    // The pinned SDK's testMode silences auth errors; it doesn't guarantee
+    // that a tokenless renderer will keep painting. Use the existing site's
+    // normal loopback page/session for optical proof. Never inspect config,
+    // intercept session requests or change SDK auth behaviour.
+    let url=origin+'/', opticalSDK;
+    if(scenario==='opening') {
+      const live=new URL(process.env.PAINT_RIDE_URL);
+      assert.ok(live.protocol==='http:' && ['localhost','127.0.0.1'].includes(live.hostname) &&
+        !live.search && !live.hash && !live.username && !live.password);
+      url=live.href;
+      server.prependListener('request',(req,res)=>res.setHeader('Access-Control-Allow-Origin',live.origin));
+      const localStyle=instrument.replace('testMode:true,','')
+        .replace('return super.addSource(id,src)',`if(id==='sat-cover') src={...src,tiles:[location.origin+'/cover/{z}/{x}/{y}']};
+          return super.addSource(id,src)`).replaceAll('location.origin',JSON.stringify(origin));
+      opticalSDK=Buffer.concat([sdk,Buffer.from('\n'+localStyle)]).toString('base64');
+    }
+    const {cmd,js,exceptions} = await browser(t,(m,send)=>{
+      if(m.method==='Fetch.requestPaused') send('Fetch.fulfillRequest',{requestId:m.params.requestId,
+        responseCode:200,responseHeaders:[{name:'Content-Type',value:'text/javascript'}],body:opticalSDK});
+    });
     await cmd('Network.enable');
-    await cmd('Network.setBlockedURLs',{urls:['https://*']});
+    if(opticalSDK) await cmd('Fetch.enable',{patterns:[{urlPattern:'https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js'}]});
+    else await cmd('Network.setBlockedURLs',{urls:['https://*']});
     const slow=scenario==='slow';
     await cmd('Emulation.setDeviceMetricsOverride',{width:slow?1280:375,height:812,deviceScaleFactor:1,mobile:!slow});
-    await cmd('Page.navigate',{url:`http://127.0.0.1:${server.address().port}/`});
+    await cmd('Page.navigate',{url});
     if (slow) await until(()=>js(`document.querySelector('#deck')?.hidden===false`));
     else await until(()=>js(`document.querySelector('#message')?.textContent.startsWith('Satellite overview ·')`));
     return {js,cmd,exceptions,holdSat:()=>{satGate=Promise.withResolvers();},dropSat:()=>{missingSat=true;},
+      releaseSat:()=>{satGate?.resolve();satGate=null;},pendingDetail:()=>pendingDetail,cover404s:()=>cover404s,
       restoreSat:()=>{missingSat=false;},sat404s:()=>sat404s,restoredReplies:()=>restoredReplies,denied:()=>denied,
       holdNorth:()=>{northGate=Promise.withResolvers();}, dropNorth:()=>{missingNorth=true;},dem404s:()=>dem404s,
       hold:()=>{demGate=Promise.withResolvers();coldDestination=true;},held:()=>held,
@@ -260,10 +326,12 @@ for (const failure of ['spike','seam','timeout']) test(`3D ${failure} switches t
   {skip:!process.env.MAPBOX_GL_215,timeout:40000},async t=>{
     const {js,hold,release,exceptions}=await fixture(t,failure);
     if(failure==='timeout') {hold();t.after(release);}
-    await js(`window.unsafe=false;
+    const gated=await js(`window.unsafe=false;
       testMap.on('render',()=>{if(testMap.getTerrain() && map.getAttribute('aria-busy')==='false') unsafe=true;});
-      ${failure==='seam' ? `seek.value=8771; seek.dispatchEvent(new Event('input'))` : 'play.click()'}`);
-    assert.ok(await js(`map.getAttribute('aria-busy')==='true' && (${failure==='seam'} || mode.textContent==='Buffering')`));
+      seek.value=${failure==='seam'?8771:0};seek.dispatchEvent(new Event('input'));
+      ${failure==='seam'?'':'play.click();'}
+      map.getAttribute('aria-busy')==='true' && (${failure==='seam'} || mode.textContent==='Buffering')`);
+    assert.ok(gated);
     await until(()=>js(`message.textContent.startsWith('Flat satellite ride')`)).catch(async err=>{
       throw Error(JSON.stringify(await js(`({msg:message.textContent,d:+seek.value,
         tiles:testMap.transform.elevation?.visibleDemTiles?.map(t=>[t.tileID.canonical,t.dem.get(0,0)])})`)),{cause:err});
@@ -395,7 +463,8 @@ test('flat recovery holds while ascent cannot render, resumes on actual coverage
     await js(`window.original=testMap.getSource('ascent')._data;
       testMap.getSource('ascent').setData({type:'FeatureCollection',features:[]});
       play.click()`);
-    await until(()=>js(`!testMap.getTerrain() && message.textContent==='Loading ascent road…'`));
+    await until(()=>js(`!testMap.getTerrain() && !testMap.queryRenderedFeatures({layers:['ascent']}).length &&
+      message.textContent==='Preparing rider view…'`));
     await js(`window.contentTimes=[]; window.tileTimes=[];
       testMap.on('sourcedata',e=>{
         if(e.sourceId!=='sat') return;
@@ -438,21 +507,86 @@ test('delayed DEM prepares during moving flat playback, promotes once usable; co
     assert.deepEqual(exceptions,[]);
   });
 
-test('opening flat ride keeps visible road and imagery while new tiles and promotion are held',
+test('Play retains the painted orbit until the 0 m road draw; promotion never paints a neutral viewport',
   {skip:!process.env.MAPBOX_GL_215,timeout:30000},async t=>{
-    const {js,hold,holdSat,release,exceptions}=await fixture(t,'cold');
+    const {js,exceptions}=await fixture(t,'overview');
+    await js(`window.road=testMap.getSource('ascent');window.saved=road._data;
+      road.setData({type:'FeatureCollection',features:[]});void 0`);
+    await until(()=>js(`!!map.querySelector('.orbit-hold')`));
+    const start=await js(`window.hold=map.querySelector('.orbit-hold');
+      window.original=hold.toDataURL();window.frames=[];
+      window.audit=()=>{const held=map.querySelector('.orbit-hold');
+        frames.push({d:+seek.value,live:getComputedStyle(map).visibility==='visible',
+          held:!!held && getComputedStyle(held).visibility==='visible',
+          mesh:!!testMap.getTerrain(),mode:mode.textContent,pitch:testMap.getPitch(),blend:!!map.querySelector('.mesh-dissolve')})};
+      testMap.on('render',audit);play.click();audit();
+      [play.textContent,map.parentElement.classList.contains('departing'),frames.at(-1).held]`);
+    assert.deepEqual(start,['Pause',true,true]);
+    await sleep(350);
+    assert.ok(await js(`hold.isConnected && hold.toDataURL()===original && +seek.value===0`));
+    await js(`road.setData(saved);void 0`);
+    await until(()=>js(`+seek.value>0 && mode.textContent==='Cinematic flyover'`));
+    assert.ok(await js(`frames.every(f=>f.live || f.held) &&
+      frames.find(f=>f.live)?.d===0 && frames.find(f=>f.live)?.mesh===false &&
+      frames.some(f=>f.live && !f.mesh && f.d>0) &&
+      frames.filter(f=>f.d>0).every(f=>f.mode!=='Buffering') &&
+      frames.find(f=>f.live && f.mesh)?.pitch>30 && frames.some(f=>f.mesh && f.live && f.blend)`));
+    assert.deepEqual(exceptions,[]);
+  });
+
+test('opening flat ride keeps visible road and imagery while new tiles and promotion are held',
+  {skip:!process.env.MAPBOX_GL_215 || (!process.env.PAINT_RIDE_URL && 'requires the normal loopback package session'),timeout:45000},async t=>{
+    const {js,hold,holdSat,releaseSat,pendingDetail,release,dropSat,cover404s,exceptions}=await fixture(t,'opening');
     hold(); t.after(release);
-    await js('play.click()');
+    await js(`map.scrollIntoView({block:'center'});const painted=(${makePaintProbe})();window.frames=[];window.audit=()=>{
+      const live=getComputedStyle(map).visibility==='visible', hold=map.querySelector('.orbit-hold');
+      const surface=live ? testMap.getCanvas() : hold && getComputedStyle(hold).visibility==='visible' && hold;
+      const p=testMap.project(beacon.getLngLat()), m=map.getBoundingClientRect(), b=beacon.getElement().getBoundingClientRect();
+      frames.push({d:+seek.value,live,paint:surface && painted(surface),mesh:!!testMap.getTerrain(),
+        pitch:testMap.getPitch(),center:testMap.getCenter().toArray(),road:!!testMap.queryRenderedFeatures(p,{layers:['ascent']}).length,
+        marker:+getComputedStyle(beacon.getElement()).opacity===1 &&
+          Math.hypot(b.x+b.width/2-m.x-p.x,b.y+b.height/2-m.y-p.y)<1.6});
+    };testMap.on('render',audit);play.click()`);
     await until(()=>js(`mode.textContent==='Flat satellite ride' && +seek.value>0`));
     holdSat();
-    await js(`window.badFrames=0;const covered=rasterCoverage(testMap);window.audit=()=>{
-        if(map.getAttribute('aria-busy')==='false' && (testMap.getTerrain() ||
-          !testMap.queryRenderedFeatures(testMap.project(beacon.getLngLat()),{layers:['ascent']}).length ||
-          !covered())) badFrames++;
-      };testMap.on('render',audit);void 0`);
+    // Drop detail, not the verified coarse draw. This exercises an actual
+    // outstanding request and a coarse-only interval on every run, not just
+    // the possibility of a request if the camera happens to cross a tile.
+    await js(`const detail=testMap.getSource('sat');testMap.style._getSourceCache('sat').clearTiles();
+      detail.setTiles(detail.tiles);void 0`);
+    await until(()=>pendingDetail()>0);
+    await until(()=>js(`+seek.value>=140`));
+    releaseSat();
     await until(()=>js(`+seek.value>=350`));
-    assert.ok(await js(`badFrames===0 && testMap.getPitch()>=32 && play.textContent==='Pause' && mode.textContent==='Flat satellite ride'`));
-    await js(`testMap.off('render',audit);void 0`);
+    const frames=await js(`testMap.off('render',audit);frames`);
+    const rides=frames.filter(f=>f.live), first=rides[0], last=rides.at(-1);
+    assert.equal(first?.d,0);
+    assert.ok(last.d>=340 && last.center.some((v,i)=>Math.abs(v-first.center[i])>.0001));
+    const bad=frames.find(f=>!f.paint?.ok || (f.live && (f.mesh || !f.road || !f.marker || f.pitch<32)));
+    assert.ok(!bad,JSON.stringify(bad));
+    const mixed=rides.filter(f=>f.paint.fine>100 && f.paint.coarse>100);
+    assert.ok(mixed.length,'fine detail and coarse cover should both reach the screen');
+    const coarse=rides.filter(f=>f.paint.fine===0 && f.paint.coarse>100);
+    assert.ok(coarse.length,'coarse-only draw must remain visible during detail reload');
+    t.diagnostic(`${rides.length} verified ride draws: ${mixed.length} mixed, ${coarse.length} coarse-only`);
+    assert.ok(await js(`play.textContent==='Pause' && mode.textContent==='Flat satellite ride'`));
+    // At the same lens now fail the coarse requests as well, leaving only
+    // the fine half of the lens. Inspect GL behind the hold, not the held
+    // canvas: the very same paint classifier must see and reject the hole.
+    await js('play.click()');
+    dropSat(); release();
+    await js(`window.hole=null;testMap.on('render',()=>{
+      if(hole || testMap.getTerrain())return;
+      const sample=painted(testMap.getCanvas());
+      if(sample.fine>100 && !sample.ok && sample.worst>.5)
+        hole={...sample,live:getComputedStyle(map).visibility==='visible'};
+    });
+    const cover=testMap.getSource('sat-cover');
+    testMap.style._getSourceCache('sat-cover').clearTiles();cover.setTiles(cover.tiles);void 0`);
+    await until(()=>cover404s()>0);
+    const hole=await until(()=>js('hole'));
+    assert.equal(hole.live,false,JSON.stringify(hole));
+    t.diagnostic(`paint control rejected ${hole.bad} missing samples alongside ${hole.fine} textured`);
     assert.deepEqual(exceptions,[]);
   });
 
