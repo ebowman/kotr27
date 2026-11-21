@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
@@ -15,6 +16,10 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   await mkdir(join(src, 'js'), {recursive:true});
   await cp(new URL('../assets/', import.meta.url), join(src, 'assets'), {recursive:true});
   await cp(new URL('../index.html', import.meta.url), join(src, 'index.html'));
+  await cp(new URL('../explore.html', import.meta.url), join(src, 'explore.html'));
+  for (const file of await readdir(new URL('../js/', import.meta.url))) {
+    if (file.endsWith('.mjs')) await cp(new URL('../js/'+file,import.meta.url),join(src,'js',file));
+  }
   await writeFile(join(src, 'js/config.js'), 'window.KOTR_CONFIG = {};');
   await writeFile(join(src, 'assets/private.txt'), 'not public');
   for (const legacy of ['grappa-relief.webp','ascent.svg']) {
@@ -38,17 +43,24 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
     assert.deepEqual(await readFile(join(b, name)), await readFile(join(repeat, name)));
   }
   const names = await files(a);
-  assert.equal(names.length, 8); // two directories, four assets, entry, .nojekyll
+  const expected = ['assets','js','.nojekyll','index.html','explore.html','assets/flyover.js',
+    'assets/terrain.js','assets/semonzo.gpx','js/config.js',...['ascent-estimator','chapter-reveal',
+      'plan-comparison','rider-controls','rider-scenario','semonzo-profile'].map(n=>`js/${n}.mjs`)];
+  assert.deepEqual(names.map(n=>n.replace(/\.[0-9a-f]{24}\./,'.')).sort(),expected.sort());
+  for (const n of names.filter(n=>n.includes('/'))) {
+    const hash = createHash('sha256').update(await readFile(join(a,n))).digest('hex').slice(0,24);
+    assert.ok(n.includes(`.${hash}.`), n);
+  }
   assert.ok(!names.some(n=>/relief|\.svg$|\.webp$/.test(n)));
   assert.doesNotMatch(await readFile(join(a,'index.html'),'utf8'), /grappa-relief|ascent\.svg|relief-beacon/);
   assert.ok(!names.includes('assets/private.txt'));
   const bNames = new Set(await files(b));
   assert.deepEqual(names.filter(n => !bNames.has(n)).sort(), names.filter(n =>
-    /assets\/(?:flyover|semonzo)\./.test(n)).sort());
+    /(?:flyover|semonzo|semonzo-profile|rider-controls)\./.test(n)).sort());
   let live = a, fail = false, probes = 0, plainNavigations = 0, replacements = 0;
   const legacyRequests=[];
   const allowed = new Set([...names, ...bNames].filter(n => extname(n)));
-  const types = {'.html':'text/html','.js':'text/javascript','.gpx':'application/xml',
+  const types = {'.html':'text/html','.js':'text/javascript','.mjs':'text/javascript','.gpx':'application/xml',
     '.svg':'image/svg+xml','.webp':'image/webp'};
   const server = createServer(async (req, res) => {
     if (req.url === '/away') return res.writeHead(200, {'Content-Type':'text/html'}).end('<a href="/kotr27/">Return</a>');
@@ -87,8 +99,14 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
     await js(`seek.value = seek.max; seek.dispatchEvent(new Event('input'))`);
     return js('stats.textContent');
   };
+  const explore = async () => {
+    await js(`document.querySelector('a[href="./explore.html"]').click()`);
+    await until(()=>js(`document.querySelector('#controls')?.disabled===false`));
+    return js(`document.querySelector('script[type=module]').src`);
+  };
   await visit(); await until(() => probes === 1);
   assert.match(await summit(), /1746 m elevation/);
+  assert.match(await explore(),new RegExp(names.find(n=>n.includes('/rider-controls.'))+'$'));
   live = b;
   await visit();
   await until(() => js(`document.title.startsWith('B:') && document.querySelector('#deck')?.hidden === false`));
@@ -96,6 +114,9 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   assert.match(await summit(), /1846 m elevation/);
   assert.equal(plainNavigations, 1, 'return started from cached ordinary HTML');
   assert.equal(replacements, 1);
+  await explore();
+  const bControls = [...bNames].find(n=>n.includes('/rider-controls.'));
+  await until(()=>js(`location.href.endsWith('/kotr27/explore.html') && document.querySelector('script[type=module]')?.src.endsWith('${bControls}') && document.querySelector('#controls')?.disabled===false`));
   const before = probes;
   await visit(); await until(() => probes > before);
   assert.match(await summit(), /1846 m elevation/);
@@ -105,6 +126,7 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   assert.match(await summit(), /1846 m elevation/);
   await visit(true);
   assert.match(await summit(), /1846 m elevation/);
+  assert.ok((await explore()).endsWith('/'+bControls), 'cached explorer and its transitive assets work offline');
   assert.equal(replacements, 1);
   assert.deepEqual(exceptions, []);
   assert.deepEqual(legacyRequests,[]);

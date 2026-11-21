@@ -36,8 +36,9 @@ interval. Work means mechanical energy delivered at the pedals, not food
 calories. Totals sum unrounded chapter values; round only for display.
 
 **Try the rider controls locally.** Serve the checkout over loopback and open
-`/explore.html`. This standalone companion uses the committed v1 profile.
-It is not linked from the public flyover or added to the release allowlist;
+`/explore.html`, or follow “Explore the example ascent” from the flyover.
+The companion derives its windows in memory from the same GPX as the flyover.
+The committed JSON is a local regression reference, not a release asset;
 see the [profile's redistribution note](semonzo-chapters.md).
 
 `riderScenario(profile, { mass, enteredUnit, ftp, effort })` accepts the

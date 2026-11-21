@@ -2,7 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { extname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { setTimeout as sleep } from 'node:timers/promises';
+import { build } from '../tools/build-release.mjs';
 import { browser, until } from './browser.mjs';
 import { estimateAscent } from '../js/ascent-estimator.mjs';
 import { riderScenario } from '../js/rider-scenario.mjs';
@@ -58,17 +63,19 @@ test('equal or indistinguishable rounded durations do not single out a chapter',
   }
 });
 
-test('phone reveal and controls support private, keyboard-only scenario changes', async t => {
-  const files = new Map([['explore.html','text/html'], ['js/rider-controls.mjs','text/javascript'],
-    ['js/chapter-reveal.mjs','text/javascript'], ['js/plan-comparison.mjs','text/javascript'],
-    ['index.html','text/html'], ['assets/flyover.js','text/javascript'], ['assets/semonzo.gpx','application/xml'],
-    ['js/rider-scenario.mjs','text/javascript'], ['js/ascent-estimator.mjs','text/javascript'],
-    ['assets/semonzo-chapters.v1.json','application/json']]);
+for (const width of [320,1200]) test(`packaged ${width}px private keyboard walkthrough`, async t => {
+  const tmp = await mkdtemp(join(tmpdir(),'kotr-walk-')), out = join(tmp,'kotr27');
+  t.after(()=>rm(tmp,{recursive:true,force:true}));
+  await build(fileURLToPath(new URL('../',import.meta.url)),out);
+  const types = {'.mjs':'text/javascript','.js':'text/javascript','.html':'text/html','.gpx':'application/xml'};
+  const files = (await readdir(out,{recursive:true})).filter(f=>types[extname(f)]);
+  let missing = false;
   const server = createServer(async (req, res) => {
-    const file = req.url.slice(1);
-    if (!files.has(file)) return res.writeHead(404).end();
-    res.writeHead(200, { 'Content-Type': files.get(file) })
-      .end(await readFile(new URL('../' + file, import.meta.url)));
+    if (!req.url.startsWith('/kotr27/')) return res.writeHead(404).end();
+    const file = req.url.slice('/kotr27/'.length) || 'index.html';
+    if (!files.includes(file) || (missing && file.endsWith('.gpx'))) return res.writeHead(404).end();
+    res.writeHead(200, { 'Content-Type': types[extname(file)], 'Cache-Control':'no-store' })
+      .end(await readFile(join(out,file)));
   });
   server.listen(0,'127.0.0.1'); await once(server, 'listening');
   t.after(() => { server.closeAllConnections(); server.close(); });
@@ -76,13 +83,21 @@ test('phone reveal and controls support private, keyboard-only scenario changes'
   const { cmd, js, exceptions } = await browser(t, m => {
     if (m.method === 'Network.requestWillBeSent') requests.push(m.params.request.url);
   });
-  const url = `http://127.0.0.1:${server.address().port}/explore.html`;
+  const base = `http://127.0.0.1:${server.address().port}/kotr27/`, url = base+'explore.html';
   await cmd('Network.enable');
+  await cmd('Network.setBlockedURLs', {urls:['https://*']});
   await cmd('Emulation.setEmulatedMedia', { features:[{name:'prefers-reduced-motion', value:'reduce'}] });
-  const resize = width => cmd('Emulation.setDeviceMetricsOverride', { width, height:640, deviceScaleFactor:1, mobile:true });
-  await resize(320);
-  await cmd('Page.navigate', { url });
+  const resize = w => cmd('Emulation.setDeviceMetricsOverride', { width:w, height:800, deviceScaleFactor:1, mobile:width===320 });
+  await resize(width);
+  await cmd('Page.navigate', {url:base});
+  await until(()=>js(`document.querySelector('#deck')?.hidden === false`));
+  await js(`document.querySelector('a[href="./explore.html"]').click()`);
   await until(() => js(`document.querySelector('#controls')?.disabled === false`));
+  assert.match(await js('document.body.innerText'), /example ascent from Semonzo.*event route is not confirmed/);
+  const profileModule = files.find(f=>f.startsWith('js/semonzo-profile.'));
+  const {result:derived} = await cmd('Runtime.evaluate',{awaitPromise:true,returnByValue:true,
+    expression:`import('./${profileModule}').then(m=>m.loadProfile())`});
+  for (const key of ['schemaVersion','distanceM','chapters','segments']) assert.deepEqual(derived.value[key], route[key]);
   const before = requests.length;
   const text = () => js(`document.querySelector('#result').textContent`);
   const focus = () => js(`document.activeElement.id`);
@@ -92,6 +107,14 @@ test('phone reveal and controls support private, keyboard-only scenario changes'
         ...(key === 'Enter' && type === 'keyDown' && { text: '\r' }) });
   };
   const tab = () => key('Tab','Tab',9), enter = () => key('Enter','Enter',13);
+  // Desktop Chrome on macOS uses native popup menus; type-ahead selects an
+  // option without relying on platform-specific Home/End popup behaviour.
+  const select = async (letter, last) => {
+    if (width===320) return last ? key('End','End',35) : key('Home','Home',36);
+    for (const type of ['keyDown','keyUp'])
+      await cmd('Input.dispatchKeyEvent',{type,key:letter,text:type==='keyDown'?letter:'',
+        windowsVirtualKeyCode:letter.toUpperCase().charCodeAt(0)});
+  };
   const type = text => cmd('Input.insertText', { text });
   assert.ok(await js(`document.documentElement.scrollWidth <= innerWidth`));
   const example = await text();
@@ -132,7 +155,7 @@ test('phone reveal and controls support private, keyboard-only scenario changes'
   function reportGap(labels, a, b) {
     const first = labels.find(([name])=>name===a), second = labels.find(([name])=>name===b);
     assert.ok(first && second, `expected readable ${a} and ${b} at 320px`);
-    t.diagnostic(`320px: ${a} → ${b}: ${(second[2]-first[3]).toFixed(1)}px between text rectangles`);
+    t.diagnostic(`${width}px: ${a} → ${b}: ${(second[2]-first[3]).toFixed(1)}px between text rectangles`);
   }
   reportGap(await distance(), '10 km', '15 km');
   assert.ok(await js('revealed.hidden'));
@@ -144,6 +167,28 @@ test('phone reveal and controls support private, keyboard-only scenario changes'
   const list = (await chart()).list;
   assert.match(list[0], /Long lift.*8.6%.*80 min \(range 71–80 min\).*49%/);
   assert.match(list[2], /High step.*10.9%.*28 min \(range 24–28 min\).*17%/);
+  const {nodes} = await cmd('Accessibility.getFullAXTree');
+  const ax = new Map(nodes.map(n=>[n.nodeId,n])), headings=[];
+  function walk(n) {
+    if (n.role.value === 'heading') headings.push(n.name.value);
+    for (const id of n.childIds || []) walk(ax.get(id));
+  }
+  walk(nodes[0]);
+  assert.deepEqual(headings,['Explore the example ascent','Where do the minutes go?','Chapter by chapter',
+    'Two ways up the same climb','See a chapter in the flyover']);
+  assert.ok(nodes.some(n=>n.role.value==='textbox' && n.name.value==='FTP in watts (optional)'));
+  const ratios = await js(`(()=>{
+    function lum(rgb) {
+      const v=rgb.match(/\\d+/g).slice(0,3).map(n=>n/255).map(n=>n<=.04045?n/12.92:((n+.055)/1.055)**2.4);
+      return .2126*v[0]+.7152*v[1]+.0722*v[2];
+    }
+    return [document.body,...bands.children].map(el=>{
+      const s=getComputedStyle(el), a=lum(s.color), b=lum(s.backgroundColor);
+      return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);
+    })
+  })()`);
+  assert.ok(ratios.every(r=>r>=4.5));
+  t.diagnostic(`Body and chapter-number contrasts: ${ratios.map(n=>n.toFixed(2)).join(', ')}:1`);
   await tab(); await tab(); await enter(); await distance();
   await tab(); await enter(); await time();
   assert.ok(await js(`document.documentElement.scrollWidth <= innerWidth`));
@@ -156,8 +201,8 @@ test('phone reveal and controls support private, keyboard-only scenario changes'
   await js(`choices.firstChild.click()`);
   const at190 = riderScenario(route, {...blank, ftp:'190'}).estimate;
   reportGap(await time(at190), '100 min', '150 min');
-  for (const width of [240, 800, 320]) {
-    await resize(width);
+  for (const w of [240, 800, width]) {
+    await resize(w);
     await js(`window.settled=false; requestAnimationFrame(()=>requestAnimationFrame(()=>window.settled=true))`);
     await until(()=>js('window.settled'));
     await time(at190); // same revealed chart, no redraw from user input
@@ -170,10 +215,19 @@ test('phone reveal and controls support private, keyboard-only scenario changes'
   await js(`choices.firstChild.click()`);
   assert.match((await chart()).list[0], /71 min \(range 62–71 min\)/);
   assert.match(await text(), /Partly assumed.*175 W \(70% of FTP\).*250 W \(entered\).*75 kg \(Robin’s assumption\).*12 kg/);
+  assert.match(await js('takeaway.textContent'),/Long lift.*min less there in Plan B/);
+  t.diagnostic(await js(`['plan-a','plan-b','takeaway'].map(id=>document.getElementById(id).textContent).join(' ')`));
+  const ftpWork = await js('work.textContent');
+  await js(`document.getElementById('stop-b').focus()`);
+  await select('1',true);
+  assert.match(await js(`document.getElementById('plan-b').textContent`), /127 min moving · 142 min elapsed/);
+  assert.equal(await js('work.textContent'), ftpWork);
+  assert.match(await js(`work.parentElement.textContent`), /same height.*work against gravity is unchanged/);
+  await js('ftp.focus()');
   // Native controls remain operable without pointer or synthetic change events.
   for (let i = 0; i < 3; i++) await key('Tab', 'Tab', 9, 8); // Shift+Tab
   assert.equal(await focus(), 'effort');
-  await key('End', 'End', 35);
+  await select('f',true);
   assert.match(await text(), /200 W \(80% of FTP\)/);
   await js(`choices.firstChild.click()`);
   assert.match((await chart()).list[0], /62 min \(range 62–71 min\)/);
@@ -183,10 +237,11 @@ test('phone reveal and controls support private, keyboard-only scenario changes'
   assert.match(personal, /your weight and FTP.*81.26 kg \(entered\)/);
   assert.match(await js(`document.querySelector('#shared-assumptions').textContent`), /Your weight and FTP.*81.26 kg rider \(entered\).*250 W FTP \(entered\)/);
   await tab(); assert.equal(await focus(), 'unit');
-  await key('End', 'End', 35);
+  await select('l',true);
   assert.ok(Math.abs(Number(await js(`mass.value`)) * .45359237 - 81.257) < 1e-8);
   assert.equal(await text(), personal);
-  await key('Home', 'Home', 36);
+  if (width !== 320) await sleep(1100); // start a new native type-ahead prefix on the same select
+  await select('k',false);
   assert.equal(await js(`mass.value`), '81.257');
   await tab(); assert.equal(await focus(), 'ftp');
   await js('ftp.select()'); await type('oops');
@@ -208,9 +263,9 @@ test('phone reveal and controls support private, keyboard-only scenario changes'
   await distance();
   await cmd('Network.emulateNetworkConditions', {offline:true, latency:0, downloadThroughput:0, uploadThroughput:0});
   await tab(); assert.equal(await focus(), 'pace-b');
-  await key('Home', 'Home', 36);
+  await select('t',false);
   await tab(); assert.equal(await focus(), 'stop-b');
-  await key('End', 'End', 35);
+  await select('1',true);
   assert.match(await js('takeaway.textContent'), /same pace.*15 minutes to Plan B/);
   const movement = Math.round(model.total.slower.movingSeconds / 60);
   assert.match(await js(`document.querySelector('#plan-b').textContent`), new RegExp(`${movement} min moving · ${movement+15} min elapsed`));
@@ -220,14 +275,18 @@ test('phone reveal and controls support private, keyboard-only scenario changes'
   assert.equal(await js('document.activeElement.hash'), '#seek-9000');
   assert.equal(await js('location.href'), url);
   assert.deepEqual(await js('[localStorage.length, sessionStorage.length, document.cookie]'), [0, 0, '']);
+  const {result:stores} = await cmd('Runtime.evaluate',{awaitPromise:true,returnByValue:true,
+    expression:'Promise.all([indexedDB.databases(),caches.keys(),navigator.serviceWorker.getRegistrations()]).then(xs=>xs.map(x=>x.length))'});
+  assert.deepEqual(stores.value,[0,0,0]);
   assert.deepEqual(requests.slice(before), []);
   await cmd('Network.emulateNetworkConditions', {offline:false, latency:0, downloadThroughput:-1, uploadThroughput:-1});
   await enter();
   await until(()=>js(`document.querySelector('#deck')?.hidden === false`));
-  assert.equal(await js('location.pathname + location.search + location.hash'), '/index.html#seek-9000');
+  assert.equal(await js('location.pathname + location.search + location.hash'), '/kotr27/index.html#seek-9000');
+  await until(()=>js('play.disabled'));
   assert.deepEqual(await js(`[seek.value,document.activeElement.id,play.disabled,stats.textContent.startsWith('9.0 km')]`),
     ['9000','seek',true,true]);
-  files.delete('assets/semonzo-chapters.v1.json');
+  missing = true;
   await cmd('Page.navigate', {url});
   await until(async () => (await text()).includes('unavailable'));
   assert.ok(await js(`document.querySelector('#chapter-game').hidden && controls.disabled`));

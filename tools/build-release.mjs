@@ -18,10 +18,23 @@ export async function build(source, destination) {
   if (!rel || !(rel === '..' || rel.startsWith('..' + sep))) throw Error('Output must be outside source');
   await mkdir(out);
   const names = new Map();
-  for (const file of ['assets/semonzo.gpx', 'js/config.js', 'assets/terrain.js', 'assets/flyover.js']) {
+  // Dependency-first allowlist. Specifiers in modules resolve from that
+  // module, while the classic flyover script fetches relative to its page.
+  const graph = {
+    'assets/semonzo.gpx': [], 'js/config.js': [], 'assets/terrain.js': [],
+    'assets/flyover.js': ['./assets/semonzo.gpx'],
+    'js/semonzo-profile.mjs': ['../assets/semonzo.gpx'],
+    'js/ascent-estimator.mjs': [], 'js/rider-scenario.mjs': ['./ascent-estimator.mjs'],
+    'js/chapter-reveal.mjs': [], 'js/plan-comparison.mjs': [],
+    'js/rider-controls.mjs': ['./rider-scenario.mjs','./chapter-reveal.mjs','./plan-comparison.mjs','./semonzo-profile.mjs'],
+  };
+  for (const [file, deps] of Object.entries(graph)) {
     let data = await readFile(join(root, file));
-    if (file === 'assets/flyover.js') {
-      data = replace(data.toString(), './assets/semonzo.gpx', './' + names.get('assets/semonzo.gpx'));
+    for (const spec of deps) {
+      const dir = file.endsWith('.mjs') ? dirname(file) : '.';
+      const name = names.get(join(dir, spec));
+      if (!name) throw Error(`Unresolved release dependency: ${file} → ${spec}`);
+      data = replace(data.toString(), spec, spec.replace(basename(spec), basename(name)));
     }
     const ext = extname(file);
     const name = `${file.slice(0, -ext.length)}.${digest(data)}${ext}`;
@@ -29,14 +42,17 @@ export async function build(source, destination) {
     await mkdir(join(out, dirname(name)), {recursive:true});
     await writeFile(join(out, name), data);
   }
-  let html = await readFile(join(root, 'index.html'), 'utf8');
-  for (const [file, name] of names) {
-    if (file !== 'assets/semonzo.gpx') html = replace(html, './' + file, './' + name);
-  }
   const check = await readFile(new URL('./entry-check.js', import.meta.url), 'utf8');
-  html = replace(html, '<!-- release entry check -->',
-    `<meta name="kotr-release" content="RELEASE_ID">\n  <script>${check}</script>`);
-  await writeFile(join(out, 'index.html'), replace(html, 'content="RELEASE_ID"', `content="${digest(html)}"`));
+  for (const [entry, scripts] of Object.entries({
+    'index.html':['js/config.js','assets/terrain.js','assets/flyover.js'],
+    'explore.html':['js/rider-controls.mjs'],
+  })) {
+    let html = await readFile(join(root, entry), 'utf8');
+    for (const file of scripts) html = replace(html, './' + file, './' + names.get(file));
+    html = replace(html, '<!-- release entry check -->',
+      `<meta name="kotr-release" content="RELEASE_ID">\n  <script>${check}</script>`);
+    await writeFile(join(out, entry), replace(html, 'content="RELEASE_ID"', `content="${digest(html)}"`));
+  }
   await writeFile(join(out, '.nojekyll'), '');
 }
 

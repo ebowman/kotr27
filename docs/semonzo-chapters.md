@@ -1,7 +1,9 @@
 # Semonzo chapter contract · v1
 
-`assets/semonzo-chapters.v1.json` is the offline input for the estimator and
-graphic. It describes one provisional approach, not the confirmed event course.
+`assets/semonzo-chapters.v1.json` is the private regression reference for the
+estimator and graphic. The browser derives the consumed fields in memory using
+`js/semonzo-profile.mjs`; the Pages build excludes the JSON and generator.
+It describes one provisional approach, not the confirmed event course.
 Regenerate with `python3 tools/build-semonzo.py`; check with
 `python3 tests/semonzo_chapters.py`. Neither step needs the network or a map.
 

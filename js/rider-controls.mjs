@@ -1,6 +1,7 @@
 import { displayMass, riderScenario } from './rider-scenario.mjs';
 import { renderChapters } from './chapter-reveal.mjs';
 import { installComparison } from './plan-comparison.mjs';
+import { loadProfile } from './semonzo-profile.mjs';
 
 const el = id => document.getElementById(id);
 const mass = el('mass'), unit = el('unit'), ftp = el('ftp'), effort = el('effort');
@@ -70,10 +71,7 @@ function install(profile) {
 }
 
 try {
-  // Static local profile only. No request depends on rider state.
-  const response = await fetch(new URL('../assets/semonzo-chapters.v1.json', import.meta.url));
-  if (!response.ok) throw new Error('Missing profile');
-  install(await response.json());
+  install(await loadProfile());
 } catch {
   result.textContent = 'The example profile is unavailable. No estimate can be shown.';
 }
