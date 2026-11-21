@@ -35,6 +35,21 @@ keep each work figure paired with its scenario. It is not a confidence
 interval. Work means mechanical energy delivered at the pedals, not food
 calories. Totals sum unrounded chapter values; round only for display.
 
+**Try the rider controls locally.** Serve the checkout over loopback and open
+`/explore.html`. This standalone companion uses the committed v1 profile.
+It is not linked from the public flyover or added to the release allowlist;
+see the [profile's redistribution note](semonzo-chapters.md).
+
+`riderScenario(profile, { mass, enteredUnit, ftp, effort })` accepts the
+original mass and FTP text (`''` means omitted), `kg` or `lb`, and `slower`
+or `faster`. Both efforts use the same estimator call with illustrative
+fractions 0.70 and 0.80. Consumers select `estimate.total[effort]`.
+Valid states carry `kind` (`example`, `partial`, `personal`), `supplied`
+flags, `estimate` and `effort`. An `invalid` state carries only `kind` and
+field `errors`, never a stale or default estimate. Unit changes convert
+the display, not the original entry. Clear resets both inputs and effort.
+Run `node --test tests/rider-controls.mjs` to exercise the contract and UI.
+
 **Model.** On each window the road length is the hypotenuse of horizontal run
 and signed rise. For road speed *v*, wheel power is
 `mass × g × (rise + Crr × run) / roadLength × v + ½ × rho × CdA × v³`.

@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
+  <title>Explore the example ascent · Semonzo</title>
+  <script type="module" src="./js/rider-controls.mjs"></script>
+  <style>
+    * { box-sizing:border-box }
+    body { margin:0; background:#f9f6ec; color:#163c34; font:1rem/1.55 system-ui,sans-serif }
+    main { max-width:42rem; margin:auto; padding:1.5rem 1rem 4rem }
+    h1,h2 { font-family:Georgia,serif; line-height:1.15 }
+    fieldset { min-width:0; margin:1rem 0; padding:1rem; border:1px solid #93a99b }
+    .row { display:flex; align-items:end; flex-wrap:wrap; gap:.65rem }
+    input,select,button { font:inherit; color:inherit; padding:.45rem; min-height:44px; max-width:100% }
+    label { display:block }
+    input { width:8rem }
+    button,summary { cursor:pointer }
+    :focus-visible { outline:3px solid #8a3c22; outline-offset:3px }
+    [aria-invalid=true] { border:2px solid #8a3c22 }
+    a { color:inherit }
+    #result { padding:1rem; background:#fffdf6; border-left:4px solid #637e68 }
+    [id$="-error"]:empty { display:none }
+  </style>
+</head>
+<body><main>
+  <a href="./">Back to the Semonzo flyover</a>
+  <h1>Explore the example ascent</h1>
+  <p>Meet Robin, a fictional rider on the provisional climb from Semonzo. Explore without numbers, or change the assumptions. This is not an event prediction.</p>
+  <fieldset id="controls" disabled>
+    <legend>Choose a scenario</legend>
+    <div class="row">
+      <button type="button" id="example">Explore Robin’s example</button>
+      <button type="button" id="know-ftp">I know my FTP</button>
+    </div>
+    <p><label for="effort">Imagine an effort</label>
+      <select id="effort"><option value="slower">Time to talk</option><option value="faster">Focused and steady</option></select></p>
+    <p>The choices model two steady power levels. They don’t measure fitness or tell you how hard to ride.</p>
+    <div class="row">
+      <div><label for="mass">Rider weight (optional)</label>
+        <input id="mass" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" aria-describedby="mass-error"></div>
+      <div><label for="unit">Weight unit</label>
+        <select id="unit"><option>kg</option><option>lb</option></select></div>
+    </div>
+    <p id="mass-error"></p>
+    <p><label for="ftp">FTP in watts (optional)</label>
+      <input id="ftp" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" aria-describedby="ftp-error"></p>
+    <p id="ftp-error"></p>
+    <details><summary>What is FTP?</summary><p>Functional threshold power is an estimate of the power you can sustain in a hard, steady effort. If you know it in watts, you can use it here without entering weight.</p></details>
+    <p>Your entries stay on this page. Nothing you enter is saved or sent.</p>
+    <button type="button" id="clear">Clear entries and return to example</button>
+  </fieldset>
+  <h2>Your scenario</h2>
+  <p role="status" id="result" aria-atomic="true">Loading Robin’s fictional example…</p>
+  <noscript>The interactive example needs JavaScript.</noscript>
+  <p>Another climb’s time, length and gain alone can’t tell us sustained power: slopes, stops and wind can differ. Without FTP, we keep Robin’s example power rather than guessing yours.</p>
+  <p>Provisional route: BRouter, using © OpenStreetMap contributors (ODbL).</p>
+</main></body>
+</html>
