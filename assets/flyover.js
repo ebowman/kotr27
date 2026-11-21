@@ -203,6 +203,12 @@
     });
     render();
     el('deck').hidden = false;
+    // A chapter link carries route metres only. Use the ordinary paused seek.
+    const chapter = /^#seek-(\d{1,6})$/.exec(location.hash);
+    if (chapter && Number(chapter[1]) <= total) {
+      scrub(Number(chapter[1]));
+      seek.focus();
+    }
     const startMap=()=>window.startTerrain(points, draw => { terrain = draw; render(); }, upcoming, setAvailability);
     el('retry').addEventListener('click',()=>{
       if (el('retry').hidden) return;

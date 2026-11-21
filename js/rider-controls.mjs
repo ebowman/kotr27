@@ -1,5 +1,6 @@
 import { displayMass, riderScenario } from './rider-scenario.mjs';
 import { renderChapters } from './chapter-reveal.mjs';
+import { installComparison } from './plan-comparison.mjs';
 
 const el = id => document.getElementById(id);
 const mass = el('mass'), unit = el('unit'), ftp = el('ftp'), effort = el('effort');
@@ -7,6 +8,7 @@ const result = el('result');
 const format = n => Number(n.toFixed(2));
 
 function install(profile) {
+  const compare = installComparison(profile);
   let originalMass, enteredUnit;
   function render() {
     let state;
@@ -15,8 +17,10 @@ function install(profile) {
         mass: originalMass, enteredUnit, ftp: ftp.value, effort: effort.value,
       });
       renderChapters(profile, state);
+      compare(state);
     } catch {
       renderChapters(profile, {});
+      compare({});
       result.textContent = 'The chapter profile or scenario is unavailable. No estimate can be shown.';
       return;
     }
@@ -43,6 +47,8 @@ function install(profile) {
     mass.value = ftp.value = originalMass = '';
     unit.value = enteredUnit = 'kg';
     effort.value = 'slower';
+    el('pace-b').value = 'faster';
+    el('stop-b').value = '0';
     render();
   }
   reset();

@@ -68,7 +68,7 @@
       <button type="button" id="example">Explore Robin’s example</button>
       <button type="button" id="know-ftp">I know my FTP</button>
     </div>
-    <p><label for="effort">Imagine an effort</label>
+    <p><label for="effort">Imagine an effort (Plan A)</label>
       <select id="effort"><option value="slower">Time to talk</option><option value="faster">Focused and steady</option></select></p>
     <p>The choices model two steady power levels. They don’t measure fitness or tell you how hard to ride.</p>
     <div class="row">
@@ -85,6 +85,26 @@
     <p>Your entries stay on this page. Nothing you enter is saved or sent.</p>
     <button type="button" id="clear">Clear entries and return to example</button>
   </fieldset>
+  <section id="comparison" hidden aria-labelledby="compare-title">
+    <h2 id="compare-title">Two ways up the same climb</h2>
+    <p>Plan A uses the effort above and goes straight through. Keep the same rider and kit for Plan B, but try another pace or make time for a stop.</p>
+    <fieldset><legend>Plan B</legend><div class="row">
+      <label>Pace <select id="pace-b"><option value="slower">Time to talk</option><option value="faster" selected>Focused and steady</option></select></label>
+      <label>Stop <select id="stop-b"><option value="0">No stop</option><option value="5">5 min · photo</option><option value="15">15 min · café</option></select></label>
+    </div></fieldset>
+    <p id="shared-assumptions"></p>
+    <div role="status" aria-atomic="true">
+      <p id="plan-a"></p><p id="plan-b"></p>
+      <p id="takeaway"></p>
+    </div>
+    <details><summary>Does the climbing work change?</summary>
+      <p>The same rider and kit rise the same height, so the work against gravity is unchanged. Work at the pedals also covers rolling resistance, air drag and drivetrain losses. Drag increases with speed; a stationary stop adds no pedal work.</p>
+      <p id="work"></p>
+    </details>
+    <h3>See a chapter in the flyover</h3>
+    <p>These links seek to a distance on the route without starting playback. The movie clock is not your estimated ride time.</p>
+    <ul id="flyover-links"></ul>
+  </section>
   <p>Another climb’s time, length and gain alone can’t tell us sustained power: slopes, stops and wind can differ. Without FTP, we keep Robin’s example power rather than guessing yours.</p>
   <p>Provisional route: BRouter, using © OpenStreetMap contributors (ODbL).</p>
 </main></body>
