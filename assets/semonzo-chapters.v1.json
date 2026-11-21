@@ -1,0 +1,579 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "path": "assets/semonzo.gpx",
+    "sha256": "bd4f3a18bf36bed53229a3efe04e6e5a47aab1b37e2fe597ea961d66de07ffa4",
+    "attribution": "BRouter using © OpenStreetMap contributors (ODbL)",
+    "attributionUrl": "https://www.openstreetmap.org/copyright"
+  },
+  "windowM": 250,
+  "distanceM": 18887.19,
+  "netRiseM": 1533.75,
+  "rawAscentM": 1675.5,
+  "ascentM": 1549.95,
+  "chapters": [
+    {
+      "id": "long-lift",
+      "name": "Long lift",
+      "notice": "The first nine kilometres gain height almost without a break.",
+      "startM": 0,
+      "endM": 9000,
+      "netRiseM": 772.882,
+      "ascentM": 772.882
+    },
+    {
+      "id": "half-step",
+      "name": "Half step",
+      "notice": "The road still rises, but gains roughly half as much height per kilometre.",
+      "startM": 9000,
+      "endM": 11000,
+      "netRiseM": 80.345,
+      "ascentM": 85.292
+    },
+    {
+      "id": "high-step",
+      "name": "High step",
+      "notice": "Over the next two and a half kilometres the average crosses ten percent.",
+      "startM": 11000,
+      "endM": 13500,
+      "netRiseM": 273.494,
+      "ascentM": 273.494
+    },
+    {
+      "id": "dip-and-return",
+      "name": "Dip and return",
+      "notice": "The first half-kilometre loses height before the climb resumes toward the finish.",
+      "startM": 13500,
+      "endM": 18887.19,
+      "netRiseM": 407.029,
+      "ascentM": 418.283
+    }
+  ],
+  "segments": [
+    {
+      "chapterId": "long-lift",
+      "startM": 0,
+      "endM": 250,
+      "startElevationM": 212.25,
+      "endElevationM": 231.356
+    },
+    {
+      "chapterId": "long-lift",
+      "startM": 250,
+      "endM": 500,
+      "startElevationM": 231.356,
+      "endElevationM": 252.908
+    },
+    {
+      "chapterId": "long-lift",
+      "startM": 500,
+      "endM": 750,
+      "startElevationM": 252.908,
+      "endElevationM": 277.038
+    },
+    {
+      "chapterId": "long-lift",
+      "startM": 750,
+      "endM": 1000,
+      "startElevationM": 277.038,
+      "endElevationM": 297.934
+    },
+    {
+      "chapterId": "long-lift",
+      "startM": 1000,
+      "endM": 1250,
+      "startElevationM": 297.934,
+      "endElevationM": 323.174
+    },
+    {
+      "chapterId": "long-lift",
+      "startM": 1250,
+      "endM": 1500,
+      "startElevationM": 323.174,
+      "endElevationM": 340.257
+    },
+    {
+      "chapterId": "long-lift",
+      "startM": 1500,
+      "endM": 1750,
+      "startElevationM": 340.257,
+      "endElevationM": 357.718
+    },
+    {
+      "chapterId": "long-lift",
+      "startM": 1750,
+      "endM": 2000,
+      "startElevationM": 357.718,
+      "endElevationM": 380.151
+    },
+    {
+      "chapterId": "long-lift",
+      "startM": 2000,
+      "endM": 2250,
+      "startElevationM": 380.151,
+      "endElevationM": 399.751
+    },
+    {
+      "chapterId": "long-lift",
+      "startM": 2250,
+      "endM": 2500,
+      "startElevationM": 399.751,
+      "endElevationM": 422.845
+    },
+    {
+      "chapterId": "long-lift",
+      "startM": 2500,
+      "endM": 2750,
+      "startElevationM": 422.845,
+      "endElevationM": 437.165
+    },
+    {
+      "chapterId": "long-lift",
+      "startM": 2750,
+      "endM": 3000,
+      "startElevationM": 437.165,
+      "endElevationM": 466.221
+    },
+    {
+      "chapterId": "long-lift",
+      "startM": 3000,
+      "endM": 3250,
+      "startElevationM": 466.221,
+      "endElevationM": 487.567
+    },
+    {
+      "chapterId": "long-lift",
+      "startM": 3250,
+      "endM": 3500,
+      "startElevationM": 487.567,
+      "endElevationM": 509.865
+    },
+    {
+      "chapterId": "long-lift",
+      "startM": 3500,
+      "endM": 3750,
+      "startElevationM": 509.865,
+      "endElevationM": 530.235
+    },
+    {
+      "chapterId": "long-lift",
+      "startM": 3750,
+      "endM": 4000,
+      "startElevationM": 530.235,
+      "endElevationM": 552.125
+    },
+    {
+      "chapterId": "long-lift",
+      "startM": 4000,
+      "endM": 4250,
+      "startElevationM": 552.125,
+      "endElevationM": 573.93
+    },
+    {
+      "chapterId": "long-lift",
+      "startM": 4250,
+      "endM": 4500,
+      "startElevationM": 573.93,
+      "endElevationM": 594.25
+    },
+    {
+      "chapterId": "long-lift",
+      "startM": 4500,
+      "endM": 4750,
+      "startElevationM": 594.25,
+      "endElevationM": 615.555
+    },
+    {
+      "chapterId": "long-lift",
+      "startM": 4750,
+      "endM": 5000,
+      "startElevationM": 615.555,
+      "endElevationM": 635.429
+    },
+    {
+      "chapterId": "long-lift",
+      "startM": 5000,
+      "endM": 5250,
+      "startElevationM": 635.429,
+      "endElevationM": 658.484
+    },
+    {
+      "chapterId": "long-lift",
+      "startM": 5250,
+      "endM": 5500,
+      "startElevationM": 658.484,
+      "endElevationM": 676.385
+    },
+    {
+      "chapterId": "long-lift",
+      "startM": 5500,
+      "endM": 5750,
+      "startElevationM": 676.385,
+      "endElevationM": 700.231
+    },
+    {
+      "chapterId": "long-lift",
+      "startM": 5750,
+      "endM": 6000,
+      "startElevationM": 700.231,
+      "endElevationM": 721.94
+    },
+    {
+      "chapterId": "long-lift",
+      "startM": 6000,
+      "endM": 6250,
+      "startElevationM": 721.94,
+      "endElevationM": 735.459
+    },
+    {
+      "chapterId": "long-lift",
+      "startM": 6250,
+      "endM": 6500,
+      "startElevationM": 735.459,
+      "endElevationM": 759.779
+    },
+    {
+      "chapterId": "long-lift",
+      "startM": 6500,
+      "endM": 6750,
+      "startElevationM": 759.779,
+      "endElevationM": 780.597
+    },
+    {
+      "chapterId": "long-lift",
+      "startM": 6750,
+      "endM": 7000,
+      "startElevationM": 780.597,
+      "endElevationM": 803.48
+    },
+    {
+      "chapterId": "long-lift",
+      "startM": 7000,
+      "endM": 7250,
+      "startElevationM": 803.48,
+      "endElevationM": 829.085
+    },
+    {
+      "chapterId": "long-lift",
+      "startM": 7250,
+      "endM": 7500,
+      "startElevationM": 829.085,
+      "endElevationM": 856.717
+    },
+    {
+      "chapterId": "long-lift",
+      "startM": 7500,
+      "endM": 7750,
+      "startElevationM": 856.717,
+      "endElevationM": 871.144
+    },
+    {
+      "chapterId": "long-lift",
+      "startM": 7750,
+      "endM": 8000,
+      "startElevationM": 871.144,
+      "endElevationM": 894.405
+    },
+    {
+      "chapterId": "long-lift",
+      "startM": 8000,
+      "endM": 8250,
+      "startElevationM": 894.405,
+      "endElevationM": 917.36
+    },
+    {
+      "chapterId": "long-lift",
+      "startM": 8250,
+      "endM": 8500,
+      "startElevationM": 917.36,
+      "endElevationM": 936.642
+    },
+    {
+      "chapterId": "long-lift",
+      "startM": 8500,
+      "endM": 8750,
+      "startElevationM": 936.642,
+      "endElevationM": 958.424
+    },
+    {
+      "chapterId": "long-lift",
+      "startM": 8750,
+      "endM": 9000,
+      "startElevationM": 958.424,
+      "endElevationM": 985.132
+    },
+    {
+      "chapterId": "half-step",
+      "startM": 9000,
+      "endM": 9250,
+      "startElevationM": 985.132,
+      "endElevationM": 1001.605
+    },
+    {
+      "chapterId": "half-step",
+      "startM": 9250,
+      "endM": 9500,
+      "startElevationM": 1001.605,
+      "endElevationM": 1000.866
+    },
+    {
+      "chapterId": "half-step",
+      "startM": 9500,
+      "endM": 9750,
+      "startElevationM": 1000.866,
+      "endElevationM": 996.659
+    },
+    {
+      "chapterId": "half-step",
+      "startM": 9750,
+      "endM": 10000,
+      "startElevationM": 996.659,
+      "endElevationM": 1023.046
+    },
+    {
+      "chapterId": "half-step",
+      "startM": 10000,
+      "endM": 10250,
+      "startElevationM": 1023.046,
+      "endElevationM": 1037.248
+    },
+    {
+      "chapterId": "half-step",
+      "startM": 10250,
+      "endM": 10500,
+      "startElevationM": 1037.248,
+      "endElevationM": 1039.788
+    },
+    {
+      "chapterId": "half-step",
+      "startM": 10500,
+      "endM": 10750,
+      "startElevationM": 1039.788,
+      "endElevationM": 1044.312
+    },
+    {
+      "chapterId": "half-step",
+      "startM": 10750,
+      "endM": 11000,
+      "startElevationM": 1044.312,
+      "endElevationM": 1065.477
+    },
+    {
+      "chapterId": "high-step",
+      "startM": 11000,
+      "endM": 11250,
+      "startElevationM": 1065.477,
+      "endElevationM": 1086.003
+    },
+    {
+      "chapterId": "high-step",
+      "startM": 11250,
+      "endM": 11500,
+      "startElevationM": 1086.003,
+      "endElevationM": 1105.385
+    },
+    {
+      "chapterId": "high-step",
+      "startM": 11500,
+      "endM": 11750,
+      "startElevationM": 1105.385,
+      "endElevationM": 1136.25
+    },
+    {
+      "chapterId": "high-step",
+      "startM": 11750,
+      "endM": 12000,
+      "startElevationM": 1136.25,
+      "endElevationM": 1166.35
+    },
+    {
+      "chapterId": "high-step",
+      "startM": 12000,
+      "endM": 12250,
+      "startElevationM": 1166.35,
+      "endElevationM": 1194.551
+    },
+    {
+      "chapterId": "high-step",
+      "startM": 12250,
+      "endM": 12500,
+      "startElevationM": 1194.551,
+      "endElevationM": 1222.724
+    },
+    {
+      "chapterId": "high-step",
+      "startM": 12500,
+      "endM": 12750,
+      "startElevationM": 1222.724,
+      "endElevationM": 1246.073
+    },
+    {
+      "chapterId": "high-step",
+      "startM": 12750,
+      "endM": 13000,
+      "startElevationM": 1246.073,
+      "endElevationM": 1278.331
+    },
+    {
+      "chapterId": "high-step",
+      "startM": 13000,
+      "endM": 13250,
+      "startElevationM": 1278.331,
+      "endElevationM": 1308.902
+    },
+    {
+      "chapterId": "high-step",
+      "startM": 13250,
+      "endM": 13500,
+      "startElevationM": 1308.902,
+      "endElevationM": 1338.971
+    },
+    {
+      "chapterId": "dip-and-return",
+      "startM": 13500,
+      "endM": 13750,
+      "startElevationM": 1338.971,
+      "endElevationM": 1345.004
+    },
+    {
+      "chapterId": "dip-and-return",
+      "startM": 13750,
+      "endM": 14000,
+      "startElevationM": 1345.004,
+      "endElevationM": 1333.75
+    },
+    {
+      "chapterId": "dip-and-return",
+      "startM": 14000,
+      "endM": 14250,
+      "startElevationM": 1333.75,
+      "endElevationM": 1343.013
+    },
+    {
+      "chapterId": "dip-and-return",
+      "startM": 14250,
+      "endM": 14500,
+      "startElevationM": 1343.013,
+      "endElevationM": 1365.033
+    },
+    {
+      "chapterId": "dip-and-return",
+      "startM": 14500,
+      "endM": 14750,
+      "startElevationM": 1365.033,
+      "endElevationM": 1397.221
+    },
+    {
+      "chapterId": "dip-and-return",
+      "startM": 14750,
+      "endM": 15000,
+      "startElevationM": 1397.221,
+      "endElevationM": 1419.111
+    },
+    {
+      "chapterId": "dip-and-return",
+      "startM": 15000,
+      "endM": 15250,
+      "startElevationM": 1419.111,
+      "endElevationM": 1428.745
+    },
+    {
+      "chapterId": "dip-and-return",
+      "startM": 15250,
+      "endM": 15500,
+      "startElevationM": 1428.745,
+      "endElevationM": 1457.269
+    },
+    {
+      "chapterId": "dip-and-return",
+      "startM": 15500,
+      "endM": 15750,
+      "startElevationM": 1457.269,
+      "endElevationM": 1487.533
+    },
+    {
+      "chapterId": "dip-and-return",
+      "startM": 15750,
+      "endM": 16000,
+      "startElevationM": 1487.533,
+      "endElevationM": 1507.534
+    },
+    {
+      "chapterId": "dip-and-return",
+      "startM": 16000,
+      "endM": 16250,
+      "startElevationM": 1507.534,
+      "endElevationM": 1530.758
+    },
+    {
+      "chapterId": "dip-and-return",
+      "startM": 16250,
+      "endM": 16500,
+      "startElevationM": 1530.758,
+      "endElevationM": 1550.268
+    },
+    {
+      "chapterId": "dip-and-return",
+      "startM": 16500,
+      "endM": 16750,
+      "startElevationM": 1550.268,
+      "endElevationM": 1574.933
+    },
+    {
+      "chapterId": "dip-and-return",
+      "startM": 16750,
+      "endM": 17000,
+      "startElevationM": 1574.933,
+      "endElevationM": 1586.833
+    },
+    {
+      "chapterId": "dip-and-return",
+      "startM": 17000,
+      "endM": 17250,
+      "startElevationM": 1586.833,
+      "endElevationM": 1604.925
+    },
+    {
+      "chapterId": "dip-and-return",
+      "startM": 17250,
+      "endM": 17500,
+      "startElevationM": 1604.925,
+      "endElevationM": 1631.614
+    },
+    {
+      "chapterId": "dip-and-return",
+      "startM": 17500,
+      "endM": 17750,
+      "startElevationM": 1631.614,
+      "endElevationM": 1659.75
+    },
+    {
+      "chapterId": "dip-and-return",
+      "startM": 17750,
+      "endM": 18000,
+      "startElevationM": 1659.75,
+      "endElevationM": 1682.12
+    },
+    {
+      "chapterId": "dip-and-return",
+      "startM": 18000,
+      "endM": 18250,
+      "startElevationM": 1682.12,
+      "endElevationM": 1703.899
+    },
+    {
+      "chapterId": "dip-and-return",
+      "startM": 18250,
+      "endM": 18500,
+      "startElevationM": 1703.899,
+      "endElevationM": 1723.32
+    },
+    {
+      "chapterId": "dip-and-return",
+      "startM": 18500,
+      "endM": 18887.19,
+      "startElevationM": 1723.32,
+      "endElevationM": 1746.0
+    }
+  ]
+}
