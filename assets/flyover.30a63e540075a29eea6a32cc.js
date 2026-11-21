@@ -129,7 +129,7 @@
     }
     function updateMode() {
       el('mode').textContent = availability==='standby' ? 'Elevation profile' : playing ? (availability==='ready' ? 'Cinematic flyover' :
-        availability==='flat' ? 'Flat satellite ride' : 'Buffering')
+        availability==='flat' || availability==='promoting' ? 'Flat satellite ride' : 'Buffering')
         : !following ? 'Route overview' : availability==='unavailable' ? 'Elevation profile' : d === total ? 'Summit' : 'Paused';
     }
     let discardMap;
@@ -138,6 +138,7 @@
       el('retry').hidden=!retryable;
       if (state===availability) return;
       availability=state;
+      el('map').parentElement.classList.toggle('departing',playing && d===0 && state==='loading');
       last=null; // No elapsed buffering time is owed, even between two RAFs.
       if (state==='unavailable') {
         pause();
@@ -149,13 +150,15 @@
     }
     function pause() {
       playing = false;
+      el('map').parentElement.classList.remove('departing');
       cancelAnimationFrame(frame);
       last = null;
     }
     function tick(now) {
       if (!playing) return;
-      if (availability==='loading' || availability==='standby' || last===null) {
-        last=availability==='loading' || availability==='standby' ? null : now;
+      const waiting=availability!=='ready' && availability!=='flat';
+      if (waiting || last===null) {
+        last=waiting ? null : now;
         frame=requestAnimationFrame(tick);
         return;
       }
@@ -175,6 +178,7 @@
       else {
         if (d === total) { d = 0; resetCamera(); }
         following = playing = true;
+        if (d===0 && availability==='loading') el('map').parentElement.classList.add('departing');
         frame = requestAnimationFrame(tick);
       }
       render();

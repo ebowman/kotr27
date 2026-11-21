@@ -311,7 +311,7 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
         let inOverview = false, flatOnly=false, flatCamera, pose, current, dirty = false, revision=0;
         let safeFlat, holdFlat=false, retryFollow=0, moving=false, standby=false;
         const rideDeadline=()=>moving ? 2000 : 3500;
-        let quarantined=false, attempts=0, flatSince=0, generation=0, rollbackCamera;
+        let quarantined=false, attempts=0, flatSince=0, generation=0, rollbackCamera, promoting=false;
         // GL 2.15 silently retains 404s as errored tiles. Its ordinary
         // reload skips them; resetting the source would discard good cover.
         // Each uninterrupted flat wait gets four small SDK-managed batches.
@@ -388,14 +388,17 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
           standby=false;
           container.parentElement.classList.remove('satellite-standby');
         }
-        // A discontinuous move can use stale parent tiles until the SDK's
-        // first destination render. Only show a neutral loading surface in
-        // that gap or while a drawn terrain region has no DEM binding.
+        // A destination can briefly use stale parent tiles. Cover it with
+        // the last verified shot, or neutral feedback if there isn't one.
         function loading(cold=false,text='Loading satellite terrain…') {
           if (standby) return;
-          setAvailability('loading');
-          if (cold) container.setAttribute('aria-busy','true');
-          status(text);
+          setAvailability(promoting ? 'promoting' : 'loading');
+          if (cold) {
+            holdVerified();
+            container.setAttribute('aria-busy','true');
+          }
+          if (!promoting) status(moving && current?.[0].d===0 && Number.isFinite(captured)
+            ? 'Preparing rider view…' : text);
           // Start once per uninterrupted coverage loss. Neither render nor
           // tile traffic renews a flat wait; only a verified draw clears it.
           if (!timer) {
@@ -406,6 +409,7 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
           }
         }
         function rendered() {
+          promoting=false;
           if (standby) leaveStandby();
           if (retryRound) resetRetries();
           clearTimeout(timer); timer=0;
@@ -437,18 +441,55 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
         still.setAttribute('aria-hidden','true');
         still.className='orbit-hold';
         const ctx=still.getContext('2d',{alpha:false});
-        let captured=-Infinity, holding=false;
-        function rememberOverview(now) {
-          if (ctx && now-captured>=250) {
+        let captured=-Infinity, holding=false, dissolve;
+        function endDissolve() {
+          if (!dissolve) return;
+          dissolve.remove(); dissolve=null;
+        }
+        function rememberFrame(now,force=false) {
+          if (holding && promoting && moving && !document.hidden && !reduced.matches) {
+            // Same rider and lens, but relief physically displaces distant
+            // pixels. Dissolve the outgoing texture over *moving* verified
+            // terrain; the animation is not a readiness gate or a timer.
+            const out=still.cloneNode(false);
+            out.className='mesh-dissolve';
+            const paint=out.getContext('2d');
+            if (paint) {
+              paint.drawImage(still,0,0);
+              still.before(out); dissolve=out;
+              out.animate([{opacity:1},{opacity:0}],180).onfinish=()=>{
+                if (dissolve===out) endDissolve();
+              };
+            }
+          }
+          if (holding) {still.remove(); holding=false; force=true;}
+          if (ctx && (force || now-captured>=250)) {
             const canvas=map.getCanvas();
             if (still.width!==canvas.width) still.width=canvas.width;
             if (still.height!==canvas.height) still.height=canvas.height;
             ctx.drawImage(canvas,0,0);
+            // GL contains the draped ascent but not its DOM marker. Don't
+            // blink the rider off during a mesh probe or a coverage loss.
+            if (!inOverview && beacon.isConnected && current) {
+              const p=map.project(rider.getLngLat());
+              ctx.save();
+              ctx.scale(canvas.width/container.clientWidth,canvas.height/container.clientHeight);
+              for (const [radius,color] of [[12,'white'],[10,'#163c34'],[7,'#ffdc56']]) {
+                ctx.fillStyle=color; ctx.beginPath(); ctx.arc(p.x,p.y,radius,0,Math.PI*2); ctx.fill();
+              }
+              ctx.restore();
+            }
             captured=now;
           }
-          if (holding) {still.remove(); holding=false;}
         }
-        function forgetOverview() {
+        function holdVerified() {
+          endDissolve();
+          if (!holding && Number.isFinite(captured)) {
+            map.getCanvas().after(still); holding=true;
+          }
+        }
+        function forgetFrame() {
+          endDissolve();
           still.remove(); holding=false; captured=-Infinity;
           still.width=still.height=0;
         }
@@ -472,16 +513,18 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
         }
         const opts={signal:previewEvents.signal};
         previewEvents.signal.addEventListener('abort',stopOrbit);
-        previewEvents.signal.addEventListener('abort',forgetOverview);
+        previewEvents.signal.addEventListener('abort',forgetFrame);
         previewButton.addEventListener('click',()=>{paused=!paused;motionControl();},opts);
         reduced.addEventListener('change',()=>{paused=reduced.matches;motionControl();},opts);
         document.addEventListener('visibilitychange',scheduleOrbit,opts);
         function overview() {
+          forgetFrame();
           leaveStandby();
           resetRetries();
           generation++;
           attempts=0;
           rollbackCamera=null;
+          promoting=false;
           safeFlat=null; holdFlat=false;
           flatOnly=false;
           recoverRide=null;
@@ -500,6 +543,7 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
         function restoreFlat(unsafe=false) {
           if (unsafe) quarantined=true;
           if (stopped || flatOnly || !current) return;
+          promoting=false;
           flatOnly=true;
           local.remove();
           flatSince=performance.now();
@@ -523,7 +567,7 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
               }
             }
             rollbackCamera=null;
-            map.setTerrain(null);
+            if (map.getTerrain()) map.setTerrain(null);
             inOverview=false;
             holdFlat=false;
             if (safeFlat) {
@@ -550,7 +594,7 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
           const keep=snap ? 0 : Math.exp(-seconds/.8);
           flatCamera.dx*=keep;
           flatCamera.dy*=keep;
-          const targetPitch=38+6*(focus.ridge || 0);
+          const targetPitch=38+6*(focus.ridge || 0)+(flatCamera.opening ? 4*(focus.opening || 0) : 0);
           flatCamera.pitch=targetPitch+(flatCamera.pitch-targetPitch)*keep;
           flatCamera.zoom=flatCamera.targetZoom+(flatCamera.zoom-flatCamera.targetZoom)*keep;
           const desired=-angle*180/Math.PI;
@@ -693,12 +737,12 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
               phase=0;
               if (imagery && map.isSourceLoaded('ascent') &&
                   map.queryRenderedFeatures({layers:['ascent']}).length) {
-                rememberOverview(performance.now());
+                rememberFrame(performance.now());
                 rendered();
               } else if (Number.isFinite(captured)) {
                 // Before composite, cover only GL; the SDK attribution and
                 // controls remain live. Await this lens's normal tile draw.
-                if (!holding) {map.getCanvas().after(still); holding=true;}
+                holdVerified();
               } else loading(true);
               scheduleOrbit();
               return;
@@ -721,7 +765,7 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
                 drawFlat(...current);
                 return;
               }
-              if (!imagery && !safeFlat && flatCamera.targetZoom!==13) {
+              if (!imagery && !safeFlat && flatCamera.targetZoom!==13 && !flatCamera.opening) {
                 loading(true,'Loading satellite cover…');
                 flatCamera.targetZoom=13;
                 drawFlat(...current,0,true); return;
@@ -736,10 +780,20 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
               if (!map.queryRenderedFeatures([[p.x-6,p.y-6],[p.x+6,p.y+6]],{layers:['ascent']}).length) {
                 loading(true,'Loading ascent road…'); return;
               }
+              if (!safeFlat) {
+                const b=beacon.getBoundingClientRect(), m=container.getBoundingClientRect();
+                if (Math.hypot(b.x+b.width/2-m.x-p.x,b.y+b.height/2-m.y-p.y)>1.6 ||
+                    +getComputedStyle(beacon).opacity!==1) {
+                  loading(true,'Preparing rider view…'); map.triggerRepaint(); return;
+                }
+              }
               if (!drawLocal(current[0],p)) { loading(true,'Preparing local route trace…'); return; }
               safeFlat={center:map.getCenter(),zoom:map.getZoom(),pitch:map.getPitch(),bearing:map.getBearing()};
+              const promote=promotionEpoch===generation && moving && !quarantined;
+              rememberFrame(now,promote);
               rendered();
-              if (promotionEpoch===generation && moving && !quarantined) {
+              if (promote) {
+                promoting=true;
                 rollbackCamera={...flatCamera};
                 promotionEpoch=-1; flatOnly=false; validated=false; missingSince=null;
                 waitingSince=now; meshZoom=0; adjusting=false; lastPick=-Infinity;
@@ -795,8 +849,8 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
               }
               // Only a sustained *moving*, validated shot replenishes the
               // recovery budget. A permanently absent mesh cannot loop.
-              if (now-healthySince>5000) { attempts=0; rollbackCamera=null; }
-              rendered(); return;
+              if (now-healthySince>5000) { attempts=0; rollbackCamera=null; safeFlat=null; }
+              rememberFrame(now); rendered(); return;
             }
             const dim=+getComputedStyle(beacon).opacity!==1;
             let clear=!adjusting;
@@ -809,7 +863,12 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
                 const eye=map.getFreeCameraOptions().position.toLngLat();
                 const hit=map.unproject(p), distance=eye.distanceTo(gps);
                 clear = distance<1 ? gps.distanceTo(hit)<1 : eye.distanceTo(hit)>=.93*distance;
-                if (cold || !moving) clear=clear && gps.distanceTo(hit)<Math.min(8,Math.max(1,.01*distance));
+                // A mesh promotion is still the moving shot, not a cold
+                // seek. A ray that reaches *past* the rider is unobstructed;
+                // forcing its far hit to coincide with the GPX would crank
+                // the lens to nadir, then unwind it on screen. Registration,
+                // local trace, marker opacity and DEM proof still gate reveal.
+                if (!moving || (cold && !promoting)) clear=clear && gps.distanceTo(hit)<Math.min(8,Math.max(1,.01*distance));
                 // Marker occlusion uses its rounded DOM pixel, which can
                 // pick a different triangle on a steep terrain edge.
                 if (dim) clear=clear && eye.distanceTo(map.unproject(
@@ -843,7 +902,7 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
             }
             const usable=imagery && demReady && clear && revision===paintedRevision &&
               registered && framed && road && !dim;
-            if (usable) { if (!validated) healthySince=now; validated=true; rendered(); }
+            if (usable) { if (!validated) healthySince=now; validated=true; rememberFrame(now); rendered(); }
             else {
               if (validated) { validated=false; waitingSince=now; }
               if (now-waitingSince>1400) { restoreFlat(); return; }
@@ -856,7 +915,7 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
             if (stopped) return;
             try {
               if (!following) { if (!inOverview) overview(); return; }
-              if (inOverview) { stopOrbit(); forgetOverview(); previewButton.hidden=true; }
+              if (inOverview) { stopOrbit(); previewButton.hidden=true; }
               if (snap || inOverview) { loading(true); adjusting=false; lastPick=-Infinity;
                 validated=false; missingSince=null; waitingSince=performance.now(); }
               current = [point, following, focus, angle];
@@ -869,14 +928,27 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
               }
               if (inOverview) {
                 recoverRide=restoreFlat;
-                if (quarantined) { restoreFlat(true); return; }
                 clearTimeout(timer);
                 timer=setTimeout(timedOut,rideDeadline());
                 // At the cinematic lens height a stable mountain surface
                 // matters more than DEM refinement under every switchback.
                 // Satellite detail is independent and can continue refining.
-                if (!map.getSource('dem')) map.addSource('dem', {type:'raster-dem',
+                if (!quarantined && !map.getSource('dem')) map.addSource('dem', {type:'raster-dem',
                   url:'mapbox://mapbox.mapbox-terrain-dem-v1', tileSize:512, maxzoom:11});
+                // At departure imagery and the local road suffice to ride.
+                // Match the flat lens to the first follow shot (900 m back,
+                // 1000 m above the road). Prepare the optional mesh in motion,
+                // rather than probing it first at a stationary Semonzo.
+                if (moving && point.d===0) {
+                  inOverview=false; flatOnly=true; flatSince=performance.now();
+                  clearTimeout(timer); timer=0;
+                  const pitch=Math.atan2(900,1000)*180/Math.PI;
+                  const zoom=Math.log2(container.clientHeight*1.5*54300/Math.hypot(900,1000));
+                  flatCamera={opening:true,bearing:-angle*180/Math.PI,pitch,zoom,targetZoom:zoom,dx:0,dy:0};
+                  loading(true,'Preparing rider view…');
+                  drawFlat(...current); return;
+                }
+                if (quarantined) { restoreFlat(true); return; }
                 map.setTerrain({source:'dem', exaggeration:1});
                 if (stopped || flatOnly) return;
               }
@@ -915,6 +987,8 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
           }
           connect((point,following,focus,angle,seconds,snap,playing)=>{
             moving=playing;
+            if (!moving) endDissolve();
+            if (snap && (!inOverview || point.d!==0)) { promoting=false; rollbackCamera=null; forgetFrame(); }
             drawPose(point,following,focus,angle,seconds,snap);
           });
         }
