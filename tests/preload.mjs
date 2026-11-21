@@ -152,6 +152,7 @@ sys.stdout.buffer.write(im.crop((2300,300,3300,900)).convert("I").convert("I;16"
         +Math.max(0,Math.min(999,Math.floor((lon-11)*3600)-2300))));
     }
     let demGate, held = 0, coldDestination = false, missingSat=false, sat404s=0, northGate, missingNorth=false, dem404s=0, denied=0;
+    if (scenario==='preview-held') demGate=Promise.withResolvers();
     let pendingDetail=0,cover404s=0;
     const outageFailures=new Set();
     let restoredReplies=0;
@@ -192,7 +193,7 @@ sys.stdout.buffer.write(im.crop((2300,300,3300,900)).convert("I").convert("I;16"
             scenario==='spike' ? spikedTile : coldDestination ? raisedTile : scenario==='cold' ? coldBase : tile)
             : path.startsWith('/cover/') ? coarseTile : tile);
       } else if (path === '/sdk.js') res.end(Buffer.concat([sdk,Buffer.from('\n'+instrument+
-        (scenario==='overview' ? overviewProbe : ''))]));
+        (scenario==='overview' ? overviewProbe : scenario==='spike' ? corruptPreviewProbe : ''))]));
       // Only SDK layout rules needed by the local fixture (no CDN requests).
       else if (path === '/sdk.css') res.writeHead(200,{'Content-Type':'text/css'}).end(
         '.mapboxgl-map{overflow:hidden}.mapboxgl-canvas,.mapboxgl-marker{position:absolute;top:0;left:0}');
@@ -240,7 +241,7 @@ sys.stdout.buffer.write(im.crop((2300,300,3300,900)).convert("I").convert("I;16"
     const slow=scenario==='slow';
     await cmd('Emulation.setDeviceMetricsOverride',{width:slow?1280:375,height:812,deviceScaleFactor:1,mobile:!slow});
     await cmd('Page.navigate',{url});
-    if (slow) await until(()=>js(`document.querySelector('#deck')?.hidden===false`));
+    if (slow || scenario==='preview-held') await until(()=>js(`document.querySelector('#deck')?.hidden===false`));
     else await until(()=>js(`document.querySelector('#message')?.textContent.startsWith('Satellite overview ·')`));
     return {js,cmd,exceptions,holdSat:()=>{satGate=Promise.withResolvers();},dropSat:()=>{missingSat=true;},
       releaseSat:()=>{satGate?.resolve();satGate=null;},pendingDetail:()=>pendingDetail,cover404s:()=>cover404s,
@@ -253,32 +254,55 @@ sys.stdout.buffer.write(im.crop((2300,300,3300,900)).convert("I").convert("I;16"
 // Inspect the SDK's establishing camera, selected tiles and rendered features at
 // reveal. The fixture has local tiles, not a live authenticated basemap.
 const overviewProbe=`
-window.switches=[];
-const proto=mapboxgl.Map.prototype, terrain=proto.setTerrain;
-proto.setTerrain=function(v){ switches.push(v?.source ?? null); return terrain.call(this,v); };
 window.overviewDraw=()=>{
-  if(map.getAttribute('aria-busy')!=='false' || testMap.getTerrain() || testMap.getPitch()<45) return;
-  const cache=testMap.style._getSourceCache('sat'),drawn=new Set(cache.getRenderableIds());
-  const ids=testMap.transform.coveringTiles(cache.getSource());
-  return {imagery:ids.length>0 && ids.every(id=>drawn.has(id.key) || cache.hasRenderableParent(id)),
+  if(map.getAttribute('aria-busy')!=='false' || !testMap.getTerrain() || testMap.getPitch()<45) return;
+  const tr=testMap.transform.elevation,caches=['sat','sat-cover'].map(s=>testMap.style._getSourceCache(s));
+  return {imagery:tr.proxyCoords.length>0 && tr.proxyCoords.every(id=>tr.terrainTileForTile[id.key]?.dem &&
+    caches.some(cache=>tr.proxyToSource[id.key]?.[cache.id]?.some(t=>cache.getTile(t)?.texture))),
     route:testMap.queryRenderedFeatures({layers:['ascent']}).length>0,
     color:testMap.getPaintProperty('ascent','line-color'),fade:testMap.getPaintProperty('sat','raster-fade-duration')};
 };`;
+// Sample after all render handlers have gated this draw, before composite.
+const corruptPreviewProbe=`
+window.corruptOpening={mesh:0,flat:0};
+mapboxgl.Map=class extends mapboxgl.Map {
+  constructor(options){super(options);this.on('render',()=>queueMicrotask(()=>{
+    if(mode.textContent==='Route overview' && getComputedStyle(map).visibility==='visible' &&
+       !map.querySelector('.orbit-hold')) corruptOpening[this.getTerrain()?'mesh':'flat']++;
+  }))}
+};`;
 
-test('flat overview has raster coverage and rendered ascent on cold load and repeated resets',
+test('opening terrain has bound DEM, raster textures and rendered ascent on cold load and repeated resets',
   {skip:!process.env.MAPBOX_GL_215,timeout:30000}, async t=>{
     const {js,exceptions}=await fixture(t,'overview');
-    assert.deepEqual(await js(`switches`),[]);
-    assert.equal(await js(`visits.some(v=>new URL(v.url).pathname.startsWith('/dem/'))`),false);
+    assert.equal(await js(`testMap.getTerrain().exaggeration`),1.25);
     for(let i=0;i<3;i++){
       const reveal=await until(()=>js(`overviewDraw()`));
       assert.deepEqual(reveal,{imagery:true,route:true,color:'#ff932e',fade:0});
       if(i===2) break;
       await js(i ? `seek.value=5200; seek.dispatchEvent(new Event('input'))` : 'play.click()');
       await until(()=>js(`testMap.getTerrain()?.source==='dem' && map.getAttribute('aria-busy')==='false'`));
+      assert.equal(await js(`testMap.getTerrain().exaggeration`),1);
       await js(`reset.click(); reset.click()`);
     }
-    assert.deepEqual(await js('switches'),['dem',null,'dem',null]);
+    assert.equal(await js('testMap.getTerrain().exaggeration'),1.25);
+    assert.deepEqual(exceptions,[]);
+  });
+
+test('held opening DEM shows no unverified mesh; fallback stays mesh-free on late delivery',
+  {skip:!process.env.MAPBOX_GL_215,timeout:20000},async t=>{
+    const {js,held,release,exceptions}=await fixture(t,'preview-held');
+    t.after(release);
+    await until(()=>held()>0);
+    await js(`window.exposed=[];testMap.on('render',()=>{
+      if(getComputedStyle(map).visibility==='visible') exposed.push([!!testMap.getTerrain(),+seek.value])
+    });void 0`);
+    // Jointly late imagery and elevation can consume the whole eight-second probe.
+    for(let i=0;i<100 && !await js(`message.textContent.includes('Flat imagery without terrain relief')`);i++)
+      await sleep(100);
+    assert.ok(await js(`message.textContent.includes('Flat imagery without terrain relief')`));
+    release(); await sleep(350);
+    assert.ok(await js(`exposed.length && exposed.every(([mesh,d])=>!mesh && !d)`));
     assert.deepEqual(exceptions,[]);
   });
 
@@ -293,7 +317,7 @@ test('orbit moves its viewpoint without riding, suspends in place, and yields im
       const held=await js(`pose()`);
       await sleep(220);
       assert.deepEqual(await js(`pose()`),held);
-      assert.deepEqual(await js(`[+seek.value,!!testMap.getTerrain(),hints.length]`),[0,false,expectedHints]);
+      assert.deepEqual(await js(`[+seek.value,!!testMap.getTerrain(),hints.length]`),[0,true,expectedHints]);
     };
     await moved();
     await js('motion.click()'); await still();
@@ -325,7 +349,13 @@ test('orbit moves its viewpoint without riding, suspends in place, and yields im
 for (const failure of ['spike','seam','timeout']) test(`3D ${failure} switches to a gated same-distance flat ride`,
   {skip:!process.env.MAPBOX_GL_215,timeout:40000},async t=>{
     const {js,hold,release,exceptions}=await fixture(t,failure);
-    if(failure==='timeout') {hold();t.after(release);}
+    if(failure==='spike') assert.ok(await js(`corruptOpening.mesh===0 && corruptOpening.flat>0 &&
+      message.textContent.includes('Flat imagery without terrain relief')`),'no live spike on any opening draw');
+    if(failure==='timeout') {
+      hold();t.after(release);
+      await js(`testMap.style._getSourceCache('dem').clearTiles();
+        const dem=testMap.getSource('dem');dem.setTiles(dem.tiles);void 0`);
+    }
     const gated=await js(`window.unsafe=false;
       testMap.on('render',()=>{if(testMap.getTerrain() && map.getAttribute('aria-busy')==='false') unsafe=true;});
       seek.value=${failure==='seam'?8771:0};seek.dispatchEvent(new Event('input'));
@@ -488,7 +518,9 @@ test('delayed DEM prepares during moving flat playback, promotes once usable; co
   {skip:!process.env.MAPBOX_GL_215,timeout:40000},async t=>{
     const {js,hold,release,held,exceptions}=await fixture(t,'cold');
     hold(); t.after(release);
-    await js(`seek.value=5200;seek.dispatchEvent(new Event('input'));play.click()`);
+    await js(`testMap.style._getSourceCache('dem').clearTiles();
+      const dem=testMap.getSource('dem');dem.setTiles(dem.tiles);
+      seek.value=5200;seek.dispatchEvent(new Event('input'));play.click()`);
     await until(()=>js(`mode.textContent==='Flat satellite ride' && +seek.value>5200`));
     const a=await js('+seek.value');
     await sleep(1750);
@@ -677,7 +709,7 @@ for (const cold of [true,false]) test(`northern DEM missing at 8771 m: ${cold?'c
       testMap.on('render',()=>{
         if (coverage()?.holes && getComputedStyle(map).visibility==='visible') exposed=true;
       });
-      ${cold ? seek8771 : reloadDEM}`);
+      ${reloadDEM}; ${cold ? seek8771 : ''}`);
     await until(()=>cold ? held() : dem404s());
     await until(()=>js(`!exposed && !testMap.getTerrain() && getComputedStyle(map).visibility==='visible' && +seek.value===8771`))
       .catch(async err=>{throw Error(await js(`JSON.stringify({exposed,coverage:coverage(),d:+seek.value,msg:message.textContent})`),{cause:err});});
@@ -852,10 +884,14 @@ test('real terrain ray reaches the rider past an intervening ridge',
     const {js,cmd,exceptions} = await fixture(t,'ridge');
     for (const width of [375,1280]) {
       await cmd('Emulation.setDeviceMetricsOverride',{width,height:812,deviceScaleFactor:1,mobile:width<500});
+      const before=await js(`[message.textContent,testMap.getTerrain()?.exaggeration]`);
       await js(`testMap.resize(); seek.value=5000; seek.dispatchEvent(new Event('input'));
         window.control=new mapboxgl.Marker({scale:.65}).setLngLat(beacon.getLngLat()).addTo(testMap); void 0`);
       await until(()=>js(`testMap.areTilesLoaded()`));
-      await until(()=>js(`testMap.getTerrain() && map.getAttribute('aria-busy')==='false'`));
+      await until(()=>js(`testMap.getTerrain() && map.getAttribute('aria-busy')==='false'`)).catch(async cause=>{
+        throw Error(JSON.stringify({width,before,after:await js(`[message.textContent,testMap.getTerrain()?.exaggeration,
+          testMap.queryTerrainElevation(beacon.getLngLat())]`)}),{cause});
+      });
       await sleep(600); // SDK's marker occlusion check runs on a timer.
       const state=await js(`(() => {
         const c=testMap.getFreeCameraOptions(), p=beacon.getLngLat();

@@ -251,12 +251,18 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
         }
         const imageryReady=rasterCoverage(map,rasters);
         const coords = points.map(p => [p.lon, p.lat]);
+        const previewAnchors=[0,Math.floor(points.length/2),points.length-1];
+        function ensureDEM() {
+          if (!map.getSource('dem')) map.addSource('dem',{type:'raster-dem',
+            url:'mapbox://mapbox.mapbox-terrain-dem-v1',tileSize:512,maxzoom:11});
+        }
         const heights=points.map(p=>p.height);
         const minDEM=Math.min(...heights)-600, maxDEM=Math.max(...heights)+1000;
-        const checked=new WeakSet();
+        const checked=new WeakSet(), checkedPreview=new WeakSet();
         const badSeam=visibleSeamCheck();
         function implausible({dem,tileID}) {
-          if (!dem || checked.has(dem)) return false;
+          const panoramic=inOverview && previewMesh, validated=panoramic ? checkedPreview : checked;
+          if (!dem || validated.has(dem)) return false;
           // Pinned 2.15's picking tree subsamples the DEM: a narrow spike
           // between its samples could still displace rendered geometry.
           // Check each new tile once, not its entire raster on every frame.
@@ -266,16 +272,24 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
           const step=80+8*27800000/(2**tileID.canonical.z*dem.dim);
           // Interior samples are immutable; the SDK backfills its one-pixel
           // padding from neighbours, whose interiors are checked separately.
+          // A coarse panorama parent may span hundreds of kilometres of
+          // the Alps. Keep the route envelope over the massif (plus a
+          // buffer) and the *entire* ride. Slopes/seams apply everywhere.
+          const c=tileID.canonical, scale=2**c.z*dem.dim;
+          const cellX=lon=>(lon+180)/360*scale-c.x*dem.dim;
+          const cellY=lat=>(.5-Math.asinh(Math.tan(lat*Math.PI/180))/(2*Math.PI))*scale-c.y*dem.dim;
+          const west=cellX(11.62),east=cellX(11.96),north=cellY(46),south=cellY(45.72);
           for(let y=0;y<dem.dim;y++) {
             let prev;
             for(let x=0;x<dem.dim;x++) {
+              const ceiling=panoramic && (x<west || x>east || y<north || y>south) ? 4810 : maxDEM;
               const z=dem.get(x,y);
-              if (!(z>=minDEM && z<=maxDEM) || Math.abs(z-prev)>step ||
+              if (!(z>=minDEM && z<=ceiling) || Math.abs(z-prev)>step ||
                   (y>0 && Math.abs(z-dem.get(x,y-1))>step)) return true;
               prev=z;
             }
           }
-          checked.add(dem);
+          validated.add(dem);
           return false;
         }
         map.addSource('ascent', {type:'geojson', tolerance:0, data:{type:'LineString', coordinates:coords}});
@@ -415,22 +429,34 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
           clearTimeout(timer); timer=0;
           if (container.getAttribute('aria-busy')==='true') container.setAttribute('aria-busy','false');
           status(flatOnly ? 'Flat satellite ride · Oblique imagery without terrain relief.'
-            : inOverview ? 'Satellite overview · The orange line traces the ascent.'
+            : inOverview ? (previewMesh ? 'Satellite overview · Mountain terrain from Semonzo to the summit.'
+              : 'Satellite overview · Flat imagery without terrain relief.')
             : 'Satellite terrain · The orange line traces the ascent.');
           setAvailability(flatOnly ? 'flat' : 'ready');
         }
         // Orbit the approach, not the centroid of the GPX. Truck across the
         // lower hairpins, drawing back and looking farther up the NE ridge.
-        // Keep the entire ellipse on the valley side of the mountain. Depth
-        // here is lens perspective on imagery, never an unverified DEM.
+        // Keep the camera on the valley side, looking along the ascent.
+        const previewRelief=1.25;
+        const rideFog=map.getStyle().fog ?? null;
+        let previewMesh=false, previewTimer, waitFlatPaint=false;
         const reduced=matchMedia('(prefers-reduced-motion: reduce)');
         let paused=reduced.matches, orbitTime=0, previous=null, orbitFrame=0;
         function composeOverview() {
-          const a=orbitTime*(2*Math.PI/96), side=Math.sin(a), wide=(1-Math.cos(a))/2;
+          const a=orbitTime*(2*Math.PI/(previewMesh ? 54 : 96)), side=Math.sin(a), wide=(1-Math.cos(a))/2;
+          if (!previewMesh) {
+            map.jumpTo({center:[11.7645+.018*wide-.0014*side,45.818+.021*wide],
+              bearing:19+33*side,pitch:58+2*wide,
+              zoom:14.25+Math.log2(Math.max(200,container.clientHeight)/520)-1.12*wide});
+            return;
+          }
           map.jumpTo({
-            center:[11.7645+.018*wide-.0014*side,45.818+.021*wide],
-            bearing:19+33*side, pitch:58+2*wide,
-            zoom:14.25+Math.log2(Math.max(200,container.clientHeight)/520)-1.12*wide
+            // Track across the face rather than flying up over it. Holding
+            // lens height keeps the skyline and the valley in one shot and
+            // avoids chasing remote horizon proxy tiles at the far turn.
+            center:[11.781+.001*wide-.0006*side,45.830+.001*wide],
+            bearing:-3+5*side, pitch:69,
+            zoom:12.48+Math.log2(Math.max(200,container.clientHeight)/520)
           });
         }
         // A newly selected tile may miss its first paint even with the
@@ -517,6 +543,34 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
         previewButton.addEventListener('click',()=>{paused=!paused;motionControl();},opts);
         reduced.addEventListener('change',()=>{paused=reduced.matches;motionControl();},opts);
         document.addEventListener('visibilitychange',scheduleOrbit,opts);
+        function flatPreview(unsafe=false) {
+          if (stopped || !inOverview || !previewMesh) return;
+          if (unsafe) quarantined=true;
+          clearTimeout(previewTimer);
+          previewMesh=false;
+          recoverRide=null;
+          clearTimeout(timer); timer=0;
+          stopOrbit();
+          loading(true);
+          waitFlatPaint=true;
+          map.setTerrain(null);
+          map.setFog(rideFog);
+          map.triggerRepaint();
+        }
+        function previewDeadline(ms,allowTextureWait=false) {
+          clearTimeout(previewTimer);
+          previewTimer=setTimeout(()=>{
+            if (stopped || !inOverview || !previewMesh) return;
+            // Don't discard a cold desktop lens while *both* its texture
+            // and its DEM are streaming. If imagery is ready but elevation
+            // is wholly absent, cut to satellite sooner. At most one grace
+            // period: neither requests nor repeated renders extend it.
+            const tr=map.transform.elevation;
+            if (allowTextureWait && (!imageryReady() ||
+                tr?.proxyCoords?.some(id=>tr.terrainTileForTile[id.key]?.dem))) previewDeadline(3500);
+            else flatPreview();
+          },ms);
+        }
         function overview() {
           forgetFrame();
           leaveStandby();
@@ -532,8 +586,16 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
           loading(true);
           rider.remove();
           local.remove();
-          if (map.getTerrain()) map.setTerrain(null);
           inOverview = true;
+          waitFlatPaint=false;
+          previewMesh=!quarantined && !savingTerrainData();
+          if (previewMesh) {
+            recoverRide=flatPreview;
+            ensureDEM();
+            map.setTerrain({source:'dem',exaggeration:previewRelief});
+            map.setFog({range:[1,5],color:'#c6d6dc','horizon-blend':.18});
+            previewDeadline(4500,true);
+          } else if (map.getTerrain()) map.setTerrain(null);
           orbitTime=0;
           previewButton.hidden=false;
           motionControl();
@@ -619,7 +681,8 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
           map.on('sourcedata', e => {
             if (e.sourceId==='dem') {
               if (!stopped && recoverRide && e.tile?.dem && implausible(e.tile)) {
-                restoreFlat(true); return;
+                if (inOverview) flatPreview(true); else restoreFlat(true);
+                return;
               }
               dirty=true;
             }
@@ -673,6 +736,8 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
             } catch { disabled=true; }
           }
           let meshZoom = 0, lastPick = -Infinity, adjusting = false, needsPick = false, lastMarkerRefresh=-Infinity;
+          let awaitingRidePaint=false;
+          const noElevation={queryTerrainElevation:()=>null};
           // Warm a single local DEM viewport *while riding on satellite*.
           // The SDK's preload callback supplies decoded tiles. Put only
           // validated tiles into its bounded reuse cache; never enable a
@@ -724,8 +789,12 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
             if (stopped) return;
             // Validate newly visible tiles off the rider ray as well. This
             // render callback runs before the browser composites the frame.
-            const terrain=!inOverview && map.transform.elevation, tiles=terrain?.visibleDemTiles;
-            if (tiles?.length && (tiles.some(implausible) || badSeam(terrain))) { restoreFlat(true); return; }
+            const terrain=map.transform.elevation, tiles=terrain?.visibleDemTiles;
+            if (awaitingRidePaint && (inOverview || flatOnly || terrain?.exaggeration()===1)) awaitingRidePaint=false;
+            if (tiles?.length && (tiles.some(implausible) || badSeam(terrain))) {
+              if (inOverview) flatPreview(true); else restoreFlat(true);
+              return;
+            }
             // visibleDemTiles omits unbound regions, even when a 404 has
             // settled and the SDK reports source-loaded. The bindings are
             // for this draw, including any parent DEM the SDK selected.
@@ -733,16 +802,29 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
               terrain.proxyCoords.every(id=>terrain.terrainTileForTile[id.key]?.dem);
             const imagery=imageryReady();
             if (inOverview) {
+              if (waitFlatPaint) {
+                // sourcedata can revoke a mesh during GL's own update.
+                // Don't retain or reveal a buffer from the revoked draw.
+                waitFlatPaint=false; composeOverview(); map.triggerRepaint(); return;
+              }
               previousHints.clear();
               phase=0;
-              if (imagery && map.isSourceLoaded('ascent') &&
+              let mountain=demCovered;
+              if (previewMesh && demCovered) for (const i of previewAnchors) {
+                const h=map.queryTerrainElevation(coords[i],{exaggerated:false});
+                if (h==null) mountain=false;
+                else if (!(Math.abs(h-heights[i])<=300)) { flatPreview(true); return; }
+              }
+              if ((!previewMesh || mountain) && imagery && (previewMesh && Number.isFinite(captured) || map.isSourceLoaded('ascent')) &&
                   map.queryRenderedFeatures({layers:['ascent']}).length) {
+                clearTimeout(previewTimer); previewTimer=0;
                 rememberFrame(performance.now());
                 rendered();
               } else if (Number.isFinite(captured)) {
                 // Before composite, cover only GL; the SDK attribution and
                 // controls remain live. Await this lens's normal tile draw.
                 holdVerified();
+                if (previewMesh && !previewTimer) previewDeadline(4500,true);
               } else loading(true);
               scheduleOrbit();
               return;
@@ -927,14 +1009,18 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
                 drawFlat(...current,seconds,snap); return;
               }
               if (inOverview) {
+                clearTimeout(previewTimer);
+                awaitingRidePaint=previewMesh;
+                if (previewMesh) map.setFog(rideFog);
+                previewMesh=false;
+                if (map.getTerrain()) map.setTerrain(null);
                 recoverRide=restoreFlat;
                 clearTimeout(timer);
                 timer=setTimeout(timedOut,rideDeadline());
                 // At the cinematic lens height a stable mountain surface
                 // matters more than DEM refinement under every switchback.
                 // Satellite detail is independent and can continue refining.
-                if (!quarantined && !map.getSource('dem')) map.addSource('dem', {type:'raster-dem',
-                  url:'mapbox://mapbox.mapbox-terrain-dem-v1', tileSize:512, maxzoom:11});
+                if (!quarantined) ensureDEM();
                 // At departure imagery and the local road suffice to ride.
                 // Match the flat lens to the first follow shot (900 m back,
                 // 1000 m above the road). Prepare the optional mesh in motion,
@@ -955,7 +1041,11 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
               if (snap || inOverview) meshZoom=0;
               else if (!correcting && !adjusting) meshZoom*=Math.exp(-seconds/3);
               const prior = pose;
-              pose = terrainPose(map,point,focus,angle,snap || inOverview ? null : prior,seconds,meshZoom);
+              // setTerrain changes the style synchronously, not the last
+              // rendered picking mesh. Aim a hidden GPX-only destination
+              // first; sample the rider only on its own 1x draw.
+              pose = terrainPose(awaitingRidePaint ? noElevation : map,point,focus,angle,
+                snap || inOverview ? null : prior,seconds,meshZoom);
               // GPX is independent of the DEM decode. Allow resolution and
               // registration differences, not a rider hundreds of metres off
               // the road. Missing samples still take the buffering path.
