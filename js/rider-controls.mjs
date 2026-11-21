@@ -1,4 +1,5 @@
 import { displayMass, riderScenario } from './rider-scenario.mjs';
+import { renderChapters } from './chapter-reveal.mjs';
 
 const el = id => document.getElementById(id);
 const mass = el('mass'), unit = el('unit'), ftp = el('ftp'), effort = el('effort');
@@ -8,9 +9,17 @@ const format = n => Number(n.toFixed(2));
 function install(profile) {
   let originalMass, enteredUnit;
   function render() {
-    const state = riderScenario(profile, {
-      mass: originalMass, enteredUnit, ftp: ftp.value, effort: effort.value,
-    });
+    let state;
+    try {
+      state = riderScenario(profile, {
+        mass: originalMass, enteredUnit, ftp: ftp.value, effort: effort.value,
+      });
+      renderChapters(profile, state);
+    } catch {
+      renderChapters(profile, {});
+      result.textContent = 'The chapter profile or scenario is unavailable. No estimate can be shown.';
+      return;
+    }
     for (const input of [mass, ftp]) {
       const error = state.errors?.[input.id] || '';
       input.setAttribute('aria-invalid', String(!!error));

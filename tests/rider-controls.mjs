@@ -6,6 +6,7 @@ import { readFile } from 'node:fs/promises';
 import { browser, until } from './browser.mjs';
 import { estimateAscent } from '../js/ascent-estimator.mjs';
 import { riderScenario } from '../js/rider-scenario.mjs';
+import { describe as explainChapters } from '../js/chapter-reveal.mjs';
 
 const route = JSON.parse(await readFile(new URL('../assets/semonzo-chapters.v1.json', import.meta.url)));
 const blank = { mass: '', enteredUnit: 'kg', ftp: '', effort: 'slower' };
@@ -30,8 +31,16 @@ test('optional fields map to estimator overrides; invalid drafts expose no estim
   }
 });
 
-test('phone controls support private, keyboard-only scenario changes', async t => {
+test('equal or indistinguishable rounded durations do not single out a chapter', () => {
+  for (const seconds of [600, 611]) {
+    const text = explainChapters([{name:'One', seconds:600}, {name:'Two', seconds}, {name:'Three', seconds:529}]);
+    assert.match(text, /^One and Two share.*nearest minute/);
+  }
+});
+
+test('phone reveal and controls support private, keyboard-only scenario changes', async t => {
   const files = new Map([['explore.html','text/html'], ['js/rider-controls.mjs','text/javascript'],
+    ['js/chapter-reveal.mjs','text/javascript'],
     ['js/rider-scenario.mjs','text/javascript'], ['js/ascent-estimator.mjs','text/javascript'],
     ['assets/semonzo-chapters.v1.json','application/json']]);
   const server = createServer(async (req, res) => {
@@ -48,7 +57,9 @@ test('phone controls support private, keyboard-only scenario changes', async t =
   });
   const url = `http://127.0.0.1:${server.address().port}/explore.html`;
   await cmd('Network.enable');
-  await cmd('Emulation.setDeviceMetricsOverride', { width: 320, height: 640, deviceScaleFactor: 1, mobile: true });
+  await cmd('Emulation.setEmulatedMedia', { features:[{name:'prefers-reduced-motion', value:'reduce'}] });
+  const resize = width => cmd('Emulation.setDeviceMetricsOverride', { width, height:640, deviceScaleFactor:1, mobile:true });
+  await resize(320);
   await cmd('Page.navigate', { url });
   await until(() => js(`document.querySelector('#controls')?.disabled === false`));
   const before = requests.length;
@@ -64,18 +75,85 @@ test('phone controls support private, keyboard-only scenario changes', async t =
   assert.ok(await js(`document.documentElement.scrollWidth <= innerWidth`));
   const example = await text();
   assert.match(example, /Robin’s fictional example.*75 kg.*12 kg/);
-  await tab(); await tab();
+  const chart = () => js(`({
+    title:document.querySelector('#axis-title').textContent,
+    widths:[...bands.children].map(b=>b.getBoundingClientRect().width/bands.getBoundingClientRect().width),
+    ticks:[...ticks.children].filter(b=>getComputedStyle(b.firstChild).visibility === 'visible').map(b=>{
+      const range=document.createRange(); range.selectNodeContents(b.firstChild);
+      const rect=range.getBoundingClientRect(), axis=ticks.getBoundingClientRect();
+      return [b.textContent,(b.getBoundingClientRect().x-axis.x)/axis.width,rect.left-axis.left,rect.right-axis.left];
+    }),
+    axisWidth:ticks.getBoundingClientRect().width,
+    list:[...readout.children].map(li=>li.textContent)
+  })`);
+  const checkAxis = async (axis, total, widths) => {
+    const view = await chart();
+    assert.ok(view.title.includes(axis));
+    assert.equal(view.widths.length, widths.length);
+    widths.forEach((w,i)=>assert.ok(Math.abs(w/total - view.widths[i]) < .001));
+    assert.ok(view.ticks.length >= 2);
+    let prevRight = -Infinity;
+    for (const [label,x,left,right] of view.ticks) {
+      assert.ok(label.endsWith(axis));
+      assert.ok(Math.abs(parseFloat(label)/total - x) < .001, label);
+      assert.ok(left >= -.1 && right <= view.axisWidth + .1 && right > left, label);
+      assert.ok(left - prevRight >= 5, `${label}: ${left-prevRight}px after previous text`);
+      prevRight = right;
+    }
+    return view.ticks;
+  };
+  const distance = () => checkAxis('km', 18.88719, [9,2,2.5,5.38719]);
+  const model = riderScenario(route,blank).estimate;
+  const time = (estimate = model) => checkAxis('min', estimate.total.slower.movingSeconds/60,
+    estimate.chapters.map(c=>c.slower.movingSeconds/60));
+  function reportGap(labels, a, b) {
+    const first = labels.find(([name])=>name===a), second = labels.find(([name])=>name===b);
+    assert.ok(first && second, `expected readable ${a} and ${b} at 320px`);
+    t.diagnostic(`320px: ${a} → ${b}: ${(second[2]-first[3]).toFixed(1)}px between text rectangles`);
+  }
+  reportGap(await distance(), '10 km', '15 km');
+  assert.ok(await js('revealed.hidden'));
+  await tab(); await tab(); await tab(); await tab(); // flyover link, then chapters 1–3
+  assert.match(await js('document.activeElement.textContent'), /High step/);
+  await enter(); await time();
+  assert.ok(await js('!revealed.hidden && document.getAnimations().length === 0'));
+  assert.match(await js('insight.textContent'), /Your pick: High step.*Long lift.*9 km.*steeper 2.5 km of High step/);
+  const list = (await chart()).list;
+  assert.match(list[0], /Long lift.*8.6%.*80 min \(range 71–80 min\).*49%/);
+  assert.match(list[2], /High step.*10.9%.*28 min \(range 24–28 min\).*17%/);
+  await tab(); await tab(); await enter(); await distance();
+  await tab(); await enter(); await time();
+  assert.ok(await js(`document.documentElement.scrollWidth <= innerWidth`));
+  await tab();
   assert.equal(await focus(), 'example');
   await enter(); await tab();
   assert.equal(await focus(), 'know-ftp');
   await enter(); assert.equal(await focus(), 'ftp');
+  await type('190');
+  await js(`choices.firstChild.click()`);
+  const at190 = riderScenario(route, {...blank, ftp:'190'}).estimate;
+  reportGap(await time(at190), '100 min', '150 min');
+  for (const width of [240, 800, 320]) {
+    await resize(width);
+    await js(`window.settled=false; requestAnimationFrame(()=>requestAnimationFrame(()=>window.settled=true))`);
+    await until(()=>js('window.settled'));
+    await time(at190); // same revealed chart, no redraw from user input
+  }
+  await js('ftp.select()'); await type('30'); await js('choices.firstChild.click()');
+  await time(riderScenario(route, {...blank, ftp:'30'}).estimate);
+  await js('ftp.select()');
   await type('250');
+  assert.ok(await js(`revealed.hidden && insight.textContent === ''`));
+  await js(`choices.firstChild.click()`);
+  assert.match((await chart()).list[0], /71 min \(range 62–71 min\)/);
   assert.match(await text(), /Partly assumed.*175 W \(70% of FTP\).*250 W \(entered\).*75 kg \(Robin’s assumption\).*12 kg/);
   // Native controls remain operable without pointer or synthetic change events.
   for (let i = 0; i < 3; i++) await key('Tab', 'Tab', 9, 8); // Shift+Tab
   assert.equal(await focus(), 'effort');
   await key('End', 'End', 35);
   assert.match(await text(), /200 W \(80% of FTP\)/);
+  await js(`choices.firstChild.click()`);
+  assert.match((await chart()).list[0], /62 min \(range 62–71 min\)/);
   await tab(); assert.equal(await focus(), 'mass');
   await type('81.257');
   const personal = await text();
@@ -89,6 +167,7 @@ test('phone controls support private, keyboard-only scenario changes', async t =
   await tab(); assert.equal(await focus(), 'ftp');
   await js('ftp.select()'); await type('oops');
   assert.match(await text(), /^No estimate.*30 to 650/);
+  assert.ok(await js(`document.querySelector('#chapter-game').hidden && !bands.children.length && !readout.children.length && !insight.textContent`));
   assert.equal(await js(`ftp.getAttribute('aria-invalid')`), 'true');
   await js('ftp.select()'); await key('Backspace', 'Backspace', 8);
   assert.match(await text(), /Partly assumed.*220 W \(Robin’s assumption\).*81.26 kg \(entered\)/);
@@ -96,8 +175,17 @@ test('phone controls support private, keyboard-only scenario changes', async t =
   await enter();
   assert.equal(await text(), example);
   assert.deepEqual(await js('[mass.value, ftp.value, unit.value, effort.value]'), ['', '', 'kg', 'slower']);
+  await js(`choices.firstChild.click(); effort.selectedIndex = -1; effort.dispatchEvent(new Event('change'))`);
+  assert.match(await text(), /scenario is unavailable/);
+  assert.ok(await js(`document.querySelector('#chapter-game').hidden && !bands.children.length`));
+  await js(`clear.click()`);
+  await distance();
   assert.equal(await js('location.href'), url);
   assert.deepEqual(await js('[localStorage.length, sessionStorage.length, document.cookie]'), [0, 0, '']);
   assert.deepEqual(requests.slice(before), []);
+  files.delete('assets/semonzo-chapters.v1.json');
+  await cmd('Page.reload', {ignoreCache:true});
+  await until(async () => (await text()).includes('unavailable'));
+  assert.ok(await js(`document.querySelector('#chapter-game').hidden && controls.disabled`));
   assert.deepEqual(exceptions, []);
 });

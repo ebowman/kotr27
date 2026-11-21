@@ -22,12 +22,46 @@
     a { color:inherit }
     #result { padding:1rem; background:#fffdf6; border-left:4px solid #637e68 }
     [id$="-error"]:empty { display:none }
+    figure { margin:1rem 0; padding:1rem; background:#fffdf6 }
+    #profile { display:block; width:100%; height:8rem }
+    #bands { display:flex; text-align:center; color:white; font-weight:bold }
+    #bands span { min-width:0; box-shadow:inset 1px 0 #fff }
+    #ticks { position:relative; height:1.8rem; font-size:.85rem; font-variant-numeric:tabular-nums }
+    #ticks span { position:absolute; height:.35rem; border-left:1px solid }
+    #ticks b { position:absolute; top:.35rem; white-space:nowrap; font-weight:normal }
+    #choices { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(15rem,100%),1fr)); gap:.5rem }
+    #choices button { text-align:left; background:#fffdf6; border:1px solid #637e68; border-left:5px solid var(--ink) }
+    #choices small { display:block }
+    #readout li { margin:.4rem 0 }
+    button[aria-pressed="true"] { font-weight:bold; box-shadow:inset 0 -3px #163c34 }
   </style>
 </head>
 <body><main>
   <a href="./">Back to the Semonzo flyover</a>
   <h1>Explore the example ascent</h1>
   <p>Meet Robin, a fictional rider on the provisional climb from Semonzo. Explore without numbers, or change the assumptions. This is not an event prediction.</p>
+  <h2>Where do the minutes go?</h2>
+  <p role="status" id="result" aria-atomic="true">Loading Robin’s fictional example…</p>
+  <section id="chapter-game" hidden aria-label="Chapter guessing and axis reveal">
+    <figure>
+      <figcaption><strong id="axis-title"></strong><br>Height connects chapter endpoints only. Width measures distance or moving time; the time view is not a physical slope diagram.</figcaption>
+      <svg id="profile" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"></svg>
+      <div id="bands" aria-hidden="true"></div><div id="ticks" aria-hidden="true"></div>
+    </figure>
+    <p><strong>Which chapter takes the biggest slice of moving time?</strong> Pick a chapter to turn kilometres into minutes.</p>
+    <div id="choices" role="group" aria-label="Guess a chapter"></div>
+    <p role="status" id="insight" aria-atomic="true"></p>
+    <div id="revealed" hidden>
+      <div class="row" role="group" aria-label="Choose horizontal scale">
+        <button id="distance-axis" type="button">Distance (km)</button>
+        <button id="time-axis" type="button">Moving time (min)</button>
+      </div>
+      <h3>Chapter by chapter</h3>
+      <ol id="readout"></ol>
+      <p>Ranges span “Focused and steady” to “Time to talk” for the same rider, not confidence intervals. Shares use the selected effort. Minutes and percentages are rounded separately and may not add to the total. Wind, heat, fatigue and stops can change the ride.</p>
+    </div>
+  </section>
+  <noscript>The interactive example needs JavaScript.</noscript>
   <fieldset id="controls" disabled>
     <legend>Choose a scenario</legend>
     <div class="row">
@@ -51,9 +85,6 @@
     <p>Your entries stay on this page. Nothing you enter is saved or sent.</p>
     <button type="button" id="clear">Clear entries and return to example</button>
   </fieldset>
-  <h2>Your scenario</h2>
-  <p role="status" id="result" aria-atomic="true">Loading Robin’s fictional example…</p>
-  <noscript>The interactive example needs JavaScript.</noscript>
   <p>Another climb’s time, length and gain alone can’t tell us sustained power: slopes, stops and wind can differ. Without FTP, we keep Robin’s example power rather than guessing yours.</p>
   <p>Provisional route: BRouter, using © OpenStreetMap contributors (ODbL).</p>
 </main></body>
