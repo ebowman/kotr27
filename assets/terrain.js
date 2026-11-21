@@ -181,12 +181,16 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
   const container = document.getElementById('map');
   const message = document.getElementById('message');
   let map, stopped = false, recoverRide, retryTimer;
+  const previewButton=document.getElementById('preview-motion');
+  const previewEvents=new AbortController();
   const nonRetryable=new WeakSet();
   const timedOut=()=>recoverRide ? recoverRide() : fallback();
   let timer = setTimeout(timedOut, 20000);
   function fallback(reason) {
     if (stopped) return;
     stopped = true;
+    previewEvents.abort();
+    previewButton.hidden=true;
     clearTimeout(retryTimer);
     clearTimeout(timer);
     setAvailability('unavailable',typeof reason==='string');
@@ -274,7 +278,6 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
           checked.add(dem);
           return false;
         }
-        const bounds = coords.reduce((b, xy) => b.extend(xy), new gl.LngLatBounds());
         map.addSource('ascent', {type:'geojson', tolerance:0, data:{type:'LineString', coordinates:coords}});
         map.addLayer({id:'ascent', type:'line', source:'ascent', paint:{'line-color':'#ff932e','line-width':4}});
         const beacon = document.createElement('div');
@@ -412,6 +415,67 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
             : 'Satellite terrain · The orange line traces the ascent.');
           setAvailability(flatOnly ? 'flat' : 'ready');
         }
+        // Orbit the approach, not the centroid of the GPX. Truck across the
+        // lower hairpins, drawing back and looking farther up the NE ridge.
+        // Keep the entire ellipse on the valley side of the mountain. Depth
+        // here is lens perspective on imagery, never an unverified DEM.
+        const reduced=matchMedia('(prefers-reduced-motion: reduce)');
+        let paused=reduced.matches, orbitTime=0, previous=null, orbitFrame=0;
+        function composeOverview() {
+          const a=orbitTime*(2*Math.PI/96), side=Math.sin(a), wide=(1-Math.cos(a))/2;
+          map.jumpTo({
+            center:[11.7645+.018*wide-.0014*side,45.818+.021*wide],
+            bearing:19+33*side, pitch:58+2*wide,
+            zoom:14.25+Math.log2(Math.max(200,container.clientHeight)/520)-1.12*wide
+          });
+        }
+        // A newly selected tile may miss its first paint even with the
+        // coarse layer beneath it. Keep a recent verified *render*, not a
+        // camera coordinate whose textures may have already been evicted.
+        // Copy locally inside GL's render event (no readback or tile fetch).
+        const still=document.createElement('canvas');
+        still.setAttribute('aria-hidden','true');
+        still.className='orbit-hold';
+        const ctx=still.getContext('2d',{alpha:false});
+        let captured=-Infinity, holding=false;
+        function rememberOverview(now) {
+          if (ctx && now-captured>=250) {
+            const canvas=map.getCanvas();
+            if (still.width!==canvas.width) still.width=canvas.width;
+            if (still.height!==canvas.height) still.height=canvas.height;
+            ctx.drawImage(canvas,0,0);
+            captured=now;
+          }
+          if (holding) {still.remove(); holding=false;}
+        }
+        function forgetOverview() {
+          still.remove(); holding=false; captured=-Infinity;
+          still.width=still.height=0;
+        }
+        function stopOrbit() {
+          cancelAnimationFrame(orbitFrame); orbitFrame=0; previous=null;
+        }
+        function scheduleOrbit() {
+          if (stopped || !inOverview || paused || holding || document.hidden ||
+              container.getAttribute('aria-busy')!=='false') { stopOrbit(); return; }
+          if (!orbitFrame) orbitFrame=requestAnimationFrame(now=>{
+            orbitFrame=0;
+            orbitTime+=previous===null ? 0 : Math.min(.12,(now-previous)/1000);
+            previous=now;
+            composeOverview(); // the next textured render schedules the next step
+            map.triggerRepaint();
+          });
+        }
+        function motionControl() {
+          previewButton.textContent=paused ? 'Resume preview' : 'Pause preview';
+          scheduleOrbit();
+        }
+        const opts={signal:previewEvents.signal};
+        previewEvents.signal.addEventListener('abort',stopOrbit);
+        previewEvents.signal.addEventListener('abort',forgetOverview);
+        previewButton.addEventListener('click',()=>{paused=!paused;motionControl();},opts);
+        reduced.addEventListener('change',()=>{paused=reduced.matches;motionControl();},opts);
+        document.addEventListener('visibilitychange',scheduleOrbit,opts);
         function overview() {
           leaveStandby();
           resetRetries();
@@ -426,9 +490,11 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
           rider.remove();
           local.remove();
           if (map.getTerrain()) map.setTerrain(null);
-          map.jumpTo({pitch:0, bearing:0});
-          map.fitBounds(bounds, {padding:40, duration:0});
           inOverview = true;
+          orbitTime=0;
+          previewButton.hidden=false;
+          motionControl();
+          composeOverview();
           current = null;
         }
         function restoreFlat(unsafe=false) {
@@ -626,8 +692,15 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
               previousHints.clear();
               phase=0;
               if (imagery && map.isSourceLoaded('ascent') &&
-                  map.queryRenderedFeatures({layers:['ascent']}).length) rendered();
-              else loading(true);
+                  map.queryRenderedFeatures({layers:['ascent']}).length) {
+                rememberOverview(performance.now());
+                rendered();
+              } else if (Number.isFinite(captured)) {
+                // Before composite, cover only GL; the SDK attribution and
+                // controls remain live. Await this lens's normal tile draw.
+                if (!holding) {map.getCanvas().after(still); holding=true;}
+              } else loading(true);
+              scheduleOrbit();
               return;
             }
             const now = performance.now();
@@ -783,6 +856,7 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
             if (stopped) return;
             try {
               if (!following) { if (!inOverview) overview(); return; }
+              if (inOverview) { stopOrbit(); forgetOverview(); previewButton.hidden=true; }
               if (snap || inOverview) { loading(true); adjusting=false; lastPick=-Infinity;
                 validated=false; missingSince=null; waitingSince=performance.now(); }
               current = [point, following, focus, angle];

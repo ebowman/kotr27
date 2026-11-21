@@ -184,26 +184,19 @@ sys.stdout.buffer.write(im.crop((2300,300,3300,900)).convert("I").convert("I;16"
       release:()=>{demGate?.resolve();demGate=null;satGate?.resolve();satGate=null;northGate?.resolve();northGate=null;}};
 }
 
-// Inspect the SDK's fitted camera, selected tiles and rendered features at
+// Inspect the SDK's establishing camera, selected tiles and rendered features at
 // reveal. The fixture has local tiles, not a live authenticated basemap.
 const overviewProbe=`
-window.fits=[]; window.switches=[]; window.reveals=[];
-const proto=mapboxgl.Map.prototype, fit=proto.fitBounds, terrain=proto.setTerrain;
+window.switches=[];
+const proto=mapboxgl.Map.prototype, terrain=proto.setTerrain;
 proto.setTerrain=function(v){ switches.push(v?.source ?? null); return terrain.call(this,v); };
-proto.fitBounds=function(...args){
-  fits.push(this.getTerrain()?.source ?? null);
-  const result=fit.apply(this,args);
-  const capture=()=>{
-    if(map.getAttribute('aria-busy')!=='false' || this.getPitch()!==0) return;
-    this.off('render',capture);
-    const cache=this.style._getSourceCache('sat'),drawn=new Set(cache.getRenderableIds());
-    const ids=this.transform.coveringTiles(cache.getSource());
-    reveals.push({imagery:ids.length>0 && ids.every(id=>drawn.has(id.key) || cache.hasRenderableParent(id)),
-      route:this.queryRenderedFeatures({layers:['ascent']}).length>0,
-      color:this.getPaintProperty('ascent','line-color'),fade:this.getPaintProperty('sat','raster-fade-duration')});
-  };
-  queueMicrotask(()=>this.on('render',capture)); // after application's reveal check
-  return result;
+window.overviewDraw=()=>{
+  if(map.getAttribute('aria-busy')!=='false' || testMap.getTerrain() || testMap.getPitch()<45) return;
+  const cache=testMap.style._getSourceCache('sat'),drawn=new Set(cache.getRenderableIds());
+  const ids=testMap.transform.coveringTiles(cache.getSource());
+  return {imagery:ids.length>0 && ids.every(id=>drawn.has(id.key) || cache.hasRenderableParent(id)),
+    route:testMap.queryRenderedFeatures({layers:['ascent']}).length>0,
+    color:testMap.getPaintProperty('ascent','line-color'),fade:testMap.getPaintProperty('sat','raster-fade-duration')};
 };`;
 
 test('flat overview has raster coverage and rendered ascent on cold load and repeated resets',
@@ -212,15 +205,54 @@ test('flat overview has raster coverage and rendered ascent on cold load and rep
     assert.deepEqual(await js(`switches`),[]);
     assert.equal(await js(`visits.some(v=>new URL(v.url).pathname.startsWith('/dem/'))`),false);
     for(let i=0;i<3;i++){
-      const reveal=await until(()=>js(`reveals[${i}]`));
+      const reveal=await until(()=>js(`overviewDraw()`));
       assert.deepEqual(reveal,{imagery:true,route:true,color:'#ff932e',fade:0});
       if(i===2) break;
       await js(i ? `seek.value=5200; seek.dispatchEvent(new Event('input'))` : 'play.click()');
       await until(()=>js(`testMap.getTerrain()?.source==='dem' && map.getAttribute('aria-busy')==='false'`));
       await js(`reset.click(); reset.click()`);
     }
-    assert.deepEqual(await js('fits'),[null,null,null]);
     assert.deepEqual(await js('switches'),['dem',null,'dem',null]);
+    assert.deepEqual(exceptions,[]);
+  });
+
+test('orbit moves its viewpoint without riding, suspends in place, and yields immediately to Play',
+  {skip:!process.env.MAPBOX_GL_215,timeout:30000}, async t=>{
+    const {js,cmd,exceptions}=await fixture(t,'overview');
+    await js(`window.motion=document.getElementById('preview-motion');
+      window.pose=()=>[testMap.getCenter().lng,testMap.getCenter().lat,testMap.getBearing()];
+      window.initial=pose()`);
+    const moved=()=>until(()=>js(`Math.abs(pose()[2]-initial[2])>.25 && pose()[0]!==initial[0]`));
+    const still=async(expectedHints=0)=>{
+      const held=await js(`pose()`);
+      await sleep(220);
+      assert.deepEqual(await js(`pose()`),held);
+      assert.deepEqual(await js(`[+seek.value,!!testMap.getTerrain(),hints.length]`),[0,false,expectedHints]);
+    };
+    await moved();
+    await js('motion.click()'); await still();
+    await js('initial=pose(); motion.click()'); await moved();
+    await js(`Object.defineProperty(document,'hidden',{value:true,configurable:true});
+      document.dispatchEvent(new Event('visibilitychange'))`); await still();
+    await js(`initial=pose(); delete document.hidden;document.dispatchEvent(new Event('visibilitychange'))`);
+    await moved();
+    await cmd('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
+    await until(()=>js(`motion.textContent==='Resume preview'`)); await still();
+    assert.deepEqual(await js(`play.click();[motion.hidden,+seek.value,mode.textContent,
+      beacon.getLngLat().toArray()]`),[true,0,'Buffering',[11.770429,45.813215]]);
+    await until(()=>js(`+seek.value>5`));
+    const rideHints=await js('const count=hints.length;reset.click();count');
+    await still(rideHints);
+    await js('initial=pose();motion.click()'); await moved();
+    assert.equal(await js('hints.length'),rideHints,'returning to a moving preview issues no new ride hints');
+    // A cold entry with the preference already enabled must not require a
+    // change event or an initial token frame of animation to become still.
+    await cmd('Page.reload',{ignoreCache:true});
+    await until(()=>js(`typeof overviewDraw==='function' && overviewDraw() &&
+      document.getElementById('preview-motion').textContent==='Resume preview'`));
+    const cold=await js(`testMap.getBearing()`);
+    await sleep(220);
+    assert.equal(await js(`testMap.getBearing()`),cold);
     assert.deepEqual(exceptions,[]);
   });
 

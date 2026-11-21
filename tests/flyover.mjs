@@ -64,12 +64,12 @@ test('phone-sized cinematic follow, controls and asset fallbacks', {timeout: 600
         getRenderableIds:()=>this.imagery?[1,2]:[1],getTileByID:key=>({texture:true,tileID:{wrap:0,canonical:{z:12,x:key,y:0}}}),
         hasRenderableParent:()=>false})};
       isSourceLoaded(){return true;}
-      jumpTo(options) { if (options.preloadOnly) this.hints.push(options); }
+      jumpTo(options) { if (options.preloadOnly) this.hints.push(options); else this.camera=options; }
       getBearing() { return 0; }
       getCenter(){return {lng:this.rider[0],lat:this.rider[1]};}
       getPitch(){return 30;} getZoom(){return 14;}
+      getCanvas(){return this.canvas ??= map.appendChild(document.createElement('canvas'));}
       areTilesLoaded() { return this.ready; }
-      fitBounds() { this.camera = null; }
       height() {return +stats.textContent.match(/(\\d+) m elevation/)[1];}
       queryTerrainElevation() { return this.height()+100; }
       project() { return {x:map.clientWidth/2,y:map.clientHeight/2}; }
@@ -142,7 +142,18 @@ test('phone-sized cinematic follow, controls and asset fallbacks', {timeout: 600
     && demo.dem.type === 'raster-dem' && demo.ascent.data.coordinates.length > 100 && demo.layer.source === 'ascent'`));
   assert.equal(await js(`demo.events.render(); map.getAttribute('aria-busy')`),'true');
   assert.equal(await js(`demo.overviewRoad=true; demo.imagery=false; demo.events.render(); map.getAttribute('aria-busy')`),'true');
+  await js(`demo.getCanvas().getContext('2d').fillStyle='#235643';
+    demo.getCanvas().getContext('2d').fillRect(0,0,20,20)`);
   assert.equal(await js(`demo.imagery=true; demo.events.render(); map.getAttribute('aria-busy')`),'false');
+  await js(`demo.getCanvas().getContext('2d').clearRect(0,0,20,20);
+    demo.imagery=false;demo.events.render()`);
+  assert.deepEqual(await js(`[map.getAttribute('aria-busy'),
+    ...map.querySelector('.orbit-hold').getContext('2d').getImageData(1,1,1,1).data]`),
+    ['false',35,86,67,255],'hold verified pixels rather than revealing the emptied canvas');
+  const heldOverview=await js(`JSON.stringify(demo.camera)`);
+  await sleep(120);
+  assert.equal(await js(`JSON.stringify(demo.camera)`),heldOverview);
+  assert.ok(await js(`demo.imagery=true;demo.events.render();!map.querySelector('.orbit-hold')`));
   assert.equal(await js(`document.querySelector('meta[name=referrer]').content`),'strict-origin-when-cross-origin');
   const box = () => js(`JSON.stringify(demo.camera)`);
   const overview = await box();
@@ -297,8 +308,8 @@ test('phone-sized cinematic follow, controls and asset fallbacks', {timeout: 600
   assert.deepEqual(await js('demo.camera.target'),await js('demo.ascent.data.coordinates.at(-1)'));
   assert.ok(await js(`play.click(); JSON.stringify(demo.camera.target) === JSON.stringify(demo.ascent.data.coordinates[0])
     && mode.textContent === 'Buffering' && +seek.value === 0`));
-  await js('reset.click()'); assert.equal(await box(),overview);
-  assert.equal(await js('demo.camera'),null);
+  await js('reset.click()');
+  assert.ok(await js('demo.camera.pitch>45 && demo.rider===null'));
   // Tap the native range layered directly on the elevation profile.
   const [x,y] = await js(`seek.scrollIntoView({block:'center'}); (()=>{const r=seek.getBoundingClientRect();return [r.x+r.width*.5,r.y+r.height*.5]})()`);
   for (const type of ['mousePressed','mouseReleased']) await cmd('Input.dispatchMouseEvent',{type,x,y,button:'left',clickCount:1});
