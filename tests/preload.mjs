@@ -152,7 +152,9 @@ sys.stdout.buffer.write(im.crop((2300,300,3300,900)).convert("I").convert("I;16"
         +Math.max(0,Math.min(999,Math.floor((lon-11)*3600)-2300))));
     }
     let demGate, held = 0, coldDestination = false, missingSat=false, sat404s=0, northGate, missingNorth=false, dem404s=0, denied=0;
-    if (scenario==='preview-held') demGate=Promise.withResolvers();
+    const staggered=scenario==='preview-staggered';
+    let absentPanorama=false;
+    if (scenario==='preview-held' || staggered) demGate=Promise.withResolvers();
     let pendingDetail=0,cover404s=0;
     const outageFailures=new Set();
     let restoredReplies=0;
@@ -184,7 +186,10 @@ sys.stdout.buffer.write(im.crop((2300,300,3300,900)).convert("I").convert("I;16"
         if (satGate && path.startsWith('/sat/')) {
           held++; pendingDetail++; await satGate.promise; pendingDetail--;
         }
-        if (demGate && path.startsWith('/dem/')) { held++; await demGate.promise; }
+        if (staggered && path.endsWith('?panorama')) {
+          if (demGate) { held++; await demGate.promise; }
+          if (absentPanorama) { res.writeHead(404).end(); return; }
+        } else if (!staggered && demGate && path.startsWith('/dem/')) { held++; await demGate.promise; }
         await sleep(20);
         res.writeHead(200,{'Content-Type':'image/png','Cache-Control':['opening','cold','partial','dem-hole','outage'].includes(scenario)?'no-store':'public, max-age=3600'})
           .end(path.startsWith('/dem/') ? (roadHeight ? elevationTile(path,roadHeight) :
@@ -192,8 +197,10 @@ sys.stdout.buffer.write(im.crop((2300,300,3300,900)).convert("I").convert("I;16"
             scenario==='seam' && acrossBoundary(path) ? seaLevelTile :
             scenario==='spike' ? spikedTile : coldDestination ? raisedTile : scenario==='cold' ? coldBase : tile)
             : path.startsWith('/cover/') ? coarseTile : tile);
-      } else if (path === '/sdk.js') res.end(Buffer.concat([sdk,Buffer.from('\n'+instrument+
-        (scenario==='overview' ? overviewProbe : scenario==='spike' ? corruptPreviewProbe : ''))]));
+      } else if (path === '/sdk.js') res.end(Buffer.concat([sdk,Buffer.from('\n'+
+        (staggered ? instrument.replace('return {url}',`return {url:url.includes('/dem/') && window.testMap?.getTerrain() ? url+'?panorama' : url}`) : instrument)+
+        (['overview','preview-held'].includes(scenario) || staggered ? overviewProbe : '')+
+        (['spike','preview-held'].includes(scenario) || staggered ? corruptPreviewProbe : ''))]));
       // Only SDK layout rules needed by the local fixture (no CDN requests).
       else if (path === '/sdk.css') res.writeHead(200,{'Content-Type':'text/css'}).end(
         '.mapboxgl-map{overflow:hidden}.mapboxgl-canvas,.mapboxgl-marker{position:absolute;top:0;left:0}');
@@ -241,9 +248,9 @@ sys.stdout.buffer.write(im.crop((2300,300,3300,900)).convert("I").convert("I;16"
     const slow=scenario==='slow';
     await cmd('Emulation.setDeviceMetricsOverride',{width:slow?1280:375,height:812,deviceScaleFactor:1,mobile:!slow});
     await cmd('Page.navigate',{url});
-    if (slow || scenario==='preview-held') await until(()=>js(`document.querySelector('#deck')?.hidden===false`));
+    if (slow || scenario==='preview-held' || staggered) await until(()=>js(`document.querySelector('#deck')?.hidden===false`));
     else await until(()=>js(`document.querySelector('#message')?.textContent.startsWith('Satellite overview ·')`));
-    return {js,cmd,exceptions,holdSat:()=>{satGate=Promise.withResolvers();},dropSat:()=>{missingSat=true;},
+    return {js,cmd,exceptions,failPanorama:()=>{absentPanorama=true;},holdSat:()=>{satGate=Promise.withResolvers();},dropSat:()=>{missingSat=true;},
       releaseSat:()=>{satGate?.resolve();satGate=null;},pendingDetail:()=>pendingDetail,cover404s:()=>cover404s,
       restoreSat:()=>{missingSat=false;},sat404s:()=>sat404s,restoredReplies:()=>restoredReplies,denied:()=>denied,
       holdNorth:()=>{northGate=Promise.withResolvers();}, dropNorth:()=>{missingNorth=true;},dem404s:()=>dem404s,
@@ -254,6 +261,20 @@ sys.stdout.buffer.write(im.crop((2300,300,3300,900)).convert("I").convert("I;16"
 // Inspect the SDK's establishing camera, selected tiles and rendered features at
 // reveal. The fixture has local tiles, not a live authenticated basemap.
 const overviewProbe=`
+// One delayed SDK frame queue, not a delayed readiness assertion. Source
+// workers and the UI remain live over the last photographed surface.
+mapboxgl.Map=class extends mapboxgl.Map {
+  _render(...args){
+    if(window.delayPreviewFrames && this.getTerrain()?.exaggeration===1.25){
+      if(!window.frameDelayStarted){
+        window.frameDelayStarted=performance.now();
+        setTimeout(()=>{window.delayPreviewFrames=false;this.triggerRepaint()},9000);
+      }
+      return;
+    }
+    return super._render(...args);
+  }
+};
 window.overviewDraw=()=>{
   if(map.getAttribute('aria-busy')!=='false' || !testMap.getTerrain() || testMap.getPitch()<45) return;
   const tr=testMap.transform.elevation,caches=['sat','sat-cover'].map(s=>testMap.style._getSourceCache(s));
@@ -264,11 +285,12 @@ window.overviewDraw=()=>{
 };`;
 // Sample after all render handlers have gated this draw, before composite.
 const corruptPreviewProbe=`
-window.corruptOpening={mesh:0,flat:0};
+window.corruptOpening={mesh:0,flat:0,gaps:0};
 mapboxgl.Map=class extends mapboxgl.Map {
   constructor(options){super(options);this.on('render',()=>queueMicrotask(()=>{
-    if(mode.textContent==='Route overview' && getComputedStyle(map).visibility==='visible' &&
-       !map.querySelector('.orbit-hold')) corruptOpening[this.getTerrain()?'mesh':'flat']++;
+    if(mode.textContent!=='Route overview' || map.querySelector('.orbit-hold')) return;
+    if(getComputedStyle(map).visibility==='visible') corruptOpening[this.transform.elevation?'mesh':'flat']++;
+    else if(corruptOpening.flat) corruptOpening.gaps++;
   }))}
 };`;
 
@@ -289,20 +311,103 @@ test('opening terrain has bound DEM, raster textures and rendered ascent on cold
     assert.deepEqual(exceptions,[]);
   });
 
-test('held opening DEM shows no unverified mesh; fallback stays mesh-free on late delivery',
-  {skip:!process.env.MAPBOX_GL_215,timeout:20000},async t=>{
+for (const throttle of [1,4]) test(`held opening DEM restores a verified panorama at zero (${throttle}x CPU slowdown)`,
+  {skip:!process.env.MAPBOX_GL_215,timeout:60000},async t=>{
+    const {js,cmd,held,release,exceptions}=await fixture(t,'preview-held');
+    t.after(release);
+    await cmd('Emulation.setCPUThrottlingRate',{rate:throttle});
+    await until(()=>held()>0);
+    await sleep(9000); // beyond BOTH original deadlines, even with ready imagery
+    await until(()=>js(`message.textContent.includes('Flat imagery without terrain relief')`));
+    assert.ok(await js(`corruptOpening.flat>0 && !corruptOpening.mesh && +seek.value===0`));
+    const waiting=held(); await sleep(700);
+    assert.equal(held(),waiting,'no ongoing DEM retries during flat orbit');
+    if (throttle>1) await js(`window.delayPreviewFrames=true`);
+    const before=Date.now(); release();
+    if (throttle>1) {
+      await until(()=>js(`window.frameDelayStarted`));
+      await sleep(8200);
+      assert.ok(await js(`!corruptOpening.mesh && !!map.querySelector('.orbit-hold')`));
+    }
+    for(let i=0;i<120 && !await js(`message.textContent.includes('Mountain terrain')`);i++) await sleep(100);
+    assert.deepEqual(await js(`overviewDraw()`),{imagery:true,route:true,color:'#ff932e',fade:0});
+    assert.deepEqual(await js(`[testMap.transform.elevation.exaggeration(),+seek.value,mode.textContent]`),
+      [1.25,0,'Route overview']);
+    const bearing=await js(`testMap.getBearing()`);
+    await until(()=>js(`!map.querySelector('.orbit-hold') && Math.abs(testMap.getBearing() - (${bearing}))>.02`));
+    assert.ok(await js(`corruptOpening.mesh>0 && !corruptOpening.gaps && +seek.value===0`));
+    t.diagnostic(`Verified relief ${Date.now()-before} ms after release; ${held()} held requests`);
+    assert.deepEqual(exceptions,[]);
+  });
+
+for (const outcome of ['late valid tiles','settled outage','Play supersedes']) test(`covered panorama after remount deadline: ${outcome}`,
+  {skip:!process.env.MAPBOX_GL_215,timeout:95000},async t=>{
+    const {js,cmd,release,failPanorama,held,exceptions}=await fixture(t,'preview-staggered');
+    t.after(release);
+    await cmd('Emulation.setCPUThrottlingRate',{rate:4});
+    // SDK preload requests complete normally. All visible panorama DEM
+    // requests, including those issued at remount, stay unanswered.
+    for(let i=0;i<200 && !await js(`window.corruptOpening?.flat && testMap.getTerrain() &&
+      map.querySelector('.orbit-hold')!==null`);i++) await sleep(100);
+    assert.ok(await js(`corruptOpening.flat && testMap.getTerrain()?.exaggeration===1.25`),
+      JSON.stringify(await js(`({message:message.textContent,draws:corruptOpening,held:!!map.querySelector('.orbit-hold'),
+        elevations:visits.filter(t=>t.url.includes('/dem/')).map(t=>t.url.slice(t.url.indexOf('/dem/')))})`)));
+    await js(`window.renders=0;window.mounts=0;const original=testMap.setTerrain;
+      testMap.setTerrain=function(...args){mounts++;return original.apply(this,args)};
+      testMap.on('render',()=>renders++);void 0`);
+    await sleep(31500);
+    const quiet=await js(`[renders,visits.length,mounts]`), outstanding=held();
+    await sleep(1500);
+    assert.deepEqual(await js(`[renders,visits.length,mounts]`),quiet,'no paint, camera or request retry loop');
+    assert.equal(held(),outstanding);
+    assert.ok(await js(`mounts===0 && corruptOpening.mesh===0 && !corruptOpening.gaps &&
+      !!map.querySelector('.orbit-hold') && +seek.value===0`),'verified flat still, original in-flight panorama');
+    if (outcome==='Play supersedes') {
+      await js(`play.click()`);
+      await until(()=>js(`+seek.value>0 && testMap.getTerrain()?.exaggeration!==1.25`));
+      release();
+      await sleep(600);
+      assert.ok(await js(`document.getElementById('preview-motion').hidden &&
+        testMap.getTerrain()?.exaggeration!==1.25 && +seek.value>0`));
+    } else if (outcome==='settled outage') {
+      failPanorama(); release();
+      await until(()=>js(`!testMap.getTerrain() && !map.querySelector('.orbit-hold') && mounts===1`)).catch(async err=>{
+        throw Error(JSON.stringify(await js(`({mounts,renders,draws:corruptOpening,held:!!map.querySelector('.orbit-hold'),
+          message:message.textContent,settled:testMap.areTilesLoaded(),states:Object.values(
+            testMap.style._getSourceCache('dem')._tiles).map(t=>t.state)})`)),{cause:err});
+      });
+      await sleep(800);
+      assert.ok(await js(`mounts===1 && !corruptOpening.mesh && !corruptOpening.gaps`));
+    } else {
+      await cmd('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
+      await until(()=>js(`document.getElementById('preview-motion').textContent==='Resume preview'`));
+      release();
+      await until(()=>js(`testMap.areTilesLoaded()`));
+      assert.ok(await js(`!!map.querySelector('.orbit-hold') && !corruptOpening.mesh && !mounts`));
+      await cmd('Emulation.setEmulatedMedia',{features:[]});
+      await until(()=>js(`corruptOpening.mesh && overviewDraw()?.imagery && overviewDraw()?.route`));
+      assert.ok(await js(`mounts===0 && !corruptOpening.gaps && +seek.value===0 &&
+        testMap.transform.elevation.exaggeration()===1.25`));
+    }
+    t.diagnostic(`Suspended counts [renders,requests,terrain writes]: ${quiet}; held requests: ${outstanding}`);
+    assert.deepEqual(exceptions,[]);
+  });
+
+test('seek and reset supersede a pending opening DEM batch',
+  {skip:!process.env.MAPBOX_GL_215,timeout:45000},async t=>{
     const {js,held,release,exceptions}=await fixture(t,'preview-held');
     t.after(release);
     await until(()=>held()>0);
-    await js(`window.exposed=[];testMap.on('render',()=>{
-      if(getComputedStyle(map).visibility==='visible') exposed.push([!!testMap.getTerrain(),+seek.value])
-    });void 0`);
-    // Jointly late imagery and elevation can consume the whole eight-second probe.
-    for(let i=0;i<100 && !await js(`message.textContent.includes('Flat imagery without terrain relief')`);i++)
-      await sleep(100);
-    assert.ok(await js(`message.textContent.includes('Flat imagery without terrain relief')`));
-    release(); await sleep(350);
-    assert.ok(await js(`exposed.length && exposed.every(([mesh,d])=>!mesh && !d)`));
+    await sleep(9000);
+    await until(()=>js(`message.textContent.includes('Flat imagery without terrain relief')`));
+    await js(`reset.click();seek.value=5200;seek.dispatchEvent(new Event('input'))`);
+    release();
+    await until(()=>js(`map.getAttribute('aria-busy')==='false' && mode.textContent==='Paused'`));
+    await sleep(600);
+    assert.ok(await js(`+seek.value===5200 && !message.textContent.includes('overview') &&
+      testMap.getTerrain()?.exaggeration!==1.25`));
+    await js(`reset.click()`);
+    await until(()=>js(`overviewDraw()?.imagery && mode.textContent==='Route overview' && +seek.value===0`));
     assert.deepEqual(exceptions,[]);
   });
 
