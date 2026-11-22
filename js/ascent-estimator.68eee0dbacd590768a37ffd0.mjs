@@ -79,7 +79,7 @@ export function estimateAscent(profile, options = {}) {
     if (typeof id !== 'string' || !id.trim() || seen.has(id) ||
         startM !== distance || !(endM > startM)) throw new RangeError('Invalid chapter boundary or id');
     seen.add(id);
-    const chapter = { id, slower: zero(), faster: zero() };
+    const chapter = { id, slower: zero(), faster: zero(), windows: [] };
     while (cursor < profile.segments.length && profile.segments[cursor].chapterId === id) {
       const s = profile.segments[cursor++];
       if (s.startM !== distance || (elevation !== undefined && s.startElevationM !== elevation)) {
@@ -91,8 +91,12 @@ export function estimateAscent(profile, options = {}) {
       const run = bounded(s.endM - s.startM, 1, 1000000, 'horizontal run');
       const rise = s.endElevationM - s.startElevationM;
       bounded(rise / run, -0.5, 0.5, 'window grade');
-      add(chapter.slower, modelWindow(run, rise, systemKg, slowerTargetW));
-      add(chapter.faster, modelWindow(run, rise, systemKg, fasterTargetW));
+      const slower = modelWindow(run, rise, systemKg, slowerTargetW);
+      const faster = modelWindow(run, rise, systemKg, fasterTargetW);
+      chapter.windows.push({ startM: s.startM, endM: s.endM,
+        startElevationM: s.startElevationM, endElevationM: s.endElevationM, slower, faster });
+      add(chapter.slower, slower);
+      add(chapter.faster, faster);
       distance = s.endM;
       elevation = s.endElevationM;
     }

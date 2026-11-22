@@ -215,7 +215,7 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
       if (e.sourceId==='dem') {
         // Elevation and satellite imagery are independent sources. A DEM
         // denial disables mesh promotion, not the usable satellite ride.
-        if (e.error?.status!==404) recoverRide?.(denied);
+        if (e.error?.status!==404) recoverRide?.(denied,e.tile);
         return;
       }
       const code=e.error?.status;
@@ -261,7 +261,7 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
         const checked=new WeakSet(), checkedPreview=new WeakSet();
         const badSeam=visibleSeamCheck();
         function implausible({dem,tileID}) {
-          const panoramic=inOverview && previewMesh, validated=panoramic ? checkedPreview : checked;
+          const panoramic=inOverview, validated=panoramic ? checkedPreview : checked;
           if (!dem || validated.has(dem)) return false;
           // Pinned 2.15's picking tree subsamples the DEM: a narrow spike
           // between its samples could still displace rendered geometry.
@@ -440,6 +440,28 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
         const previewRelief=1.25;
         const rideFog=map.getStyle().fog ?? null;
         let previewMesh=false, previewTimer, waitFlatPaint=false;
+        let previewProbe='unused', previewBatch=false, previewExpired=false, previewPainted=false;
+        let unwatchPreview=()=>{};
+        function watchPreviewFailures() {
+          // 2.15's SourceCache silently consumes tile 404s. If the last
+          // pending tile fails after the camera went quiet there may be no
+          // final render/idle at all. Observe completion, never initiate a
+          // load. Restore the source methods on every exit from this lens.
+          const undo=[], epoch=generation;
+          for (const id of new Set(['dem','ascent',...rasters.map(layer=>layer.source)])) {
+            const src=map.getSource(id), load=src.loadTile, own=Object.hasOwn(src,'loadTile');
+            src.loadTile=function(tile,done) {
+              return load.call(this,tile,(err,...args)=>{
+                done(err,...args);
+                if (err && !stopped && inOverview && epoch===generation &&
+                    previewProbe==='mounted' && previewExpired && !document.hidden && !paused) map.triggerRepaint();
+              });
+            };
+            undo.push(()=>{if (own) src.loadTile=load; else delete src.loadTile;});
+          }
+          unwatchPreview=()=>{for (const restore of undo) restore(); unwatchPreview=()=>{};};
+        }
+        previewEvents.signal.addEventListener('abort',()=>unwatchPreview());
         const reduced=matchMedia('(prefers-reduced-motion: reduce)');
         let paused=reduced.matches, orbitTime=0, previous=null, orbitFrame=0;
         function composeOverview() {
@@ -536,17 +558,24 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
         function motionControl() {
           previewButton.textContent=paused ? 'Resume preview' : 'Pause preview';
           scheduleOrbit();
+          if (inOverview && !paused && !document.hidden && (!previewMesh || holding)) map.triggerRepaint();
         }
         const opts={signal:previewEvents.signal};
         previewEvents.signal.addEventListener('abort',stopOrbit);
         previewEvents.signal.addEventListener('abort',forgetFrame);
         previewButton.addEventListener('click',()=>{paused=!paused;motionControl();},opts);
         reduced.addEventListener('change',()=>{paused=reduced.matches;motionControl();},opts);
-        document.addEventListener('visibilitychange',scheduleOrbit,opts);
-        function flatPreview(unsafe=false) {
-          if (stopped || !inOverview || !previewMesh) return;
+        document.addEventListener('visibilitychange',motionControl,opts);
+        function flatPreview(unsafe=false,failedTile) {
+          if (stopped || !inOverview) return;
           if (unsafe) quarantined=true;
-          clearTimeout(previewTimer);
+          if (!previewMesh) return;
+          // One failed tile isn't a settled panorama. A parent or another
+          // outstanding tile may still cover it on the next actual draw.
+          if (!unsafe && failedTile && previewProbe==='mounted') return;
+          unwatchPreview();
+          if (previewProbe==='mounted') previewProbe='spent';
+          clearTimeout(previewTimer); previewTimer=0;
           previewMesh=false;
           recoverRide=null;
           clearTimeout(timer); timer=0;
@@ -557,8 +586,24 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
           map.setFog(rideFog);
           map.triggerRepaint();
         }
+        function mountPreview(recovering=false) {
+          previewMesh=true;
+          previewPainted=false;
+          recoverRide=flatPreview;
+          if (recovering) watchPreviewFailures();
+          map.setTerrain({source:'dem',exaggeration:previewRelief});
+          map.setFog({range:[1,5],color:'#c6d6dc','horizon-blend':.18});
+          composeOverview();
+          // Cold entry needs a prompt flat alternative. On the single
+          // evidence-backed attempt we already have a verified picture
+          // over GL: allow the fixed lens to refine without racing the
+          // cold-entry deadlines again. No new requests or timer renewal.
+          if (recovering) previewDeadline(30000);
+          else previewDeadline(4500,true);
+        }
         function previewDeadline(ms,allowTextureWait=false) {
           clearTimeout(previewTimer);
+          previewExpired=false;
           previewTimer=setTimeout(()=>{
             if (stopped || !inOverview || !previewMesh) return;
             // Don't discard a cold desktop lens while *both* its texture
@@ -568,11 +613,18 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
             const tr=map.transform.elevation;
             if (allowTextureWait && (!imageryReady() ||
                 tr?.proxyCoords?.some(id=>tr.terrainTileForTile[id.key]?.dem))) previewDeadline(3500);
-            else flatPreview();
+            else {
+              // A timer can beat the very draw that uploads the final tile.
+              // Judge that draw first, including on a starved render thread.
+              previewExpired=true;
+              map.triggerRepaint();
+            }
           },ms);
         }
         function overview() {
-          forgetFrame();
+          unwatchPreview();
+          stopOrbit();
+          if (!inOverview) forgetFrame();
           leaveStandby();
           resetRetries();
           generation++;
@@ -588,18 +640,14 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
           local.remove();
           inOverview = true;
           waitFlatPaint=false;
+          previewProbe='unused';
           previewMesh=!quarantined && !savingTerrainData();
-          if (previewMesh) {
-            recoverRide=flatPreview;
-            ensureDEM();
-            map.setTerrain({source:'dem',exaggeration:previewRelief});
-            map.setFog({range:[1,5],color:'#c6d6dc','horizon-blend':.18});
-            previewDeadline(4500,true);
-          } else if (map.getTerrain()) map.setTerrain(null);
+          if (previewMesh) ensureDEM();
+          else if (map.getTerrain()) map.setTerrain(null);
           orbitTime=0;
           previewButton.hidden=false;
           motionControl();
-          composeOverview();
+          if (previewMesh) mountPreview(); else composeOverview();
           current = null;
         }
         function restoreFlat(unsafe=false) {
@@ -705,6 +753,42 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
               cache._cache.add(tile.tileID,tile,tile.getExpiryTimeout());
             }
           }
+          // Removing terrain cancels the SDK's visible DEM selection. While
+          // the flat orbit paints, keep just one small independent batch
+          // for the massif. A timeout is not evidence for switching back;
+          // decoded, checked tiles buy one more covered panorama attempt.
+          function recoverPreview(canMount) {
+            if (previewMesh || quarantined || paused || document.hidden || savingTerrainData()) return;
+            if (previewProbe==='ready') {
+              if (!canMount) return;
+              previewProbe='mounted';
+              stopOrbit();
+              holdVerified();
+              mountPreview(true);
+              return;
+            }
+            if (previewProbe!=='unused' || previewBatch) return;
+            const cache=map.style._getSourceCache('dem');
+            if (!cache?._sourceLoaded || !cache._cache) return;
+            previewProbe='spent';
+            const epoch=generation;
+            try {
+              const tr=map.transform.clone();
+              tr.pitch=0; tr.zoom=10; tr.center=new gl.LngLat(11.781,45.830);
+              const ids=tr.coveringTiles({tileSize:512,maxzoom:11});
+              if (!ids.length || ids.length>12) return;
+              previewBatch=true;
+              cache._preloadTiles(tr,(err,tiles)=>{
+                previewBatch=false;
+                if (stopped || !inOverview || epoch!==generation || quarantined ||
+                    err || !tiles?.length || tiles.some(tile=>!tile?.dem)) return;
+                if (tiles.some(implausible)) { quarantined=true; return; }
+                reuseDEM(cache,tiles);
+                previewProbe='ready';
+                if (!document.hidden) map.triggerRepaint();
+              });
+            } catch { previewBatch=false; } // optional work; stay on verified imagery
+          }
           function hint(now) {
             if (disabled || pending || now<nextCheck || savingTerrainData()) return;
             const v=upcoming();
@@ -779,6 +863,15 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
             catch { priming=false; attempts=3; }
           }
           map.on('idle', () => {
+            // Pinned GL's idle follows its last render with no further
+            // frame work. Check the actual tile states too: a source-level
+            // error may report "loaded" while other tiles are outstanding.
+            // If the settled draw still failed, retire this candidate once.
+            // While requests are outstanding keep the *same* fixed lens
+            // under its verified still. Tile completion drives the next
+            // render; no polling, resubmission or orbit RAF is needed.
+            if (!stopped && inOverview && previewProbe==='mounted' && previewExpired &&
+                !document.hidden && !paused && map.areTilesLoaded()) { flatPreview(); return; }
             // A pause may end inside the moving camera's sampling interval.
             if (!stopped && !inOverview && !flatOnly && demCovered && needsPick && pose.sampled && imageryReady()) {
               lastPick = -Infinity;
@@ -805,21 +898,29 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
               if (waitFlatPaint) {
                 // sourcedata can revoke a mesh during GL's own update.
                 // Don't retain or reveal a buffer from the revoked draw.
-                waitFlatPaint=false; composeOverview(); map.triggerRepaint(); return;
+                waitFlatPaint=false; composeOverview();
+                recoverPreview(false); // warm in parallel with the flat imagery
+                map.triggerRepaint(); return;
               }
               previousHints.clear();
               phase=0;
-              let mountain=demCovered;
+              let mountain=demCovered && terrain?.exaggeration()===previewRelief;
               if (previewMesh && demCovered) for (const i of previewAnchors) {
                 const h=map.queryTerrainElevation(coords[i],{exaggerated:false});
                 if (h==null) mountain=false;
                 else if (!(Math.abs(h-heights[i])<=300)) { flatPreview(true); return; }
               }
-              if ((!previewMesh || mountain) && imagery && (previewMesh && Number.isFinite(captured) || map.isSourceLoaded('ascent')) &&
+              if (previewProbe==='mounted' && holding && (document.hidden || paused)) return;
+              if ((previewMesh ? mountain : !terrain) && imagery && (previewMesh && previewPainted || map.isSourceLoaded('ascent')) &&
                   map.queryRenderedFeatures({layers:['ascent']}).length) {
                 clearTimeout(previewTimer); previewTimer=0;
+                previewExpired=false; previewPainted=previewMesh;
                 rememberFrame(performance.now());
                 rendered();
+                if (previewProbe==='mounted') { previewProbe='spent'; unwatchPreview(); }
+                if (!previewMesh && Number.isFinite(captured)) recoverPreview(true);
+              } else if (previewMesh && previewExpired && previewProbe!=='mounted') {
+                flatPreview();
               } else if (Number.isFinite(captured)) {
                 // Before composite, cover only GL; the SDK attribution and
                 // controls remain live. Await this lens's normal tile draw.
@@ -996,7 +1097,7 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
           function drawPose(point, following, focus, angle, seconds, snap, correcting=false) {
             if (stopped) return;
             try {
-              if (!following) { if (!inOverview) overview(); return; }
+              if (!following) { if (!inOverview || snap) overview(); return; }
               if (inOverview) { stopOrbit(); previewButton.hidden=true; }
               if (snap || inOverview) { loading(true); adjusting=false; lastPick=-Infinity;
                 validated=false; missingSince=null; waitingSince=performance.now(); }
@@ -1009,6 +1110,7 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
                 drawFlat(...current,seconds,snap); return;
               }
               if (inOverview) {
+                unwatchPreview();
                 clearTimeout(previewTimer);
                 awaitingRidePaint=previewMesh;
                 if (previewMesh) map.setFog(rideFog);

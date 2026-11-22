@@ -1,4 +1,4 @@
-import { estimateAscent } from './ascent-estimator.0723189567fa0139756db018.mjs';
+import { estimateAscent } from './ascent-estimator.68eee0dbacd590768a37ffd0.mjs';
 
 const kgPerLb = 0.45359237;
 const decimal = text => /^(?:\d+(?:\.\d*)?|\.\d+)$/.test(text.trim()) ? Number(text) : NaN;
