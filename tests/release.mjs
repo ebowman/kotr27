@@ -57,6 +57,16 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   const bNames = new Set(await files(b));
   assert.deepEqual(names.filter(n => !bNames.has(n)).sort(), names.filter(n =>
     /(?:flyover|semonzo|semonzo-profile|rider-controls)\./.test(n)).sort());
+  // A clock-only update must reach its importer and the ordinary explorer
+  // marker without invalidating the independent flyover route.
+  const c = join(tmp, 'clock-only');
+  await edit('js/ride-clock.mjs', 'export function createRideClock', '/* release fixture */ export function createRideClock');
+  await build(src, c);
+  const cNames = new Set(await files(c));
+  assert.deepEqual([...bNames].filter(n=>!cNames.has(n)).sort(), [...bNames].filter(n=>/\/(?:ride-clock|rider-controls)\./.test(n)).sort());
+  assert.deepEqual(await readFile(join(b,'index.html')), await readFile(join(c,'index.html')));
+  const marker = async dir => (await readFile(join(dir,'explore.html'),'utf8')).match(/<meta name="kotr-release" content="([a-f0-9]{24})">/)[1];
+  assert.notEqual(await marker(b),await marker(c));
   let live = a, fail = false, probes = 0, plainNavigations = 0, replacements = 0;
   const legacyRequests=[];
   const allowed = new Set([...names, ...bNames].filter(n => extname(n)));

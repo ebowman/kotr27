@@ -64,9 +64,13 @@ test('equal or indistinguishable rounded durations do not single out a chapter',
 });
 
 for (const width of [320,1200]) test(`packaged ${width}px private keyboard walkthrough`, async t => {
-  const tmp = await mkdtemp(join(tmpdir(),'kotr-walk-')), out = join(tmp,'kotr27');
-  t.after(()=>rm(tmp,{recursive:true,force:true}));
-  await build(fileURLToPath(new URL('../',import.meta.url)),out);
+  let out = process.env.RIDE_PACKAGE;
+  if (!out) {
+    const tmp = await mkdtemp(join(tmpdir(),'kotr-walk-'));
+    t.after(()=>rm(tmp,{recursive:true,force:true}));
+    out = join(tmp,'kotr27');
+    await build(fileURLToPath(new URL('../',import.meta.url)),out);
+  }
   const types = {'.mjs':'text/javascript','.js':'text/javascript','.html':'text/html','.gpx':'application/xml'};
   const files = (await readdir(out,{recursive:true})).filter(f=>types[extname(f)]);
   let missing = false;
@@ -92,6 +96,7 @@ for (const width of [320,1200]) test(`packaged ${width}px private keyboard walkt
   await cmd('Page.navigate', {url:base});
   await until(()=>js(`document.querySelector('#deck')?.hidden === false`));
   const explorerStart = requests.length;
+  assert.match(await js(`document.querySelector('a[href="./explore.html"]').innerText`), /ride clock.*scrub.*compare two plans/i);
   await js(`document.querySelector('a[href="./explore.html"]').click()`);
   await until(() => js(`document.querySelector('#controls')?.disabled === false`));
   assert.match(await js('document.body.innerText'), /How far up Monte Grappa in an hour/);
@@ -132,6 +137,11 @@ for (const width of [320,1200]) test(`packaged ${width}px private keyboard walkt
   };
   await screenshot('hour');
   assert.ok(await js('minute.value==="60" && later.getBoundingClientRect().bottom<=innerHeight && !personal.open'));
+  const markers = () => js(`['mark-a','mark-b'].map(id=>document.getElementById(id).getBoundingClientRect().toJSON())`);
+  const [a,b] = await markers();
+  const [vw,vh] = await js('[innerWidth,innerHeight]');
+  assert.ok([a,b].every(r=>r.width>0 && r.height>0 && r.top>=0 && r.left>=0 && r.right<=vw && r.bottom<=vh));
+  t.diagnostic(`Hour: A ${await position('a')}, B ${await position('b')}`);
   assert.ok(!requests.slice(explorerStart).some(u=>/mapbox/i.test(u)));
   const hour = await position('a');
   await tap('#minute');
@@ -149,6 +159,8 @@ for (const width of [320,1200]) test(`packaged ${width}px private keyboard walkt
   await setSelect('pace-b','slower');
   await js(`minute.value=60; minute.dispatchEvent(new Event('input'))`);
   assert.equal(await position('a'),await position('b'));
+  const [sameA,sameB] = await markers();
+  assert.ok(Math.abs(sameA.x-sameB.x)<1 && sameA.bottom<=sameB.top, 'equal distance, separate labels');
   await screenshot('equal');
   await js(`document.getElementById('stop-b').focus()`); await select('1',true);
   const stopped = await position('b'), moving = await position('a');
@@ -157,6 +169,8 @@ for (const width of [320,1200]) test(`packaged ${width}px private keyboard walkt
   assert.equal(await position('b'),stopped);
   assert.notEqual(await position('a'),moving);
   await screenshot('cafe');
+  await enter(); await enter(); // 15 minutes from the first stopped tick
+  assert.doesNotMatch(await position('b'),/Stopped/);
   await tap('#chapter-tabs button:nth-child(3)');
   assert.match(await js(`document.getElementById('chapter-summary').textContent`),/High step · 10.9%.*28 min/);
   await screenshot('high-step');
@@ -254,6 +268,9 @@ for (const width of [320,1200]) test(`packaged ${width}px private keyboard walkt
   await time(riderScenario(route, {...blank, ftp:'30'}).estimate);
   await js('ftp.select()');
   await type('250');
+  await js(`minute.focus(); minute.value=60; minute.dispatchEvent(new Event('input'))`);
+  t.diagnostic(`250 W hour: A ${await position('a')}, B ${await position('b')}`);
+  await screenshot('250W-hour');
   assert.ok(await js(`revealed.hidden && insight.textContent === ''`));
   await js(`choices.firstChild.click()`);
   assert.match((await chart()).list[0], /71 min \(range 62–71 min\)/);
@@ -264,6 +281,8 @@ for (const width of [320,1200]) test(`packaged ${width}px private keyboard walkt
   await js(`document.getElementById('stop-b').focus()`);
   await select('1',true);
   assert.match(await js(`document.getElementById('plan-b').textContent`), /127 min moving · 142 min elapsed/);
+  assert.match(await position('b'),/9.0 km · Stopped/);
+  await screenshot('250W-cafe');
   assert.equal(await js('work.textContent'), ftpWork);
   assert.match(await js(`work.parentElement.textContent`), /same height.*work against gravity is unchanged/);
   await js('effort.focus()');

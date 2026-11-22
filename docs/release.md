@@ -11,19 +11,26 @@ release check is needed while editing.
 From the local project root, with Node 22+:
 
 ```sh
-node --test --test-concurrency=1 tests/flyover.mjs tests/rider-controls.mjs tests/release.mjs
 stage=$(mktemp -d)
 node tools/build-release.mjs "$stage/kotr27"
+mkdir "$stage/shots"
+RIDE_PACKAGE="$stage/kotr27" RIDE_SHOTS="$stage/shots" \
+  node --test --test-concurrency=1 tests/ride-clock.mjs tests/rider-controls.mjs tests/release.mjs
 python3 -m http.server --bind 127.0.0.1 --directory "$stage" 8001
 ```
 
 Tests need Chrome (`CHROME` can specify its executable). The rider walkthrough
 uses the real package with external requests blocked. Open
 `http://127.0.0.1:8001/kotr27/` for the packaged preview.
+Follow **Try the ride clock** to `/kotr27/explore.html`. Scrub without inputs,
+compare the two markers at the same minute, tap a chapter for grade and moving
+time, or select **Use my FTP**. Under **Pace & stop**, add a café stop to Plan B
+at 9 km. The chapter links seek the flyover only when followed.
 Stop the preview with Ctrl-C. Build into a **new** directory for each release.
-Its only files are `index.html`, `explore.html`, `.nojekyll`, the four
-fingerprinted flyover inputs (GPX, config, terrain and flyover scripts), and six
-fingerprinted rider ES modules. Config is already browser-visible: use only the
+Its 14 files are `index.html`, `explore.html`, `.nojekyll`, the four
+fingerprinted flyover inputs (GPX, config, terrain and flyover scripts), and seven
+fingerprinted rider ES modules (including `ride-clock`). Keep screenshots
+outside that directory. Config is already browser-visible: use only the
 intended public, origin-restricted browser configuration there, never private
 credentials. The build does not need environment secrets.
 
@@ -106,3 +113,32 @@ warm runs (152 s and 151 s). All 102 sampled ridge frames in each run showed
 the 3D rider, and replay, pause, seek and reset remained usable.
 No SDK substitution was used for either live check. These results qualify the local
 artifact, not a deployment.
+
+## Ride clock qualification · kotr27-bbl.3
+
+The two fresh builds matched byte for byte. All 11 final asset names matched
+their SHA-256 prefixes. Entry markers: flyover `08a906cdcb7ef0b0eb6d7d41`,
+explorer `ab109c3143a612280d383c44`. In a separate warm-cache fixture, a GPX
+change reached both ordinary Pages routes; a clock-only edit changed the clock,
+its importer and the explorer marker, but not the flyover HTML.
+
+| Chrome viewport check (320×568 and 1200×800, external requests blocked, reduced motion) | On the packaged site |
+|---|---|
+| Follow the ride-clock link without entering anything. | At 60 min, A was 6.8 km up Long lift and B was 7.7 km up. Both labeled markers and the scrubber fit on the first screen. At equal pace both read 6.8 km: the circle above and square below pointed to the same spot. |
+| Select the café, step the clock and select chapter 03. | A advanced while B held at 9.0 km; B moved again after 15 min. High step averages 10.9% but takes only 28 min in A; the gentler Long lift takes 80 min. |
+| Enter just 250 W. | At 60 min, A reached 7.7 km and B 8.7 km. With the assumed 75 kg rider, 70% versus 80% FTP gave 144 versus 127 moving minutes. The café raised B to 142 elapsed minutes without changing pedal work. |
+| Use the keyboard and follow a chapter link. | Home/End reached start/summit, and Enter stepped the clock. No requests during edits, rider URL parameters or origin-store entries. Only deliberate navigation sent the browser to `/kotr27/index.html#seek-9000`: seek focused at 9 km, no playback. |
+
+The reviewed candidate was `/tmp/kotr27-bbl.3.oKR5Zk/kotr27`; sibling `shots/`
+contains the viewport PNGs. These are local headless Chrome results, not a
+physical-device certification or deployment approval.
+
+The complete Node test set ran in two groups (24 core; 44 pinned-SDK/live),
+with the real DEM fixture and all opt-ins enabled. First runs: 66 passed,
+2 failed, 0 skipped. Both failures were 15 s Chrome `Target.createTarget`
+timeouts before the checks began (warm release and pending DEM seek/reset).
+Both passed on individual reruns. All 3 Python reference tests passed. The
+live runs reached the visible summit in 153 s cold and 152 s warm, with the
+rider visible in 103/103 ridge samples each time. The sibling TAP files
+`qualification.tap`, `terrain-live.tap`, `warm.tap` and `dem-retry.tap` retain
+both the initial results and the reruns.
