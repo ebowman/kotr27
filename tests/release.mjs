@@ -45,7 +45,7 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   const names = await files(a);
   const expected = ['assets','js','.nojekyll','index.html','explore.html','assets/flyover.js',
     'assets/terrain.js','assets/semonzo.gpx','js/config.js',...['ascent-estimator','chapter-reveal',
-      'plan-comparison','rider-controls','rider-scenario','semonzo-profile'].map(n=>`js/${n}.mjs`)];
+      'plan-comparison','ride-clock','rider-controls','rider-scenario','semonzo-profile'].map(n=>`js/${n}.mjs`)];
   assert.deepEqual(names.map(n=>n.replace(/\.[0-9a-f]{24}\./,'.')).sort(),expected.sort());
   for (const n of names.filter(n=>n.includes('/'))) {
     const hash = createHash('sha256').update(await readFile(join(a,n))).digest('hex').slice(0,24);

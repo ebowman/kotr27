@@ -38,7 +38,7 @@ export function installComparison(profile) {
       `${s.ftpW} W FTP (${state.supplied.ftp ? 'entered' : 'assumed'}), still air. Times are rounded to the nearest minute.`;
     function line(label, key, plan, pause) {
       const effort = key === 'slower' ? 'Time to talk' : 'Focused and steady';
-      return `${label} · ${effort} (${Math.round(100*s[key+'Fraction'])}% of FTP), ${pause}: ` +
+      return `${label} · ${effort} (${Math.round(s[key+'TargetW'])} W, ${Math.round(100*s[key+'Fraction'])}% of FTP), ${pause}: ` +
         `${minutes(plan.movingSeconds)} min moving · ${minutes(plan.elapsedSeconds)} min elapsed.`;
     }
     el('plan-a').textContent = line('Plan A', state.effort, result.a, 'no stop');

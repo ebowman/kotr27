@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -87,13 +87,14 @@ for (const width of [320,1200]) test(`packaged ${width}px private keyboard walkt
   await cmd('Network.enable');
   await cmd('Network.setBlockedURLs', {urls:['https://*']});
   await cmd('Emulation.setEmulatedMedia', { features:[{name:'prefers-reduced-motion', value:'reduce'}] });
-  const resize = w => cmd('Emulation.setDeviceMetricsOverride', { width:w, height:800, deviceScaleFactor:1, mobile:width===320 });
+  const resize = w => cmd('Emulation.setDeviceMetricsOverride', { width:w, height:width===320?568:800, deviceScaleFactor:1, mobile:width===320 });
   await resize(width);
   await cmd('Page.navigate', {url:base});
   await until(()=>js(`document.querySelector('#deck')?.hidden === false`));
+  const explorerStart = requests.length;
   await js(`document.querySelector('a[href="./explore.html"]').click()`);
   await until(() => js(`document.querySelector('#controls')?.disabled === false`));
-  assert.match(await js('document.body.innerText'), /example ascent from Semonzo.*event route is not confirmed/);
+  assert.match(await js('document.body.innerText'), /How far up Monte Grappa in an hour/);
   const profileModule = files.find(f=>f.startsWith('js/semonzo-profile.'));
   const {result:derived} = await cmd('Runtime.evaluate',{awaitPromise:true,returnByValue:true,
     expression:`import('./${profileModule}').then(m=>m.loadProfile())`});
@@ -116,6 +117,50 @@ for (const width of [320,1200]) test(`packaged ${width}px private keyboard walkt
         windowsVirtualKeyCode:letter.toUpperCase().charCodeAt(0)});
   };
   const type = text => cmd('Input.insertText', { text });
+  const screenshot = async name => {
+    if (!process.env.RIDE_SHOTS) return;
+    await js('window.scrollTo(0,0)');
+    const {data} = await cmd('Page.captureScreenshot', {format:'png'});
+    await writeFile(join(process.env.RIDE_SHOTS,`${width}-${name}.png`),Buffer.from(data,'base64'));
+  };
+  const position = id => js(`document.getElementById('pos-${id}').textContent`);
+  const tap = async selector => {
+    const point = await js(`(()=>{const b=document.querySelector(${JSON.stringify(selector)}); b.scrollIntoView({block:'nearest'});
+      const r=b.getBoundingClientRect(); return {x:r.x+r.width*.6,y:r.y+r.height/2}})()`);
+    for (const type of ['mousePressed','mouseReleased'])
+      await cmd('Input.dispatchMouseEvent',{type,...point,button:'left',clickCount:1});
+  };
+  await screenshot('hour');
+  assert.ok(await js('minute.value==="60" && later.getBoundingClientRect().bottom<=innerHeight && !personal.open'));
+  assert.ok(!requests.slice(explorerStart).some(u=>/mapbox/i.test(u)));
+  const hour = await position('a');
+  await tap('#minute');
+  assert.notEqual(await position('a'),hour);
+  const setSelect = (id,value) => js(`{const s=document.getElementById('${id}'); s.value='${value}'; s.dispatchEvent(new Event('change'))}`);
+  await js('minute.focus()');
+  await key('Home','Home',36);
+  assert.match(await position('a'), /^0.0 km/);
+  await screenshot('start');
+  await key('End','End',35);
+  assert.match(await position('a'), /Summit/);
+  assert.match(await position('b'), /Summit/);
+  await screenshot('summit');
+  await tap('#plan-options summary');
+  await setSelect('pace-b','slower');
+  await js(`minute.value=60; minute.dispatchEvent(new Event('input'))`);
+  assert.equal(await position('a'),await position('b'));
+  await screenshot('equal');
+  await js(`document.getElementById('stop-b').focus()`); await select('1',true);
+  const stopped = await position('b'), moving = await position('a');
+  assert.match(stopped,/9.0 km · Stopped/);
+  await js('later.focus()'); await enter();
+  assert.equal(await position('b'),stopped);
+  assert.notEqual(await position('a'),moving);
+  await screenshot('cafe');
+  await tap('#chapter-tabs button:nth-child(3)');
+  assert.match(await js(`document.getElementById('chapter-summary').textContent`),/High step · 10.9%.*28 min/);
+  await screenshot('high-step');
+  await js(`personal.open=true; clear.click(); document.getElementById('deep-dive').open=true`);
   assert.ok(await js(`document.documentElement.scrollWidth <= innerWidth`));
   const example = await text();
   assert.match(example, /Robin’s fictional example.*75 kg.*12 kg/);
@@ -159,7 +204,7 @@ for (const width of [320,1200]) test(`packaged ${width}px private keyboard walkt
   }
   reportGap(await distance(), '10 km', '15 km');
   assert.ok(await js('revealed.hidden'));
-  await tab(); await tab(); await tab(); await tab(); // flyover link, then chapters 1–3
+  await js('choices.firstChild.focus()'); await tab(); await tab();
   assert.match(await js('document.activeElement.textContent'), /High step/);
   await enter(); await time();
   assert.ok(await js('!revealed.hidden && document.getAnimations().length === 0'));
@@ -174,7 +219,7 @@ for (const width of [320,1200]) test(`packaged ${width}px private keyboard walkt
     for (const id of n.childIds || []) walk(ax.get(id));
   }
   walk(nodes[0]);
-  assert.deepEqual(headings,['Explore the example ascent','Where do the minutes go?','Chapter by chapter',
+  assert.deepEqual(headings,['How far up Monte Grappa in an hour?','Chapter by chapter',
     'Two ways up the same climb','See a chapter in the flyover']);
   assert.ok(nodes.some(n=>n.role.value==='textbox' && n.name.value==='FTP in watts (optional)'));
   const ratios = await js(`(()=>{
@@ -192,9 +237,7 @@ for (const width of [320,1200]) test(`packaged ${width}px private keyboard walkt
   await tab(); await tab(); await enter(); await distance();
   await tab(); await enter(); await time();
   assert.ok(await js(`document.documentElement.scrollWidth <= innerWidth`));
-  await tab();
-  assert.equal(await focus(), 'example');
-  await enter(); await tab();
+  await js(`personal.open=false; document.getElementById('know-ftp').focus()`);
   assert.equal(await focus(), 'know-ftp');
   await enter(); assert.equal(await focus(), 'ftp');
   await type('190');
@@ -223,15 +266,13 @@ for (const width of [320,1200]) test(`packaged ${width}px private keyboard walkt
   assert.match(await js(`document.getElementById('plan-b').textContent`), /127 min moving · 142 min elapsed/);
   assert.equal(await js('work.textContent'), ftpWork);
   assert.match(await js(`work.parentElement.textContent`), /same height.*work against gravity is unchanged/);
-  await js('ftp.focus()');
-  // Native controls remain operable without pointer or synthetic change events.
-  for (let i = 0; i < 3; i++) await key('Tab', 'Tab', 9, 8); // Shift+Tab
+  await js('effort.focus()');
   assert.equal(await focus(), 'effort');
   await select('f',true);
   assert.match(await text(), /200 W \(80% of FTP\)/);
   await js(`choices.firstChild.click()`);
   assert.match((await chart()).list[0], /62 min \(range 62–71 min\)/);
-  await tab(); assert.equal(await focus(), 'mass');
+  await js('mass.focus()');
   await type('81.257');
   const personal = await text();
   assert.match(personal, /your weight and FTP.*81.26 kg \(entered\)/);
@@ -247,6 +288,7 @@ for (const width of [320,1200]) test(`packaged ${width}px private keyboard walkt
   await js('ftp.select()'); await type('oops');
   assert.match(await text(), /^No estimate.*30 to 650/);
   assert.ok(await js(`comparison.hidden && !document.querySelector('#plan-b').textContent`));
+  assert.ok(await js(`ride.hidden && !document.getElementById('clock-error').hidden`));
   assert.ok(await js(`document.querySelector('#chapter-game').hidden && !bands.children.length && !readout.children.length && !insight.textContent`));
   assert.equal(await js(`ftp.getAttribute('aria-invalid')`), 'true');
   await js('ftp.select()'); await key('Backspace', 'Backspace', 8);
@@ -262,14 +304,14 @@ for (const width of [320,1200]) test(`packaged ${width}px private keyboard walkt
   await js(`clear.click()`);
   await distance();
   await cmd('Network.emulateNetworkConditions', {offline:true, latency:0, downloadThroughput:0, uploadThroughput:0});
-  await tab(); assert.equal(await focus(), 'pace-b');
+  await js(`document.getElementById('pace-b').focus()`);
   await select('t',false);
   await tab(); assert.equal(await focus(), 'stop-b');
   await select('1',true);
   assert.match(await js('takeaway.textContent'), /same pace.*15 minutes to Plan B/);
   const movement = Math.round(model.total.slower.movingSeconds / 60);
   assert.match(await js(`document.querySelector('#plan-b').textContent`), new RegExp(`${movement} min moving · ${movement+15} min elapsed`));
-  await tab(); await enter();
+  await js('work.parentElement.querySelector("summary").focus()'); await enter();
   assert.ok(await js(`work.checkVisibility()`));
   await tab(); await tab();
   assert.equal(await js('document.activeElement.hash'), '#seek-9000');

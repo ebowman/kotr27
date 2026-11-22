@@ -26,7 +26,8 @@ export async function build(source, destination) {
     'js/semonzo-profile.mjs': ['../assets/semonzo.gpx'],
     'js/ascent-estimator.mjs': [], 'js/rider-scenario.mjs': ['./ascent-estimator.mjs'],
     'js/chapter-reveal.mjs': [], 'js/plan-comparison.mjs': [],
-    'js/rider-controls.mjs': ['./rider-scenario.mjs','./chapter-reveal.mjs','./plan-comparison.mjs','./semonzo-profile.mjs'],
+    'js/ride-clock.mjs': [],
+    'js/rider-controls.mjs': ['./rider-scenario.mjs','./chapter-reveal.mjs','./plan-comparison.mjs','./semonzo-profile.mjs','./ride-clock.mjs'],
   };
   for (const [file, deps] of Object.entries(graph)) {
     let data = await readFile(join(root, file));
