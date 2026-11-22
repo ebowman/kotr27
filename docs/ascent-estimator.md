@@ -35,6 +35,20 @@ keep each work figure paired with its scenario. It is not a confidence
 interval. Work means mechanical energy delivered at the pedals, not food
 calories. Totals sum unrounded chapter values; round only for display.
 
+Each chapter's `windows` retain its segments' distance and elevation endpoints
+in metres and the two unrounded solver records (`slower`, `faster`). The pure
+`createRideClock(state, paceB, stopMinutes = 0)` in `js/ride-clock.mjs` uses
+these records from one `riderScenario`. Rebuild it when inputs change. Its
+`atMinute(n)` clamps a finite shared minute to `[0, maxMinute]` and returns
+`{minute, a, b}`. Each marker has `chapterId`, `distanceM`, `elevationM` and
+`status` (`moving`, `stopped` or `finished`). Positions interpolate on the
+smoothed window, not live GPS. Plan A uses `state.effort`; Plan B accepts
+either effort and a 0, 5 or 15 minute stop. A nonzero stop holds at entry to
+Half step, including arrival but excluding departure. A marker stays at the
+summit from its own finish minute onward (`finishMinuteA` or `finishMinuteB`).
+Invalid rider states, unsupported plan choices and invalid minute queries
+return `null`, not the last valid result.
+
 **Try the rider controls locally.** Serve the checkout over loopback and open
 `/explore.html`, or follow “Explore the example ascent” from the flyover.
 The companion derives its windows in memory from the same GPX as the flyover.
