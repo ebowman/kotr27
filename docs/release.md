@@ -29,15 +29,12 @@ credentials. The build does not need environment secrets.
 
 ## Public distribution gate
 
-**Local qualification is not publication authorization.** BRouter and OSM
-attribution identify the route source; they do not establish separate rights
-to the GPX elevations. No such clearance was found in the [provenance
-record](semonzo-chapters.md). The companion ships no second elevation dataset:
-it computes the four chapters and smoothed windows from the flyover's GPX on
-the visitor's device. That avoids adding a distributed profile; it does **not**
-clear the existing trace for republication. Keep this candidate local until the
-publisher confirms applicable rights or supplies an authorized replacement
-and requalifies it.
+The project owner confirmed clearance on 2026-11-21 for the shipped Semonzo
+GPX and its elevations on the KOTR 2027 site. See the [provenance
+record](semonzo-chapters.md) for the trace identity and attribution. The
+companion derives its chapters on the visitor's device and ships no second
+elevation dataset. Clearance resolves the data-rights gate; it does not
+itself request a deployment.
 
 ## After authorization only: publish the artifact, not the source
 
@@ -108,4 +105,4 @@ At 1200 px `tests/live-ride.mjs` reached the visible summit on both cold and
 warm runs (152 s and 151 s). All 102 sampled ridge frames in each run showed
 the 3D rider, and replay, pause, seek and reset remained usable.
 No SDK substitution was used for either live check. These results qualify the local
-artifact, not a deployment or the outstanding elevation rights.
+artifact, not a deployment.

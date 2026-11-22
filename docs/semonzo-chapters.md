@@ -56,9 +56,11 @@ identified by `source.sha256`. Its creator is [BRouter](https://brouter.de/)
 contributors](https://www.openstreetmap.org/copyright), ODbL, for underlying
 road data. The GPX does not identify a separate elevation provider or grant
 an elevation redistribution licence; do not infer one from OSM or from
-the flyover's separate terrain imagery. Confirm any additional rights needed
-before redistribution. Chapter names, breaks and notices were composed for this
-trace.
+the flyover's separate terrain imagery. On 2026-11-21 the project owner
+confirmed clearance to publish this GPX, including its elevations, on the
+KOTR 2027 site. That confirmation applies to the trace identified above;
+it does not establish a general licence for other data. Chapter names, breaks
+and notices were composed for this trace.
 
 Further reading: [Monte Grappa from Semonzo del Grappa
 (Climbfinder)](https://climbfinder.com/en/climbs/monte-grappa-semonzo).
