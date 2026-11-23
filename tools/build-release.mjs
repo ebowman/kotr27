@@ -25,9 +25,11 @@ export async function build(source, destination) {
     'assets/flyover.js': ['./assets/semonzo.gpx'],
     'js/semonzo-profile.mjs': ['../assets/semonzo.gpx'],
     'js/ascent-estimator.mjs': [], 'js/rider-scenario.mjs': ['./ascent-estimator.mjs'],
+    'js/climb-sensitivity.mjs': ['./ascent-estimator.mjs'],
+    'js/climb-sensitivity-view.mjs': ['./climb-sensitivity.mjs'],
     'js/chapter-reveal.mjs': [], 'js/plan-comparison.mjs': [],
     'js/ride-clock.mjs': [],
-    'js/rider-controls.mjs': ['./rider-scenario.mjs','./chapter-reveal.mjs','./plan-comparison.mjs','./semonzo-profile.mjs','./ride-clock.mjs'],
+    'js/rider-controls.mjs': ['./rider-scenario.mjs','./chapter-reveal.mjs','./plan-comparison.mjs','./semonzo-profile.mjs','./ride-clock.mjs','./climb-sensitivity-view.mjs'],
   };
   for (const [file, deps] of Object.entries(graph)) {
     let data = await readFile(join(root, file));

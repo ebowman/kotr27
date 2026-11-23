@@ -11,6 +11,20 @@ export async function until(fn) {
   assert.fail(`Timed out: ${fn}`);
 }
 
+export async function startupPageTarget(cmd) {
+  // The isolated profile is launched with about:blank already. Do not create
+  // a redundant tab, or attach to an arbitrary worker/extension/page.
+  return until(async function startupAboutBlankPage() {
+    const {targetInfos} = await cmd('Target.getTargets');
+    const pages = targetInfos.filter(t => t.type === 'page' && t.url === 'about:blank');
+    assert.ok(pages.length <= 1, 'Ambiguous startup about:blank page targets');
+    if (!pages.length) return false;
+    assert.ok(typeof pages[0].targetId === 'string' && pages[0].targetId.length > 0,
+      'Startup about:blank page has no target ID');
+    return pages[0].targetId;
+  });
+}
+
 export async function browser(t, onEvent = () => {}) {
   const dir = await mkdtemp(join(tmpdir(), 'kotr27-test-'));
   const chrome = spawn(process.env.CHROME || (process.platform === 'darwin'
@@ -70,7 +84,7 @@ export async function browser(t, onEvent = () => {}) {
     const r = await cmd('Runtime.evaluate',{expression,returnByValue:true});
     assert.ok(!r.exceptionDetails,expression); return r.result.value;
   }
-  const {targetId} = await cmd('Target.createTarget',{url:'about:blank'});
+  const targetId = await startupPageTarget(cmd);
   ({sessionId} = await cmd('Target.attachToTarget',{targetId,flatten:true}));
   await cmd('Runtime.enable');
   return {cmd, js, exceptions};

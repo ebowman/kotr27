@@ -65,6 +65,49 @@ field `errors`, never a stale or default estimate. Unit changes convert
 the display, not the original entry. Clear resets both inputs and effort.
 Run `node --test tests/rider-controls.mjs` to exercise the contract and UI.
 
+## Weight × FTP sensitivity panel
+
+The explorer's sensitivity panel holds sustained effort at **80% FTP by
+default**, adjustable from **70–90%**. This is independent of ride-clock
+pace and stop settings. FTP alone does not specify duration-specific peak
+capacity: neither this fraction nor the resulting time estimates peak power.
+Bike and kit stay fixed at **12 kg**, separate from rider weight. Gravity
+uses their combined system mass; route, effort, rolling resistance, still-air
+drag and drivetrain assumptions stay fixed across comparisons.
+
+The displayed FTP axis spans baseline ±100 W, clipped to [30,650] W; rider
+weight spans baseline ±20 kg, clipped to [20,250] kg. Each axis uses nine
+uniform samples plus the exact baseline (deduplicated), at most ten samples
+per axis and 100 grid points. These are display ranges, not recommended
+changes. Pounds change the display only; the model uses the original
+unrounded kg equivalent. The fictional/partly assumed/personal baseline
+comes from the existing rider inputs; chart selection never overwrites it.
+
+Surface and heatmap share the same exact solver samples and color scale.
+The surface joins samples into interpolated visual patches, not additional
+solver results; heatmap cells color the sampled values. Selected numeric
+readouts and all four comparisons are exact `estimateAscent` results, never
+interpolated times: baseline, selected weight with baseline FTP, selected
+FTP with baseline weight, and both selected values. The combined result is
+evaluated independently, not the sum of isolated savings.
+
+Changes are signed **selected scenario minus baseline**, in minutes and
+as a percentage of unrounded baseline seconds: negative is faster, positive
+slower, exactly zero unchanged. Comparison cards round only for display;
+nonzero differences below 0.01 retain their sign and faster/slower label.
+FTP W/kg divides by rider mass, excluding kit. It explains a ratio, not the
+whole model: system mass, rolling resistance and aerodynamic drag also matter.
+Which change matters more depends on this route, baseline and change size.
+
+This provisional ascent illustrates steady moving time, not advice, a training
+or weight prescription, guaranteed performance or an event prediction.
+Fatigue, wind, heat and stops are not modeled. Entries are neither persisted
+nor transmitted. The released panel uses local hashed modules and the existing
+runtime GPX profile, with no external plotting service or shipped chapter JSON.
+Run `node --test tests/climb-sensitivity.mjs`,
+`node --test tests/climb-sensitivity-browser.mjs` and
+`node --test tests/release.mjs` for model, source UI and packaged checks.
+
 **Model.** On each window the road length is the hypotenuse of horizontal run
 and signed rise. For road speed *v*, wheel power is
 `mass × g × (rise + Crr × run) / roadLength × v + ½ × rho × CdA × v³`.

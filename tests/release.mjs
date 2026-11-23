@@ -5,9 +5,35 @@ import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { extname, join } from 'node:path';
+import { dirname, extname, join } from 'node:path';
 import { build } from '../tools/build-release.mjs';
-import { browser, until } from './browser.mjs';
+import { browser, startupPageTarget, until } from './browser.mjs';
+import { estimateAscent } from '../js/ascent-estimator.mjs';
+
+// Local regression reference only; the browser receives runtime GPX, never JSON.
+const profile = JSON.parse(await readFile(new URL('../assets/semonzo-chapters.v1.json', import.meta.url)));
+
+test('browser startup selects only the unique command-line blank page', async () => {
+  const page = {targetId:'startup',type:'page',url:'about:blank'};
+  const ignored = [
+    {targetId:'worker',type:'service_worker',url:'about:blank'},
+    {targetId:'other-page',type:'page',url:'https://example.invalid/'},
+  ];
+  let calls = 0;
+  assert.equal(await startupPageTarget(async method => {
+    assert.equal(method,'Target.getTargets');
+    return {targetInfos:++calls === 1 ? ignored : [...ignored,page]};
+  }),'startup');
+  assert.equal(calls,2);
+  await assert.rejects(startupPageTarget(async () => ({
+    targetInfos:[page,{...page,targetId:'duplicate'}],
+  })),/Ambiguous startup/);
+  await assert.rejects(startupPageTarget(async () => ({
+    targetInfos:[{...page,targetId:''}],
+  })),/no target ID/);
+  const failure = Error('discovery failed');
+  await assert.rejects(startupPageTarget(async () => { throw failure; }),error=>error===failure);
+});
 
 test('ordinary warm Pages URL switches releases; unchanged and failed probes stay put', async t => {
   const tmp = await mkdtemp(join(tmpdir(), 'kotr-release-'));
@@ -45,7 +71,8 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   const names = await files(a);
   const expected = ['assets','js','.nojekyll','index.html','explore.html','assets/flyover.js',
     'assets/terrain.js','assets/semonzo.gpx','js/config.js',...['ascent-estimator','chapter-reveal',
-      'plan-comparison','ride-clock','rider-controls','rider-scenario','semonzo-profile'].map(n=>`js/${n}.mjs`)];
+      'climb-sensitivity','climb-sensitivity-view','plan-comparison','ride-clock',
+      'rider-controls','rider-scenario','semonzo-profile'].map(n=>`js/${n}.mjs`)];
   assert.deepEqual(names.map(n=>n.replace(/\.[0-9a-f]{24}\./,'.')).sort(),expected.sort());
   for (const n of names.filter(n=>n.includes('/'))) {
     const hash = createHash('sha256').update(await readFile(join(a,n))).digest('hex').slice(0,24);
@@ -54,6 +81,15 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   assert.ok(!names.some(n=>/relief|\.svg$|\.webp$/.test(n)));
   assert.doesNotMatch(await readFile(join(a,'index.html'),'utf8'), /grappa-relief|ascent\.svg|relief-beacon/);
   assert.ok(!names.includes('assets/private.txt'));
+  assert.ok(!names.some(n=>n.endsWith('.json')));
+  // Check static AND dynamic local imports against the final hashed inventory.
+  for (const name of names.filter(n=>n.endsWith('.mjs'))) {
+    const text = await readFile(join(a,name),'utf8');
+    for (const [,spec] of text.matchAll(/(?:from\s*|import\s*\()\s*['"](\.[^'"]+)['"]/g)) {
+      assert.match(spec, /\.[0-9a-f]{24}\.mjs$/);
+      assert.ok(names.includes(join(dirname(name),spec)), `${name} → ${spec}`);
+    }
+  }
   const bNames = new Set(await files(b));
   assert.deepEqual(names.filter(n => !bNames.has(n)).sort(), names.filter(n =>
     /(?:flyover|semonzo|semonzo-profile|rider-controls)\./.test(n)).sort());
@@ -67,6 +103,26 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   assert.deepEqual(await readFile(join(b,'index.html')), await readFile(join(c,'index.html')));
   const marker = async dir => (await readFile(join(dir,'explore.html'),'utf8')).match(/<meta name="kotr-release" content="([a-f0-9]{24})">/)[1];
   assert.notEqual(await marker(b),await marker(c));
+  // Each sensitivity-only edit invalidates exactly its transitive importers.
+  // All other bytes, including every flyover input and index.html, stay stable.
+  let previous = c;
+  for (const [module, changed] of [
+    ['climb-sensitivity', ['climb-sensitivity','climb-sensitivity-view','rider-controls']],
+    ['climb-sensitivity-view', ['climb-sensitivity-view','rider-controls']],
+  ]) {
+    const next = join(tmp,module);
+    await edit(`js/${module}.mjs`, 'import {', '/* release fixture */ import {');
+    await build(src,next);
+    const beforeNames = await files(previous), afterNames = await files(next);
+    const affected = n => changed.some(m=>n.startsWith(`js/${m}.`));
+    assert.deepEqual(beforeNames.filter(n=>!afterNames.includes(n)).sort(),beforeNames.filter(affected).sort());
+    assert.deepEqual(afterNames.filter(n=>!beforeNames.includes(n)).sort(),afterNames.filter(affected).sort());
+    for (const name of beforeNames.filter(n=>extname(n) && n !== 'explore.html' && !affected(n))) {
+      assert.deepEqual(await readFile(join(previous,name)),await readFile(join(next,name)),name);
+    }
+    assert.notEqual(await marker(previous),await marker(next));
+    previous = next;
+  }
   let live = a, fail = false, probes = 0, plainNavigations = 0, replacements = 0;
   const legacyRequests=[];
   const allowed = new Set([...names, ...bNames].filter(n => extname(n)));
@@ -92,10 +148,20 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   });
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   t.after(() => { server.closeAllConnections(); server.close(); });
-  const {cmd, js, exceptions} = await browser(t);
-  await cmd('Network.enable');
-  await cmd('Network.setBlockedURLs', {urls:['https://*']});
   const base = `http://127.0.0.1:${server.address().port}`;
+  const requests = [], interceptionErrors = [];
+  const {cmd, js, exceptions} = await browser(t, (m, send) => {
+    if (m.method === 'Network.requestWillBeSent') requests.push(m.params.request.url);
+    if (m.method === 'Fetch.requestPaused') {
+      const {requestId,request} = m.params;
+      const local = new URL(request.url).origin === base;
+      send(local ? 'Fetch.continueRequest' : 'Fetch.failRequest',
+        {requestId,...(!local && {errorReason:'BlockedByClient'})})
+        .catch(error=>interceptionErrors.push(error.message));
+    }
+  });
+  await cmd('Network.enable');
+  await cmd('Fetch.enable', {patterns:[{urlPattern:'http://*'},{urlPattern:'https://*'}]});
   const visit = async (offline = false) => {
     await cmd('Page.navigate', {url:base+'/away'});
     await until(() => js(`!!document.querySelector('a[href="/kotr27/"]')`));
@@ -117,6 +183,88 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   await visit(); await until(() => probes === 1);
   assert.match(await summit(), /1746 m elevation/);
   assert.match(await explore(),new RegExp(names.find(n=>n.includes('/rider-controls.'))+'$'));
+  await until(()=>js(`document.querySelector('#sensitivity-content')?.hidden === false`));
+  await js(`window.s = name => document.getElementById('sensitivity-' + name);
+    sensitivity.open = true; personal.open = true`);
+  const ready = () => until(()=>js(`!s('content').hidden && s('error').textContent === ''`));
+  const set = (id,value,event = 'change') => js(`{
+    const e = document.getElementById(${JSON.stringify(id)});
+    e.value = ${JSON.stringify(String(value))}; e.dispatchEvent(new Event('${event}'));
+  }`);
+  const key = async (key,code,n) => {
+    for (const type of ['keyDown','keyUp'])
+      await cmd('Input.dispatchKeyEvent',{type,key,code,windowsVirtualKeyCode:n});
+  };
+  const exact = async () => {
+    const cards = await js(`[...s('comparisons').children].map(c=>({
+      name:c.dataset.scenario, text:c.textContent,
+      fields:Object.fromEntries([...c.querySelectorAll('data')].map(d=>[d.dataset.field,Number(d.value)]))
+    }))`);
+    assert.deepEqual(cards.map(c=>c.name),['baseline','weight','ftp','combined']);
+    const [b,w,f,p] = cards.map(c=>c.fields);
+    assert.deepEqual([w.riderKg,w.ftpW,f.riderKg,f.ftpW],[p.riderKg,b.ftpW,b.riderKg,p.ftpW]);
+    const fraction = await js(`Number(s('effort').value)/100`);
+    const seconds = cards.map(({fields:c})=>estimateAscent(profile,{
+      riderKg:c.riderKg,ftpW:c.ftpW,bikeKitKg:12,slowerFraction:.6,fasterFraction:fraction,
+    }).total.faster.movingSeconds);
+    cards.forEach(({fields:c,text},i)=>{
+      const delta = seconds[i]-seconds[0];
+      assert.equal(c.movingMinutes,seconds[i]/60);
+      assert.equal(c.targetW,c.ftpW*fraction);
+      assert.equal(c.riderWattsPerKg,c.ftpW/c.riderKg);
+      assert.equal(c.deltaMinutes,delta/60);
+      assert.equal(c.deltaPercent,delta/seconds[0]*100);
+      assert.ok(text.endsWith(delta < 0 ? 'faster' : delta > 0 ? 'slower' : 'unchanged'));
+    });
+    assert.deepEqual(await js(`[Number(s('minutes').value),Number(s('watts').value)]`),
+      [p.movingMinutes,p.targetW]);
+    return p;
+  };
+  const explorerRequests = requests.length;
+  for (const width of [375,1200]) {
+    await cmd('Emulation.setDeviceMetricsOverride',{width,height:850,deviceScaleFactor:1,mobile:width===375});
+    await js('clear.click()'); await ready();
+    await set('sensitivity-mode','surface');
+    const baseline = await exact();
+    assert.deepEqual([baseline.riderKg,baseline.ftpW,baseline.targetW],[75,220,176]);
+    assert.ok(await js(`s('chart').querySelectorAll('polygon').length > 0 &&
+      s('chart').textContent.includes('Z: Moving min')`));
+    assert.ok(await js(`['ftp','mass'].every(n=>s(n).options.length >= 9 && s(n).options.length <= 10)`));
+    await js(`s('chart').focus()`);
+    await key('ArrowRight','ArrowRight',39);
+    assert.ok((await exact()).ftpW > baseline.ftpW);
+    await key('ArrowUp','ArrowUp',38);
+    const selected = await exact();
+    assert.ok(selected.riderKg > baseline.riderKg);
+    await set('sensitivity-mode','heatmap');
+    assert.deepEqual(await exact(),selected);
+    assert.ok(await js(`s('view').disabled && s('chart').querySelectorAll('polygon[data-i]').length > 0`));
+    await js(`s('chart').focus()`);
+    await key('Home','Home',36);
+    assert.deepEqual(await exact(),baseline);
+    await key('Tab','Tab',9);
+    assert.equal(await js('document.activeElement.id'),'sensitivity-ftp');
+    await js(`s('home').focus()`);
+    await key(' ','Space',32);
+    assert.deepEqual(await exact(),baseline);
+    await set('sensitivity-effort','90','input'); await ready(); await exact();
+    assert.ok(await js('document.documentElement.scrollWidth <= innerWidth'));
+    for (const [id,value] of [['mass','19.9'],['ftp','651'],['mass','oops']]) {
+      await js('clear.click()'); await ready();
+      await set(id,value,'input');
+      assert.ok(await js(`s('content').hidden && !s('chart').children.length &&
+        !s('comparisons').children.length && !s('minutes').hasAttribute('value') &&
+        s('error').textContent.includes('Correct or clear')`));
+    }
+    await js('clear.click()'); await ready();
+    assert.deepEqual(await exact(),baseline);
+    t.diagnostic(`Packaged /kotr27/ ${width}px: surface, heatmap, four exact scenarios, keyboard, invalid/clear, no overflow`);
+  }
+  assert.deepEqual(requests.slice(explorerRequests),[],'panel interaction makes no network requests');
+  assert.ok(requests.some(u=>/\/climb-sensitivity-view\.[a-f0-9]{24}\.mjs$/.test(u)));
+  assert.ok(requests.some(u=>/\/climb-sensitivity\.[a-f0-9]{24}\.mjs$/.test(u)));
+  assert.ok(!requests.some(u=>u.endsWith('.json')));
+  assert.deepEqual(await js('[localStorage.length,sessionStorage.length,document.cookie]'),[0,0,'']);
   live = b;
   await visit();
   await until(() => js(`document.title.startsWith('B:') && document.querySelector('#deck')?.hidden === false`));
@@ -139,5 +287,6 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   assert.ok((await explore()).endsWith('/'+bControls), 'cached explorer and its transitive assets work offline');
   assert.equal(replacements, 1);
   assert.deepEqual(exceptions, []);
+  assert.deepEqual(interceptionErrors, []);
   assert.deepEqual(legacyRequests,[]);
 });
