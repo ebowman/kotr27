@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { estimateAscent } from '../js/ascent-estimator.mjs';
-import { buildClimbSensitivity, evaluateClimbSensitivityPoint } from '../js/climb-sensitivity.mjs';
+import { buildClimbSensitivity, evaluateClimbSensitivityPoint, compareClimbSensitivity } from '../js/climb-sensitivity.mjs';
+import { formatSensitivityChange } from '../js/climb-sensitivity-view.mjs';
 
 const route = JSON.parse(readFileSync(new URL('../assets/semonzo-chapters.v1.json', import.meta.url)));
 const slope = rise => ({
@@ -205,5 +206,83 @@ test('steep descent speed-cap plateau is allowed across mass, FTP and effort', (
       agrees(profile, point, input);
     }
     assert.equal(result.grid[0][0].movingSeconds, result.grid[2][2].movingSeconds);
+  }
+});
+
+test('four scenarios isolate factors, reconcile exactly, and preserve baseline for all selections', () => {
+  for (const effortFraction of [.7, .8, .9]) {
+    const input = { ...options(), effortFraction };
+    const data = freezeDeep(buildClimbSensitivity(route, input));
+    const before = structuredClone(data);
+    const b = input.baseline;
+    for (const selection of [b, { riderKg:60, ftpW:b.ftpW }, { riderKg:b.riderKg, ftpW:300 },
+      { riderKg:60, ftpW:300 }, { riderKg:90, ftpW:300 },
+      { riderKg:20, ftpW:650 }, { riderKg:250, ftpW:30 },
+      { riderKg:180.1234567 * .45359237, ftpW:243.125 }]) {
+      const result = compareClimbSensitivity(route, data, freezeDeep(selection));
+      assert.deepEqual(Object.keys(result), ['baseline', 'weight', 'ftp', 'combined']);
+      const expected = [b, { riderKg:selection.riderKg, ftpW:b.ftpW },
+        { riderKg:b.riderKg, ftpW:selection.ftpW }, selection];
+      Object.values(result).forEach((p, i) => {
+        assert.equal(p.riderKg, expected[i].riderKg);
+        assert.equal(p.ftpW, expected[i].ftpW);
+        agrees(route, p, input);
+        const delta = p.movingSeconds - data.baseline.movingSeconds;
+        assert.equal(p.deltaMinutes, delta / 60);
+        assert.equal(p.deltaPercent, delta / data.baseline.movingSeconds * 100);
+        assert.equal(p.direction, delta < 0 ? 'faster' : delta > 0 ? 'slower' : 'unchanged');
+        assert.equal(p.riderWattsPerKg, p.ftpW / p.riderKg);
+      });
+      assert.deepEqual(data, before);
+    }
+    const same = compareClimbSensitivity(route, data, b);
+    assert.ok(Object.values(same).every(p => p.deltaMinutes === 0 && p.direction === 'unchanged'));
+    const offset = compareClimbSensitivity(route, data, { riderKg:90, ftpW:300 });
+    assert.equal(offset.weight.direction, 'slower');
+    assert.equal(offset.ftp.direction, 'faster');
+    assert.equal(offset.combined.direction, 'faster');
+    assert.ok(Math.abs(offset.combined.deltaMinutes -
+      (offset.weight.deltaMinutes + offset.ftp.deltaMinutes)) > .01, 'combined is not summed');
+  }
+});
+
+test('on-mesh comparisons reuse exact physics without invoking the solver', () => {
+  const input = { ...options(), baseline:{ riderKg:75, ftpW:220 } };
+  const data = freezeDeep(buildClimbSensitivity(route, input));
+  // An unusable profile would throw if any unnecessary physics were invoked.
+  const result = compareClimbSensitivity(null, data, { riderKg:60, ftpW:300 });
+  for (const [name, point] of [['baseline', data.baseline], ['weight', data.grid[0][1]],
+    ['ftp', data.grid[1][2]], ['combined', data.grid[0][2]]]) {
+    assert.equal(result[name].movingSeconds, point.movingSeconds);
+  }
+});
+
+test('zero, near-rounding and plateau comparisons retain truthful signed wording', () => {
+  const data = buildClimbSensitivity(route, options());
+  for (const difference of [-.00001, .00001]) {
+    const { combined } = compareClimbSensitivity(route, data, {
+      riderKg:data.baseline.riderKg + difference, ftpW:data.baseline.ftpW,
+    });
+    assert.ok(Math.abs(combined.deltaMinutes) > 0 && Math.abs(combined.deltaMinutes) < .005);
+    assert.equal(combined.direction, difference < 0 ? 'faster' : 'slower');
+    assert.equal(formatSensitivityChange(combined.deltaMinutes), difference < 0 ? '-<0.01' : '+<0.01');
+    assert.equal(formatSensitivityChange(combined.deltaPercent), difference < 0 ? '-<0.01' : '+<0.01');
+  }
+  for (const [value, text] of [[0, '0.00'], [-0, '0.00'], [-1.234, '-1.23'],
+    [1.234, '+1.23'], [.0049, '+<0.01'], [-.0049, '-<0.01'], [.006, '+0.01']]) {
+    assert.equal(formatSensitivityChange(value), text);
+  }
+  const profile = slope(-200), plateau = buildClimbSensitivity(profile, options());
+  assert.ok(Object.values(compareClimbSensitivity(profile, plateau, { riderKg:90, ftpW:300 }))
+    .every(p => p.direction === 'unchanged' && p.deltaPercent === 0));
+});
+
+test('comparisons reject invalid selections instead of clamping them', () => {
+  const data = buildClimbSensitivity(route, options());
+  for (const selection of [undefined, null, {}, { riderKg:75 }, { riderKg:75, ftpW:220, extra:1 },
+    { riderKg:19.99, ftpW:220 }, { riderKg:250.01, ftpW:220 }, { riderKg:NaN, ftpW:220 },
+    { riderKg:75, ftpW:29.99 }, { riderKg:75, ftpW:650.01 }, { riderKg:75, ftpW:Infinity },
+    { riderKg:'75', ftpW:220 }]) {
+    assert.throws(() => compareClimbSensitivity(route, data, selection));
   }
 });

@@ -86,3 +86,42 @@ export function buildClimbSensitivity(profile, options) {
   for (const key of ['riderKg', 'ftpW', 'systemKg', 'targetW']) delete assumptions[key];
   return { axes: { riderKg: riderKgAxis, ftpW: ftpWAxis }, assumptions, baseline, grid };
 }
+
+/**
+ * Four baseline-relative scenarios from a dataset built for this same profile.
+ * Reuse exact mesh/baseline points where available; solve off-mesh points, never
+ * interpolate or add isolated savings. Selection does not change the dataset.
+ */
+export function compareClimbSensitivity(profile, data, selection) {
+  requireFields(selection, ['riderKg', 'ftpW'], 'selection');
+  for (const [key, low, high] of [['riderKg', 20, 250], ['ftpW', 30, 650]]) {
+    if (!Number.isFinite(selection[key]) || selection[key] < low || selection[key] > high) {
+      throw new RangeError(`${key} must be finite and within [${low}, ${high}]`);
+    }
+  }
+  const b = data.baseline;
+  const { bikeKitKg, effortFraction } = data.assumptions;
+  const points = [b];
+  function point(riderKg, ftpW) {
+    const cached = points.find(p => p.riderKg === riderKg && p.ftpW === ftpW);
+    if (cached) return cached;
+    const i = data.axes.riderKg.indexOf(riderKg), j = data.axes.ftpW.indexOf(ftpW);
+    const p = i >= 0 && j >= 0 ? data.grid[i][j]
+      : evaluate(profile, { riderKg, ftpW, bikeKitKg, effortFraction });
+    points.push(p);
+    return p;
+  }
+  return Object.fromEntries(Object.entries({
+    baseline: b,
+    weight: point(selection.riderKg, b.ftpW),
+    ftp: point(b.riderKg, selection.ftpW),
+    combined: point(selection.riderKg, selection.ftpW),
+  }).map(([name, p]) => {
+    const deltaSeconds = p.movingSeconds - b.movingSeconds;
+    return [name, {
+      ...p, assumptions: { ...p.assumptions }, riderWattsPerKg: p.ftpW / p.riderKg,
+      deltaMinutes: deltaSeconds / 60, deltaPercent: deltaSeconds / b.movingSeconds * 100,
+      direction: deltaSeconds < 0 ? 'faster' : deltaSeconds > 0 ? 'slower' : 'unchanged',
+    }];
+  }));
+}

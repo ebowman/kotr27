@@ -82,6 +82,9 @@
     #sensitivity select { width:100% }
     #sensitivity-readout { padding:.7rem; border-left:4px solid #8a3c22; background:#fffdf6; overflow-wrap:anywhere }
     #sensitivity-readout p { margin:.25rem 0 }
+    #sensitivity-comparisons { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,15rem),1fr)); gap:.8rem }
+    #sensitivity-comparisons section { border-top:1px solid #82978a; padding-top:.5rem; min-width:0 }
+    #sensitivity-comparisons h4 { margin:.2rem 0 .5rem }
     #sensitivity-legend { height:1rem; background:linear-gradient(to right,hsl(190 55% 82%),hsl(190 55% 30%)); border:1px solid #163c34 }
     #sensitivity-scale { display:flex; justify-content:space-between; gap:1rem }
     @media (max-width:400px) {
@@ -146,7 +149,8 @@
   <details id="sensitivity">
     <summary>Explore FTP, rider weight &amp; climb time</summary>
     <h2>One climb, different power and weight</h2>
-    <p>Illustrative moving times on the provisional Semonzo ascent, not peak power or an event prediction.
+    <p>Illustrative steady moving times on the provisional Semonzo ascent, not peak capacity,
+      a guaranteed time, an event prediction or a prescription.
       Bike and kit stay fixed at <strong>12 kg</strong>, separate from rider weight.
       Still air, rolling resistance, drag and drivetrain assumptions stay fixed; no stops.</p>
     <label for="sensitivity-effort">Sensitivity sustained effort (% of FTP, independent of ride-clock pace and stops)</label>
@@ -181,7 +185,20 @@
         <p id="sensitivity-selection"></p>
         <p>Modeled moving minutes: <data id="sensitivity-minutes"></data></p>
         <p>Sustained power: <data id="sensitivity-watts"></data> W</p>
+        <h3>Isolating the changes</h3>
+        <div id="sensitivity-comparisons"></div>
       </div>
+      <p>All four scenarios hold the route, effort fraction, 12 kg bike/kit and physics constants fixed.
+        Negative changes mean faster; positive mean slower. Changes use unrounded times;
+        a nonzero change that would round to zero is shown with magnitude &lt;0.01 instead.
+        The combined scenario is evaluated independently, not by adding the isolated changes.
+        Selection never changes your baseline inputs; Select baseline resets the selection.</p>
+      <p>FTP W/kg is FTP divided by rider weight in kg, even when displaying lb.
+        This explanatory ratio excludes bike/kit: modeled gravity uses total system mass,
+        and the model also includes rolling resistance and aerodynamic drag losses.
+        Effects depend on this route, the baseline and the size of each change;
+        neither weight nor FTP universally matters more. These are neutral comparisons,
+        not weight-loss or training advice.</p>
       <p>Readouts evaluate the selected physical point exactly, without mesh interpolation.
         Decimal detail describes the calculation, not predictive precision. Entries stay on this page.</p>
     </div>

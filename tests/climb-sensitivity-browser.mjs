@@ -6,6 +6,7 @@ import { readFile, readdir } from 'node:fs/promises';
 import { extname } from 'node:path';
 import { browser, until } from './browser.mjs';
 import { evaluateClimbSensitivityPoint } from '../js/climb-sensitivity.mjs';
+import { estimateAscent } from '../js/ascent-estimator.mjs';
 
 const root = new URL('../', import.meta.url);
 const profile = JSON.parse(await readFile(new URL('assets/semonzo-chapters.v1.json', root)));
@@ -87,6 +88,48 @@ for (const width of [375,1200]) test(`${width}px sensitivity modes, exact points
     assert.equal(p.targetW,expected.targetW);
     assert.ok(Math.abs(p.movingMinutes * 60 - expected.movingSeconds) < 1e-8);
     assert.equal(await js(`s('minutes').textContent`),String(expected.movingSeconds/60));
+    const { scenarios, unit } = await js(`({
+      unit:document.getElementById('unit').value,
+      scenarios:[...s('comparisons').children].map(card => ({
+        name:card.dataset.scenario, text:card.textContent,
+        fields:Object.fromEntries([...card.querySelectorAll('data')].map(d =>
+          [d.dataset.field, {value:Number(d.value), text:d.textContent}]))
+      }))
+    })`);
+    assert.deepEqual(scenarios.map(s => s.name), ['baseline','weight','ftp','combined']);
+    const b = scenarios[0].fields;
+    const pairs = [[b.riderKg.value,b.ftpW.value], [p.riderKg,b.ftpW.value],
+      [b.riderKg.value,p.ftpW], [p.riderKg,p.ftpW]];
+    const sign = v => v === 0 ? '0.00' :
+      `${v < 0 ? '-' : '+'}${Math.abs(v).toFixed(2) === '0.00' ? '<0.01' : Math.abs(v).toFixed(2)}`;
+    for (const [i, scenario] of scenarios.entries()) {
+      const f = scenario.fields;
+      assert.deepEqual([f.riderKg.value,f.ftpW.value],pairs[i]);
+      const direct = estimateAscent(profile, {
+        riderKg:f.riderKg.value,ftpW:f.ftpW.value,bikeKitKg:12,
+        slowerFraction:.6,fasterFraction:fraction,
+      });
+      const seconds = direct.total.faster.movingSeconds;
+      assert.equal(f.movingMinutes.value,seconds/60);
+      assert.equal(f.movingMinutes.text,(seconds/60).toFixed(2));
+      assert.equal(f.targetW.value,direct.assumptions.fasterTargetW);
+      assert.equal(f.targetW.text,String(f.targetW.value));
+      assert.equal(f.ftpW.text,String(f.ftpW.value));
+      assert.equal(f.riderKg.text,String(unit === 'lb' ? f.riderKg.value/.45359237 : f.riderKg.value));
+      assert.ok(scenario.text.includes(` ${unit} + 12 kg kit`));
+      assert.equal(f.riderWattsPerKg.value,f.ftpW.value/f.riderKg.value);
+      assert.equal(f.riderWattsPerKg.text,f.riderWattsPerKg.value.toFixed(3));
+      const baselineSeconds = estimateAscent(profile, {
+        riderKg:b.riderKg.value,ftpW:b.ftpW.value,bikeKitKg:12,
+        slowerFraction:.6,fasterFraction:fraction,
+      }).total.faster.movingSeconds;
+      const delta = seconds - baselineSeconds;
+      assert.equal(f.deltaMinutes.value,delta/60);
+      assert.equal(f.deltaPercent.value,delta/baselineSeconds*100);
+      assert.equal(f.deltaMinutes.text,sign(f.deltaMinutes.value));
+      assert.equal(f.deltaPercent.text,sign(f.deltaPercent.value));
+      assert.ok(scenario.text.endsWith(delta < 0 ? 'faster' : delta > 0 ? 'slower' : 'unchanged'));
+    }
     return p;
   };
   const counts = () => js('[window.__builds,window.__physics]');
@@ -111,7 +154,8 @@ for (const width of [375,1200]) test(`${width}px sensitivity modes, exact points
   };
   const noStale = async () => assert.ok(await js(`s('content').hidden && !s('chart').children.length &&
     !s('selection').textContent && !s('minutes').textContent && !s('minutes').hasAttribute('value') &&
-    !s('watts').textContent && !s('baseline').textContent && !s('ftp').options.length`));
+    !s('watts').textContent && !s('baseline').textContent && !s('ftp').options.length &&
+    !s('comparisons').children.length`));
   const baseline = await exact();
   assert.deepEqual([baseline.ftpW,baseline.riderKg,baseline.targetW],[220,75,176]);
   assert.match(await js(`s('baseline').textContent`), /fictional baseline.*assumed.*80%/);
@@ -119,6 +163,7 @@ for (const width of [375,1200]) test(`${width}px sensitivity modes, exact points
   assert.equal(await js('window.__builds'),1);
   assert.equal(requests.filter(u => u.endsWith('.gpx')).length,1,'reuse the one runtime profile fetch');
   const initialCounts = await counts();
+  const baselineInputs = await js(`[mass.value,ftp.value,s('baseline').textContent]`);
   const scale = await js(`s('scale').textContent`);
   await js(`s('chart').focus()`);
   await key('ArrowRight','ArrowRight',39);
@@ -131,6 +176,9 @@ for (const width of [375,1200]) test(`${width}px sensitivity modes, exact points
   assert.equal(await js(`s('chart').querySelectorAll('[tabindex]').length`),0);
   await key('Home','Home',36);
   assert.deepEqual(await exact(),baseline);
+  await key('ArrowUp','ArrowUp',38);
+  await exact(); // weight only
+  await key('Home','Home',36);
   await key('ArrowLeft','ArrowLeft',37);
   await key('ArrowDown','ArrowDown',40);
   const selected = await exact();
@@ -163,7 +211,9 @@ for (const width of [375,1200]) test(`${width}px sensitivity modes, exact points
   assert.equal(await js(`s('ftp').value`),'0');
   await exact();
   assert.deepEqual(await counts(),initialCounts,'selection, projection and mode never rebuild physics');
-  await js(`s('home').click()`);
+  assert.deepEqual(await js(`[mass.value,ftp.value,s('baseline').textContent]`),baselineInputs);
+  await js(`s('home').focus()`);
+  await key(' ','Space',32);
   assert.deepEqual(await exact(),baseline);
 
   // Unit-only changes preserve the unrounded original kg/lb entry, selection,
@@ -171,6 +221,8 @@ for (const width of [375,1200]) test(`${width}px sensitivity modes, exact points
   await set('mass','81.257123456','input'); await ready();
   assert.match(await js(`s('baseline').textContent`), /Partly assumed/);
   await set('ftp','243.125','input'); await ready();
+  await set('sensitivity-mass','0');
+  await set('sensitivity-ftp','8');
   const personal = await exact(), beforeUnits = await counts();
   assert.match(await js(`s('baseline').textContent`), /Your weight and FTP/);
   await set('unit','lb'); await ready();
@@ -193,6 +245,9 @@ for (const width of [375,1200]) test(`${width}px sensitivity modes, exact points
   const beforeEffortClock = await clock();
   for (const percent of [70,90]) {
     await set('sensitivity-effort',percent,'input'); await ready();
+    await exact(percent/100);
+    await set('sensitivity-mass','0');
+    await set('sensitivity-ftp','8');
     await exact(percent/100);
     assert.equal(await js(`s('effort-label').textContent`),`${percent}%`);
     assert.deepEqual(await clock(),beforeEffortClock);
@@ -224,7 +279,17 @@ for (const width of [375,1200]) test(`${width}px sensitivity modes, exact points
     assert.deepEqual(axes.map(a => [a[0],a.at(-1)]),massValue === 20 ? [[20,40],[30,130]] : [[230,250],[550,650]]);
     assert.equal((await exact(.9)).riderKg,massValue);
     assert.equal((await exact(.9)).ftpW,ftpValue);
+    await set('sensitivity-mass',massValue === 20 ? '8' : '0');
+    await set('sensitivity-ftp',massValue === 20 ? '8' : '0');
+    await exact(.9);
   }
+  await set('mass','20.000001','input');
+  await set('ftp','220','input'); await ready();
+  await set('sensitivity-mass','0');
+  await exact(.9);
+  assert.equal(await js(`s('comparisons').querySelector('[data-scenario="weight"] [data-field="deltaMinutes"]').textContent`),'-<0.01');
+  assert.ok(await js(`s('comparisons').querySelector('[data-scenario="weight"]').textContent.endsWith('faster')`));
+  assert.ok(await js(`document.documentElement.scrollWidth <= innerWidth`));
   for (const [id,value] of [['mass','19.9'],['ftp','651'],['mass','oops']]) {
     await js('clear.click()'); await ready();
     await set(id,value,'input'); await noStale();
@@ -256,6 +321,10 @@ for (const width of [375,1200]) test(`${width}px sensitivity modes, exact points
   assert.ok(nodes.some(n => n.role.value === 'combobox' && n.name.value === 'Selected FTP (W)'));
   assert.ok(nodes.some(n => n.role.value === 'combobox' && /Selected rider weight/.test(n.name.value)));
   assert.ok(nodes.some(n => n.role.value === 'group' && n.name.value === 'Select a climb sensitivity point'));
+  assert.ok(nodes.some(n => n.role.value === 'button' && n.name.value === 'Select baseline'));
+  assert.ok(nodes.some(n => n.role.value === 'heading' && n.name.value === 'Selected weight · baseline FTP'));
+  assert.match(await js(`sensitivity.textContent`), /system mass.*rolling resistance and aerodynamic drag/s);
+  assert.match(await js(`sensitivity.textContent`), /not peak capacity.*prescription/s);
   assert.ok(!requests.some(u => u.startsWith('https:')));
   assert.deepEqual(await js('[localStorage.length,sessionStorage.length,document.cookie]'),[0,0,'']);
   t.diagnostic(`${width}px: exact points, coalesced physics, both modes, keyboard/click/touch, no overflow or animation`);
@@ -264,7 +333,8 @@ for (const width of [375,1200]) test(`${width}px sensitivity modes, exact points
   await cmd('Page.navigate', {url});
   await until(() => js(`document.getElementById('sensitivity-error')?.textContent.includes('profile is unavailable')`));
   assert.ok(await js(`document.getElementById('sensitivity-content').hidden &&
-    !document.getElementById('sensitivity-chart').children.length && !document.getElementById('sensitivity-minutes').textContent`));
+    !document.getElementById('sensitivity-chart').children.length && !document.getElementById('sensitivity-minutes').textContent &&
+    !document.getElementById('sensitivity-comparisons').children.length`));
   faults.profile = false; faults.panel = true;
   await cmd('Page.navigate', {url});
   await until(() => js(`document.querySelector('#controls')?.disabled === false`));

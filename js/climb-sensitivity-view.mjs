@@ -1,8 +1,15 @@
-import { buildClimbSensitivity } from './climb-sensitivity.mjs';
+import { buildClimbSensitivity, compareClimbSensitivity } from './climb-sensitivity.mjs';
 
 const el = name => document.getElementById(`sensitivity-${name}`);
 const kgPerLb = 0.45359237;
 const short = n => String(Number(n.toFixed(6)));
+
+// Never call a nonzero change "unchanged", or round it into a signed zero.
+export function formatSensitivityChange(value) {
+  if (value === 0) return '0.00';
+  const rounded = Math.abs(value).toFixed(2);
+  return `${value < 0 ? '-' : '+'}${rounded === '0.00' ? '<0.01' : rounded}`;
+}
 
 // Nine uniform samples plus the untouched baseline: <=10 per axis. Clip only
 // the display extent, never a rider input. Half-ranges remain positive at bounds.
@@ -18,7 +25,7 @@ function axis(center, radius, min, max) {
 export function sensitivityUnavailable(message = 'The sensitivity profile or panel is unavailable. No sensitivity estimate is shown.') {
   el('content').hidden = true;
   el('chart').replaceChildren();
-  for (const name of ['baseline', 'limits', 'scale', 'selection', 'minutes', 'watts', 'ftp', 'mass']) {
+  for (const name of ['baseline', 'limits', 'scale', 'selection', 'minutes', 'watts', 'ftp', 'mass', 'comparisons']) {
     el(name).replaceChildren();
     el(name).removeAttribute('value');
   }
@@ -55,6 +62,35 @@ export function installSensitivity(profile) {
       el(name).value = String(value);
       el(name).textContent = String(value);
     }
+    const comparisons = compareClimbSensitivity(profile, data, { riderKg:p.riderKg, ftpW:p.ftpW });
+    el('comparisons').replaceChildren(...Object.entries(comparisons).map(([name, result]) => {
+      const card = document.createElement('section');
+      card.dataset.scenario = name;
+      const heading = document.createElement('h4');
+      heading.textContent = {
+        baseline:'Baseline', weight:'Selected weight · baseline FTP',
+        ftp:'Selected FTP · baseline weight', combined:'Both selected values',
+      }[name];
+      card.append(heading);
+      function line(label, field, value, display, suffix = '') {
+        const row = document.createElement('p'), datum = document.createElement('data');
+        datum.dataset.field = field;
+        datum.value = String(value);
+        datum.textContent = display;
+        row.append(label, datum, suffix);
+        card.append(row);
+      }
+      line('Rider: ', 'riderKg', result.riderKg, String(mass(result.riderKg)), ` ${unit} + 12 kg kit`);
+      line('FTP: ', 'ftpW', result.ftpW, String(result.ftpW), ' W');
+      line('FTP / rider kg: ', 'riderWattsPerKg', result.riderWattsPerKg, result.riderWattsPerKg.toFixed(3), ' W/kg');
+      line('Sustained power: ', 'targetW', result.targetW, String(result.targetW), ' W');
+      line('Moving time: ', 'movingMinutes', result.movingSeconds / 60, (result.movingSeconds / 60).toFixed(2), ' min');
+      line('Change from baseline: ', 'deltaMinutes', result.deltaMinutes,
+        formatSensitivityChange(result.deltaMinutes), ' min');
+      line('Relative change: ', 'deltaPercent', result.deltaPercent,
+        formatSensitivityChange(result.deltaPercent), `% · ${result.direction}`);
+      return card;
+    }));
   }
   function draw() {
     const xs = data.axes.ftpW, ys = data.axes.riderKg;
