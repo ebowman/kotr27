@@ -95,16 +95,20 @@ function installClock(profile) {
   return (next, reset) => { state = next; if (reset) { minute = 60; selected = -1; } refresh(); };
 }
 
-function install(profile) {
+function install(profile, sensitivity) {
   const compare = installComparison(profile);
   const clock = installClock(profile);
-  let originalMass, enteredUnit;
+  let originalMass, enteredUnit, previousKey, previousState;
   function render(resetClock = false) {
     let state;
     try {
-      state = riderScenario(profile, {
+      const key = JSON.stringify([originalMass, enteredUnit, ftp.value, effort.value]);
+      // A display-unit switch retains the original entry and physical estimate.
+      state = key === previousKey ? previousState : riderScenario(profile, {
         mass: originalMass, enteredUnit, ftp: ftp.value, effort: effort.value,
       });
+      previousKey = key;
+      previousState = state;
       renderChapters(profile, state);
       compare(state);
       clock(state, resetClock === true);
@@ -112,9 +116,11 @@ function install(profile) {
       renderChapters(profile, {});
       compare({});
       clock({});
+      sensitivity({}, unit.value);
       result.textContent = 'The chapter profile or scenario is unavailable. No estimate can be shown.';
       return;
     }
+    sensitivity(state, unit.value, resetClock === true);
     for (const input of [mass, ftp]) {
       const error = state.errors?.[input.id] || '';
       input.setAttribute('aria-invalid', String(!!error));
@@ -161,9 +167,19 @@ function install(profile) {
 }
 
 try {
-  install(await loadProfile());
+  const profile = await loadProfile();
+  let sensitivity = () => {};
+  // A panel import/install failure must not disable the existing ride clock.
+  try {
+    const { installSensitivity } = await import('./climb-sensitivity-view.mjs');
+    sensitivity = installSensitivity(profile);
+  } catch {
+    el('sensitivity-error').textContent = 'The sensitivity panel is unavailable. No sensitivity estimate is shown.';
+  }
+  install(profile, sensitivity);
 } catch {
   result.textContent = 'The example profile is unavailable. No estimate can be shown.';
   el('clock-error').hidden = false;
   el('clock-error').textContent = result.textContent;
+  el('sensitivity-error').textContent = 'The sensitivity profile is unavailable. No sensitivity estimate is shown.';
 }

@@ -72,6 +72,18 @@
     #plan-options { margin:0 }
     #chapter-summary { margin:.65rem 0 0 }
     #result:empty { display:none }
+    #sensitivity { margin-top:1.2rem }
+    #sensitivity svg { display:block; width:100%; height:auto; overflow:visible }
+    #sensitivity-chart { border:1px solid #82978a; border-radius:.4rem; background:#fffdf6 }
+    #sensitivity-chart:focus-visible { outline:3px solid #8a3c22; outline-offset:3px }
+    #sensitivity-chart [data-i] { cursor:pointer }
+    #sensitivity-chart text { fill:#163c34; font:18px system-ui,sans-serif }
+    #sensitivity .row > label { min-width:0; max-width:100% }
+    #sensitivity select { width:100% }
+    #sensitivity-readout { padding:.7rem; border-left:4px solid #8a3c22; background:#fffdf6; overflow-wrap:anywhere }
+    #sensitivity-readout p { margin:.25rem 0 }
+    #sensitivity-legend { height:1rem; background:linear-gradient(to right,hsl(190 55% 82%),hsl(190 55% 30%)); border:1px solid #163c34 }
+    #sensitivity-scale { display:flex; justify-content:space-between; gap:1rem }
     @media (max-width:400px) {
       main { padding-top:.5rem }
       header { font-size:.88rem }
@@ -131,6 +143,49 @@
     <button type="button" id="clear">Clear entries and return to example</button>
   </fieldset>
   <p role="status" id="result" aria-atomic="true"></p></details>
+  <details id="sensitivity">
+    <summary>Explore FTP, rider weight &amp; climb time</summary>
+    <h2>One climb, different power and weight</h2>
+    <p>Illustrative moving times on the provisional Semonzo ascent, not peak power or an event prediction.
+      Bike and kit stay fixed at <strong>12 kg</strong>, separate from rider weight.
+      Still air, rolling resistance, drag and drivetrain assumptions stay fixed; no stops.</p>
+    <label for="sensitivity-effort">Sensitivity sustained effort (% of FTP, independent of ride-clock pace and stops)</label>
+    <input id="sensitivity-effort" type="range" min="70" max="90" step="1" value="80">
+    <output id="sensitivity-effort-label" for="sensitivity-effort">80%</output>
+    <p>Display range: baseline ±100 W FTP and ±20 kg rider weight, clipped to the model’s
+      30–650 W and 20–250 kg limits. Nine evenly spaced samples plus the exact baseline
+      on each axis (at most ten); even a boundary baseline has a nonzero range.</p>
+    <p id="sensitivity-error" role="status">Loading sensitivity panel…</p>
+    <div id="sensitivity-content" hidden>
+      <p id="sensitivity-baseline"></p>
+      <div class="row">
+        <label>Chart mode <select id="sensitivity-mode"><option value="surface">3D surface</option><option value="heatmap">2D heatmap</option></select></label>
+        <label>Surface view <select id="sensitivity-view"><option value="ftp">FTP foreground</option><option value="weight">Weight foreground</option></select></label>
+        <button id="sensitivity-home" type="button">Select baseline</button>
+      </div>
+      <p id="sensitivity-limits"></p>
+      <p id="sensitivity-help">Tap or click a point. With the chart focused, Left/Right changes FTP;
+        Up/Down increases/decreases rider weight; Home selects the baseline. Or use the two numeric selectors below.
+        A ring marks selection; a diamond marks baseline. Surface faces are drawn far-to-near;
+        higher Z means more moving minutes. Presets look from the low-FTP, low-weight corner.</p>
+      <div id="sensitivity-chart" role="group" tabindex="0" aria-label="Select a climb sensitivity point"
+        aria-describedby="sensitivity-help sensitivity-selection"></div>
+      <div id="sensitivity-legend" aria-hidden="true"></div>
+      <div id="sensitivity-scale"></div>
+      <p>Color: modeled moving minutes, light = faster, dark = slower. Both views use this same scale.</p>
+      <div class="row">
+        <label for="sensitivity-ftp">Selected FTP (W)<select id="sensitivity-ftp"></select></label>
+        <label for="sensitivity-mass"><span id="sensitivity-mass-label">Selected rider weight (kg)</span><select id="sensitivity-mass"></select></label>
+      </div>
+      <div id="sensitivity-readout" role="status" aria-atomic="true">
+        <p id="sensitivity-selection"></p>
+        <p>Modeled moving minutes: <data id="sensitivity-minutes"></data></p>
+        <p>Sustained power: <data id="sensitivity-watts"></data> W</p>
+      </div>
+      <p>Readouts evaluate the selected physical point exactly, without mesh interpolation.
+        Decimal detail describes the calculation, not predictive precision. Entries stay on this page.</p>
+    </div>
+  </details>
   <details id="deep-dive"><summary>Where do the minutes go?</summary>
   <section id="chapter-game" hidden aria-label="Chapter guessing and axis reveal">
     <figure>
