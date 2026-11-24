@@ -5,3 +5,6 @@
 .beads-credential-key
 .beads/proxieddb/
 *.gate.lock*
+
+# Private original route exports and intake evidence; never publish.
+/.private/route-intake/
