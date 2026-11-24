@@ -78,8 +78,10 @@ function validateProfile(data, revision, points) {
  * One closed producer contract for release tooling and runtime analysis.
  * All metadata/references are checked. selectedRouteId limits only asset reads
  * and payload verification; omitted means verify every route for publication.
+ * metadataOnly is for initial planner discovery: it does NOT verify payloads.
+ * Consumers still verify each analysis/download before using/offering bytes.
  */
-export async function validateRoutePack(pack, {read, previous, selectedRouteId} = {}) {
+export async function validateRoutePack(pack, {read, previous, selectedRouteId, metadataOnly = false} = {}) {
   keys(pack, ['schemaVersion','producer','catalog','routes','changeReport'], 'manifest');
   need(pack.schemaVersion === 1 && pack.producer === 'route-import-v1', 'unsupported producer');
   createCatalog(pack.catalog, {previous:previous?.catalog});
@@ -143,7 +145,7 @@ export async function validateRoutePack(pack, {read, previous, selectedRouteId} 
     reference(revision.profile,'profile-');
     totals(summary.computed);
     need(Number.isInteger(summary.pointCount) && finite(summary.pointCount,2,100000), 'invalid point count');
-    if (selectedRouteId === undefined || selectedRouteId === route.id) {
+    if (!metadataOnly && (selectedRouteId === undefined || selectedRouteId === route.id)) {
       const points = readPackGeometry(await asset(revision.geometry));
       const data = JSON.parse(decode(await asset(revision.profile)));
       validateProfile(data,revision,points);

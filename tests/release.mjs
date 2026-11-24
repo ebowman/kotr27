@@ -100,7 +100,8 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
     'assets/terrain.js','assets/semonzo.gpx','assets/site.css','js/config.js',...['ascent-estimator','chapter-reveal',
       'climb-sensitivity','climb-sensitivity-view','plan-comparison','ride-clock',
       'rider-controls','rider-scenario','rider-preferences','preference-storage','preferences-view',
-      'semonzo-profile','route-analysis','route-analysis-loader','route-pack-contract','route-catalog','example-catalog','route-state','site-shell'].map(n=>`js/${n}.mjs`)];
+      'semonzo-profile','route-analysis','route-analysis-loader','route-pack-contract','route-catalog','example-catalog','route-state','site-shell',
+      'itinerary','trip-planner','trip-planner-view'].map(n=>`js/${n}.mjs`)];
   expected.push(...routeFiles.map(n=>n.replace(/\.[0-9a-f]{24}\./,'.')));
   assert.deepEqual(names.map(n=>n.replace(/\.[0-9a-f]{24}\./,'.')).sort(),expected.sort());
   for (const n of names.filter(n=>n.includes('/'))) {
@@ -160,7 +161,7 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   await edit('js/route-catalog.mjs', 'export function createCatalog', '/* release fixture */ export function createCatalog');
   await build(src,validatorRelease);
   const beforeValidator = await files(previous), afterValidator = await files(validatorRelease);
-  const catalogDependents = /\/(?:route-catalog|route-pack-contract|route-analysis-loader|example-catalog|semonzo-profile|rider-controls|flyover|site-shell)\./;
+  const catalogDependents = /\/(?:route-catalog|route-pack-contract|route-analysis-loader|trip-planner|trip-planner-view|example-catalog|semonzo-profile|rider-controls|flyover|site-shell)\./;
   assert.deepEqual(beforeValidator.filter(n=>!afterValidator.includes(n)).sort(),
     beforeValidator.filter(n=>catalogDependents.test(n)).sort());
   for (const entry of ['index.html','explore.html'])
@@ -170,7 +171,7 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   let shellPrevious = validatorRelease;
   for (const [file, before, after, affected] of [
     ['js/route-analysis.mjs', 'export function analyzeRoute', '/* release fixture */ export function analyzeRoute',
-      /\/(?:route-analysis|route-analysis-loader|semonzo-profile|site-shell|rider-controls|flyover)\./],
+      /\/(?:route-analysis|route-analysis-loader|trip-planner|trip-planner-view|semonzo-profile|site-shell|rider-controls|flyover)\./],
     ['js/route-state.mjs', 'export function readSelection', '/* release fixture */ export function readSelection',
       /\/(?:route-state|site-shell|rider-controls)\./],
     ['js/rider-scenario.mjs', 'export function validateRider', '/* release fixture */ export function validateRider',
@@ -193,6 +194,8 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
     shellPrevious = next;
   }
   let live = a, fail = false, probes = 0, plainNavigations = 0, replacements = 0;
+  let replacementGate = null, gatedFreshnessRequests = 0;
+  t.after(() => replacementGate?.resolve());
   const legacyRequests=[];
   const allowed = new Set([...names, ...bNames].filter(n => extname(n)));
   const types = {'.html':'text/html','.js':'text/javascript','.mjs':'text/javascript','.gpx':'application/xml',
@@ -207,6 +210,14 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
       if (req.headers['sec-fetch-mode'] !== 'navigate') {
         probes++;
         if (fail) return res.destroy();
+        // This fixture owns the freshness response. Do not let its navigation
+        // invalidate an ID that our asynchronous Fetch handler is continuing.
+        // The separate lifecycle regression demonstrates both the obsolete-ID
+        // failure and the completion-before-navigation positive control.
+        if (replacementGate) {
+          gatedFreshnessRequests++;
+          await replacementGate.promise;
+        }
       } else if (url.search) replacements++;
       else plainNavigations++;
     }
@@ -219,6 +230,7 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   t.after(() => { server.closeAllConnections(); server.close(); });
   const base = `http://127.0.0.1:${server.address().port}`;
   const requests = [], interceptionErrors = [];
+  const continuations = new Set();
   // Keep bounded lifecycle evidence for the intermittent invalid-ID failure.
   // No retries or ignored protocol errors: the final assertion stays strict.
   const lifecycle = [];
@@ -232,7 +244,7 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
     if (m.method === 'Fetch.requestPaused') {
       const {requestId,request} = m.params;
       const local = new URL(request.url).origin === base;
-      send(local ? 'Fetch.continueRequest' : 'Fetch.failRequest',
+      const continuation = send(local ? 'Fetch.continueRequest' : 'Fetch.failRequest',
         {requestId,...(!local && {errorReason:'BlockedByClient'})})
         .catch(error=>{
           interceptionErrors.push(error.message);
@@ -240,22 +252,48 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
             interceptionFailure:{requestId, url:request.url, networkId:m.params.networkId, error:error.message},
             lifecycle,
           }));
-        });
+        }).finally(() => continuations.delete(continuation));
+      continuations.add(continuation);
     }
   });
   await cmd('Network.enable');
   await cmd('Fetch.enable', {patterns:[{urlPattern:'http://*'},{urlPattern:'https://*'}]});
+  const plannerIdle = async (required = false) => {
+    await until(() => js(`(() => {
+      const shell=document.querySelector('#site-shell'), planner=document.querySelector('#trip-planner');
+      return !shell ? ${!required} : shell.dataset.ready === 'true' && (!planner || planner.dataset.ready === 'true');
+    })()`));
+    await until(() => continuations.size === 0);
+  };
   const visit = async (offline = false) => {
+    await plannerIdle();
+    if (live === b && replacements === 0 && !offline) replacementGate = Promise.withResolvers();
     await cmd('Page.navigate', {url:base+'/away'});
     await until(() => js(`!!document.querySelector('a[href="/kotr27/"]')`));
     if (offline) await cmd('Network.emulateNetworkConditions', {
       offline:true, latency:0, downloadThroughput:0, uploadThroughput:0
     });
     await js(`document.querySelector('a').click()`);
+    if (replacementGate) {
+      // The old HTML really executes and loads its planner while revalidation
+      // is held. Only once its work has completed do we permit actual entry
+      // freshness replacement, rather than racing DevTools continuations.
+      await plannerIdle(true);
+      await until(() => gatedFreshnessRequests === 1);
+      assert.equal(await js(`document.querySelector('meta[name="kotr-release"]').content`),indexMarkers.get(a),
+        'the cached old release really ran before its freshness replacement');
+      assert.equal(await js(`document.querySelector('#trip-planner')?.dataset.ready`),'true',
+        'complete old planner requests before allowing fixture-owned replacement');
+      assert.equal(continuations.size,0,'no unresolved interception command crosses the gate');
+      assert.equal(replacements,0,'freshness navigation has not happened yet');
+      replacementGate.resolve();
+      replacementGate = null;
+    }
     // Let entry freshness finish replacing the shell before opting in. The old
     // default flyover delayed readiness; the lightweight shell is now earlier.
     await until(() => js(`document.querySelector('#site-shell')?.dataset.ready === 'true' &&
       document.querySelector('meta[name="kotr-release"]')?.content === '${indexMarkers.get(live)}'`));
+    await plannerIdle(true);
     await js(`document.querySelector('#site-content a[href*="view=flyover"]').click()`);
     await until(() => js(`document.querySelector('#deck')?.hidden === false`));
   };
@@ -264,8 +302,10 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
     return js('stats.textContent');
   };
   const explore = async () => {
+    await plannerIdle(true);
     await js(`document.querySelector('[data-site-clock]').click()`);
     await until(()=>js(`document.querySelector('#controls')?.disabled===false`));
+    await plannerIdle(true);
     return js(`document.querySelector('script[type=module]').src`);
   };
   await visit(); await until(() => probes === 1);
@@ -351,7 +391,9 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   assert.deepEqual(requests.slice(explorerRequests),[],'panel interaction makes no network requests');
   assert.ok(requests.some(u=>/\/climb-sensitivity-view\.[a-f0-9]{24}\.mjs$/.test(u)));
   assert.ok(requests.some(u=>/\/climb-sensitivity\.[a-f0-9]{24}\.mjs$/.test(u)));
-  assert.ok(!requests.some(u=>u.endsWith('.json')));
+  assert.ok(requests.filter(u=>u.endsWith('.json')).every(u =>
+    routeFiles.some(file => new URL(u).pathname.endsWith('/'+file))),
+  'only the approved planner graph may request JSON; legacy example JSON remains excluded');
   assert.deepEqual(await js('[localStorage.length,sessionStorage.length,document.cookie]'),[0,0,'']);
   // Only after checking the legacy example's strict no-JSON behavior, explicitly
   // load organizer data. Exercise the packaged producer validator in a browser,
@@ -409,6 +451,7 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   assert.match(await summit(), /1846 m elevation/);
   assert.equal(plainNavigations, 1, 'return started from cached ordinary HTML');
   assert.equal(replacements, 1);
+  assert.equal(gatedFreshnessRequests,1);
   await explore();
   const bControls = [...bNames].find(n=>n.includes('/rider-controls.'));
   await until(()=>js(`location.pathname.endsWith('/kotr27/explore.html') && document.querySelector('script[type=module]')?.src.endsWith('${bControls}') && document.querySelector('#controls')?.disabled===false`));

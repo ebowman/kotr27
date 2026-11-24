@@ -1,4 +1,5 @@
 import { validateRider } from './rider-scenario.mjs';
+import { validItinerary } from './itinerary.mjs';
 
 // Only this named database belongs to rider/preferences. No origin-wide clear.
 export const preferenceDatabase = 'kotr27-preferences';
@@ -39,7 +40,8 @@ function validateValue(category, value) {
         typeof value.ftp !== 'string' || !['kg','lb'].includes(value.enteredUnit) ||
         validateRider({...value, effort:'slower'}).kind === 'invalid')
       invalidRecord('Corrupt rider values. No personal values were restored.');
-  } else if (!sameKeys(value, ['unit','effort','route']) || !['kg','lb'].includes(value.unit) ||
+  } else if (!(sameKeys(value, ['unit','effort','route']) ||
+      sameKeys(value, ['unit','effort','route','itinerary']) && validItinerary(value.itinerary)) || !['kg','lb'].includes(value.unit) ||
       !['slower','faster'].includes(value.effort) || !validatePreferenceLink(value.route))
     invalidRecord('Corrupt route/UI preferences. No preferences were restored.');
 }

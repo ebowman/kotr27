@@ -63,26 +63,54 @@ async function holdNextStorageOperation(js) {
   }`);
 }
 
-async function fixture(t) {
+async function fixture(t, {beforeRead = async () => {}} = {}) {
   const tmp = await mkdtemp(join(tmpdir(), 'kotr-preferences-'));
-  t.after(() => rm(tmp, {recursive:true, force:true}));
+  const browserCleanup = [], inFlight = new Set(), serverErrors = [];
+  let server, closing, shutdownPhase = 'running';
+  // Node's after hooks run in registration order. A separately registered rm
+  // ran before both Chrome shutdown and asynchronous background asset reads.
+  const close = () => closing ??= (async () => {
+    shutdownPhase = 'browser';
+    for (const cleanup of browserCleanup) await cleanup();
+    shutdownPhase = 'server';
+    if (server?.listening) {
+      const closed = new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+      server.closeAllConnections();
+      await closed;
+    }
+    // Closing a socket does not cancel an async request handler's file reads.
+    shutdownPhase = 'handlers';
+    await Promise.all([...inFlight]);
+    shutdownPhase = 'artifact';
+    await rm(tmp, {recursive:true, force:true});
+    shutdownPhase = 'closed';
+    if (serverErrors.length) throw new AggregateError(serverErrors, 'Preferences fixture request failures');
+  })();
+  t.after(close);
   const out = join(tmp, 'public');
   await build(fileURLToPath(new URL('../', import.meta.url)), out);
   const files = await readdir(out, {recursive:true});
-  const types = {'.html':'text/html', '.mjs':'text/javascript', '.js':'text/javascript', '.css':'text/css', '.gpx':'application/xml'};
+  const types = {'.html':'text/html', '.mjs':'text/javascript', '.js':'text/javascript', '.css':'text/css', '.gpx':'application/xml', '.json':'application/json'};
   const requests = [];
-  const server = createServer(async (req, res) => {
+  const serve = async (req, res) => {
     requests.push({url:req.url, method:req.method});
     const url = new URL(req.url, 'http://localhost'), file = url.pathname.slice('/kotr27/'.length) || 'index.html';
     if (!url.pathname.startsWith('/kotr27/') || !files.includes(file) || !types[extname(file)])
       return res.writeHead(404).end();
+    await beforeRead(file);
     res.writeHead(200, {'Content-Type':types[extname(file)], 'Cache-Control':'no-store'})
       .end(await readFile(join(out, file)));
+  };
+  server = createServer((req, res) => {
+    const work = serve(req, res).catch(error => {
+      serverErrors.push(error);
+      res.destroy();
+    }).finally(() => inFlight.delete(work));
+    inFlight.add(work);
   });
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
-  t.after(() => { server.closeAllConnections(); server.close(); });
   const network = [];
-  const b = await browser(t, m => {
+  const b = await browser({after: cleanup => browserCleanup.push(cleanup)}, m => {
     if (m.method === 'Network.requestWillBeSent') network.push(m.params.request);
   });
   const {cmd, js} = b;
@@ -113,8 +141,38 @@ async function fixture(t) {
       const q=tx.objectStore('settings').get('current'); q.onsuccess=()=>resolve(q.result);
       tx.oncomplete=()=>db.close(); };
   })`);
-  return {...b, evaluate, base, ready, settle, input, consent, stored, network, requests, files};
+  return {...b, evaluate, base, ready, settle, input, consent, stored, network, requests, files,
+    close, out, inFlight, get shutdownPhase() { return shutdownPhase; }};
 }
+
+test('preferences fixture drains an in-flight planner read before removing its artifact', async t => {
+  const gate = Promise.withResolvers();
+  let heldFile;
+  const f = await fixture(t, {beforeRead: async file => {
+    if (!heldFile && /^assets\/route-profile-.*\.json$/.test(file)) {
+      heldFile = file;
+      await gate.promise;
+    }
+  }});
+  try {
+    await f.cmd('Page.navigate', {url:f.base + 'explore.html'});
+    await f.ready(); // Legacy controls do not imply background planner completion.
+    await until(() => heldFile);
+    assert.ok(f.inFlight.size > 0);
+    const closing = f.close();
+    await until(() => f.shutdownPhase === 'handlers');
+    assert.ok(f.inFlight.size > 0, 'socket/browser closure did not cancel the held handler');
+    assert.ok((await readFile(join(f.out, heldFile))).length > 0, 'artifact survives until the read finishes');
+    gate.resolve();
+    await closing;
+    assert.equal(f.inFlight.size, 0);
+    assert.equal(f.shutdownPhase, 'closed');
+    await assert.rejects(readFile(join(f.out, heldFile)), {code:'ENOENT'});
+    t.diagnostic('Chrome exited and server connections closed; held planner handler drained before artifact removal');
+  } finally {
+    gate.resolve();
+  }
+});
 
 test('packaged opt-in preferences: no default persistence/network, reload, shared consumers, revoke, forget and two tabs', async t => {
   const f = await fixture(t), {cmd, js, evaluate, base, ready, settle, input, consent, stored} = f;

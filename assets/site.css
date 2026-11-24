@@ -38,6 +38,15 @@ a { color:inherit; text-underline-offset:.2em }
 #preference-status { border-left:3px solid var(--rust); padding-left:.75rem }
 #preference-route { display:block; padding:.75rem 0; overflow-wrap:anywhere }
 .site-footer { margin-top:2rem; border-top:1px solid var(--line); padding-top:1rem; font-size:.9rem }
+#trip-planner { margin:2rem 0; min-width:0; overflow-wrap:anywhere }
+.trip-day { margin:1.5rem 0; padding:1rem; min-width:0; border:1px solid var(--line) }
+.trip-day legend { max-width:100%; font-weight:700 }
+.trip-day select { width:100% }
+.trip-route { border-top:1px solid var(--line); margin-top:1rem; padding-top:.5rem }
+.trip-route h3 { font:600 1.15rem/1.4 system-ui,sans-serif }
+.trip-change { border-left:4px solid var(--rust); padding:.75rem; background:#fffdf6 }
+#trip-summary { font-weight:700 }
+#trip-itinerary, #trip-download-results { padding-left:1.4rem }
 #legacy-explorer, #climb { margin-top:1.5rem }
 #legacy-explorer h2 { font-size:clamp(1.7rem,4vw,2.4rem) }
 @media (prefers-reduced-motion:reduce) {

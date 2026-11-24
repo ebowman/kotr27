@@ -32,8 +32,11 @@ export function installPreferences(parent, {edit, selection}) {
       telemetry or network requests. Local permission is not publication permission.</p>
     <label><input id="remember-rider" type="checkbox"> Remember on this device: rider values</label>
     <label><input id="remember-preferences" type="checkbox"> Remember on this device: route/UI choices</label>
-    <p>Route/UI choices save the selected public route and revision, display unit and Plan A pace,
+    <label><input id="remember-itinerary" type="checkbox"> Also include my trip itinerary in remembered route/UI choices</label>
+    <p>Route/UI choices save the selected public route and revision, trip itinerary, display unit and Plan A pace,
       separately from weight and FTP. Stored routes are opened explicitly, never substituted for a link.
+      Itinerary choices restore separately from the active route link; changed revisions need acknowledgment.
+      Turning off itinerary remembering revokes route/UI saving too, preventing stale tabs from restoring it.
       Other controls remain memory-only.</p>
     <p>Device storage is not encrypted against other users of this browser profile or a backup.
       Settings expire after 90 days without use, on next open. Browser policy may deny or evict them.
@@ -59,11 +62,14 @@ export function installPreferences(parent, {edit, selection}) {
     };
   }
   el('preference-forget').onclick = () => riderState.forget();
+  el('remember-itinerary').onchange = event => riderState.rememberItinerary(event.target.checked);
   riderState.subscribe(state => {
     for (const category of ['rider','preferences']) {
       el(`remember-${category}`).checked = state.consent[category];
       el(`remember-${category}`).disabled = !state.usable;
     }
+    el('remember-itinerary').checked = state.rememberTrip && state.consent.preferences;
+    el('remember-itinerary').disabled = !state.usable || !state.consent.preferences;
     el('preference-status').textContent = state.status;
     if (!state.usable || state.status.includes('expired after')) details.open = true;
     const {validation:v} = state;

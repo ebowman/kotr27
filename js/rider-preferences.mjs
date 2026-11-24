@@ -1,4 +1,5 @@
 import { displayMass, riderScenario, validateRider } from './rider-scenario.mjs';
+import { validItinerary } from './itinerary.mjs';
 import { decodePreferences, expiredPreference, preferenceCategories, validatePreferenceLink,
   PreferenceConflict, PreferenceRecordError, PreferenceStorageError } from './preference-storage.mjs';
 export { decodePreferences, retentionMs, validatePreferenceLink } from './preference-storage.mjs';
@@ -10,19 +11,21 @@ export function createRiderPreferences({storage, now = Date.now, token = () => c
   announce = () => {}}) {
   let input = blank(), authority = noVersions(), observed = noVersions();
   let rememberedRoute = null, route = './index.html?area=plan&view=briefing';
+  let itinerary = null, rememberTrip = false;
   let usable = true, storageFailed = false, loaded = false, epoch = 0, pendingRemovals = 0;
   let status = 'Memory only. Nothing is saved or sent.', privacyStatus = null, queue = Promise.resolve();
   const listeners = new Set();
   const consent = () => Object.fromEntries(preferenceCategories.map(key => [key, authority[key] !== null]));
   const snapshot = () => ({input:{...input}, validation:validateRider(input), consent:consent(),
-    rememberedRoute, status, usable});
+    rememberedRoute, itinerary:structuredClone(itinerary), rememberTrip, status, usable});
   const emit = reset => { for (const listener of listeners) listener(snapshot(), reset); };
-  function reset() { input = blank(); authority = noVersions(); rememberedRoute = null; }
+  function reset() { input = blank(); authority = noVersions(); rememberedRoute = null; itinerary = null; rememberTrip = false; }
   function failure(error, privacy) {
     if (!(error instanceof PreferenceConflict || error instanceof PreferenceRecordError ||
           error instanceof PreferenceStorageError)) throw error;
     if (error instanceof PreferenceConflict) reset();
     authority = noVersions();
+    rememberTrip = false;
     usable = false;
     storageFailed = !(error instanceof PreferenceConflict);
     status = `${error.message} Memory-only use remains available. ` +
@@ -39,7 +42,8 @@ export function createRiderPreferences({storage, now = Date.now, token = () => c
   }
   const apply = command => storage.apply({...command, now:now()});
   function valueFor(category) {
-    if (category === 'preferences') return {unit:input.unit, effort:input.effort, route};
+    if (category === 'preferences') return {unit:input.unit, effort:input.effort, route,
+      ...(rememberTrip && itinerary !== null && {itinerary:structuredClone(itinerary)})};
     if (validateRider(input).kind === 'invalid') return null;
     const {mass, enteredUnit, ftp} = input;
     return {mass, enteredUnit, ftp};
@@ -65,7 +69,7 @@ export function createRiderPreferences({storage, now = Date.now, token = () => c
     epoch++;
     const generation = epoch;
     for (const category of categories) authority[category] = null;
-    if (categories.includes('preferences')) rememberedRoute = null;
+    if (categories.includes('preferences')) { rememberedRoute = null; rememberTrip = false; }
     const all = type === 'forget';
     if (all) reset();
     pendingRemovals++;
@@ -125,6 +129,8 @@ export function createRiderPreferences({storage, now = Date.now, token = () => c
         const {unit, effort, route:savedRoute} = entry.value;
         Object.assign(input, {unit, effort});
         route = rememberedRoute = savedRoute;
+        itinerary = structuredClone(entry.value.itinerary ?? null);
+        rememberTrip = itinerary !== null;
       }
     }
     await save(preferenceCategories, true);
@@ -155,6 +161,24 @@ export function createRiderPreferences({storage, now = Date.now, token = () => c
       if (!validatePreferenceLink(link)) throw new TypeError('Unsafe preference link');
       route = link;
       return authority.preferences !== null ? serial(() => save(['preferences'])) : queue;
+    },
+    setItinerary(value) {
+      if (!validItinerary(value)) throw TypeError('Invalid itinerary');
+      itinerary = structuredClone(value);
+      emit(false);
+      return rememberTrip && authority.preferences !== null ? serial(() => save(['preferences'])) : queue;
+    },
+    rememberItinerary(enabled) {
+      // Additional explicit scope choice: old route/UI grants alone never
+      // start persisting a newly introduced itinerary.
+      if (!enabled) return remove(['preferences'], 'revoke');
+      if (authority.preferences === null) return queue;
+      rememberTrip = true;
+      if (rememberTrip && itinerary === null) itinerary = {version:1, choices:[]};
+      emit(false);
+      // Scope changes rotate the existing category version too. A stale tab
+      // cannot write an itinerary after this opt-in is revoked.
+      return this.remember('preferences', true);
     },
     async remember(category, enabled) {
       if (!preferenceCategories.includes(category)) throw new TypeError('Unknown consent category');

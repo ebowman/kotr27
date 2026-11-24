@@ -11,11 +11,12 @@ import { browser, until } from './browser.mjs';
 
 for (const width of [320,375,1280]) test(`packaged shell ${width}px: no-map, history, focus, recovery and legacy links`, async t => {
   const tmp = await mkdtemp(join(tmpdir(),'kotr-shell-'));
-  t.after(() => rm(tmp,{recursive:true,force:true}));
+  let tearingDown = false;
+  t.after(() => { tearingDown = true; return rm(tmp,{recursive:true,force:true}); });
   const out = join(tmp,'public');
   await build(fileURLToPath(new URL('../',import.meta.url)),out);
   const files = await readdir(out,{recursive:true});
-  const types = {'.html':'text/html','.mjs':'text/javascript','.js':'text/javascript','.css':'text/css','.gpx':'application/xml'};
+  const types = {'.html':'text/html','.mjs':'text/javascript','.js':'text/javascript','.css':'text/css','.gpx':'application/xml','.json':'application/json'};
   let profileGate = Promise.withResolvers(), profileRequests = 0;
   t.after(() => profileGate.resolve());
   const server = createServer(async (req,res) => {
@@ -28,16 +29,39 @@ for (const width of [320,375,1280]) test(`packaged shell ${width}px: no-map, his
       await profileGate.promise;
     }
     // Never serve provisioned configuration in tests.
-    const bytes = file.startsWith('js/config.') ? 'window.KOTR_CONFIG = {};' : await readFile(join(out,file));
-    res.writeHead(200,{'Content-Type':types[extname(file)],'Cache-Control':'no-store'}).end(bytes);
+    try {
+      const bytes = file.startsWith('js/config.') ? 'window.KOTR_CONFIG = {};' : await readFile(join(out,file));
+      res.writeHead(200,{'Content-Type':types[extname(file)],'Cache-Control':'no-store'}).end(bytes);
+    } catch (error) {
+      // Teardown may remove the artifact while a background planner asset read
+      // is in flight. Still fail real server errors outside that removal.
+      if (!tearingDown || error.code !== 'ENOENT') throw error;
+      res.writeHead(404).end();
+    }
   });
   server.listen(0,'127.0.0.1'); await once(server,'listening');
   t.after(() => { server.closeAllConnections(); server.close(); });
   const base = `http://127.0.0.1:${server.address().port}/kotr27/`;
   const requests = [];
-  const {cmd,js,exceptions} = await browser(t,m => {
+  const lifecycle = [];
+  const b = await browser(t,m => {
     if (m.method === 'Network.requestWillBeSent') requests.push(m.params.request.url);
+    if (/^Page\.(frameNavigated|frameStartedLoading|frameStoppedLoading)$/.test(m.method) ||
+      /^Runtime\.executionContext(sCleared|Created|Destroyed)$/.test(m.method))
+      lifecycle.push({sequence:lifecycle.length + 1,method:m.method,params:m.params});
   });
+  const diagnose = async (method,params,run) => {
+    const sentAfter = lifecycle.length, callsite = new Error('CDP test step').stack;
+    try { return await run(); }
+    catch (error) {
+      t.diagnostic(JSON.stringify({failedCommand:method,params,callsite,sentAfter,lifecycle:lifecycle.slice(-16)}));
+      throw error;
+    }
+  };
+  const cmd = (method,params) => diagnose(method,params,() => b.cmd(method,params));
+  const js = expression => diagnose('Runtime.evaluate',{expression},() => b.js(expression));
+  const {exceptions} = b;
+  await cmd('Page.enable');
   await cmd('Network.enable');
   await cmd('Network.setBlockedURLs',{urls:['https://*']});
   await cmd('Emulation.setDeviceMetricsOverride',{width,height:850,deviceScaleFactor:1,mobile:width<600});
@@ -52,7 +76,7 @@ for (const width of [320,375,1280]) test(`packaged shell ${width}px: no-map, his
   await cmd('Page.navigate',{url:base});
   await until(() => js(`!!document.querySelector('.site-nav a:nth-child(2)')`));
   assert.ok(await js(`climb.hidden && !document.querySelector('#map canvas')`));
-  assert.match(await js('document.body.innerText'),/awaiting verification\/publication approval/i);
+  assert.match(await js('document.body.innerText'),/Loading approved|Approved provisional/i);
   assert.equal(await js(`document.querySelectorAll('h1').length`),1);
   assert.ok(!requests.some(u => /mapbox|terrain|flyover|config/.test(u)));
   assert.ok(await js(`document.documentElement.scrollWidth <= innerWidth`));

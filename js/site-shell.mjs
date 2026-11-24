@@ -2,13 +2,21 @@ import { exampleCatalog, exampleRouteId } from './example-catalog.mjs';
 import { loadProfile } from './semonzo-profile.mjs';
 import { areas, changeSelection, readSelection, selectionLink } from './route-state.mjs';
 import { installPreferences, riderState } from './preferences-view.mjs';
+import { createCatalog } from './route-catalog.mjs';
+import { publicAssetReader, loadPlannerPack } from './trip-planner.mjs';
+import { installTripPlanner } from './trip-planner-view.mjs';
 
 const el = id => document.getElementById(id);
 const labels = {plan:'Plan', explore:'Explore', prepare:'Prepare', 'ride-week':'Ride week'};
-const catalog = exampleCatalog;
+let catalog = exampleCatalog, planner = null, catalogLoading = true;
 const profiles = {};
 let current, flyoverStarted = false, profileLoading = true;
-const resolveLocation = () => readSelection(location.href, catalog, profiles, exampleRouteId, {loading:profileLoading});
+const resolveLocation = () => {
+  const resolved = readSelection(location.href, catalog, profiles, exampleRouteId, {loading:profileLoading});
+  if (catalogLoading && resolved.code === 'missing')
+    return {...resolved, code:'loading', message:'Loading approved route catalog…'};
+  return resolved;
+};
 const listeners = new Set();
 const node = (tag, text, parent) => {
   const element = document.createElement(tag);
@@ -20,9 +28,9 @@ const shell = el('site-shell');
 // All inserted HTML is fixed UI copy. Catalog names and notices use textContent.
 shell.innerHTML = `
   <header class="site-header"><span class="site-brand">KOTR / 2027</span><nav class="site-nav" aria-label="Main navigation"></nav></header>
-  <div class="site-context"><p class="site-label">Route details awaiting verification/publication approval</p>
-    <p id="site-selection">No official routes are published here.</p>
-    <p>Example exploration is available. Event dates, day assignments and logistics are pending; no itinerary is inferred.</p></div>
+  <div class="site-context"><p class="site-label" id="site-catalog-status">Loading approved provisional routes</p>
+    <p id="site-selection"></p>
+    <p>Source D1–D4 labels are not verified calendar assignments. Departures and logistics are pending; no itinerary is inferred. Semonzo remains a separate example.</p></div>
   <h1 id="site-heading" tabindex="-1">Plan your ride</h1>
   <div id="site-notice" role="status" aria-live="polite"></div>
   <div id="site-recovery" class="site-actions"></div>
@@ -32,7 +40,7 @@ shell.innerHTML = `
       <label>Variant<select id="site-variant"></select></label>
       <label>Route<select id="site-route"></select></label>
       <label>Revision<select id="site-revision"></select></label>
-    </div><p>Selection previews a route only. Trip building and downloads are not yet available.</p>
+    </div><p>Selection previews a route only. Build your itinerary explicitly in Plan.</p>
   </details>
   <div id="site-content"></div>
   <footer class="site-footer">Static companion preview · Not for navigation. No account or FTP needed.
@@ -87,6 +95,10 @@ function briefing(parent) {
     'Semonzo → Monte Grappa summit. A provisional ascent study, not an official event route, stage or group assignment. Surface and stops are not verified.'
     : 'This route’s detailed briefing is not available in this release. No example geometry or estimates have been substituted.');
   node('p', `${bundle.revision.provenance.source} Observed ${bundle.revision.provenance.observedOn}.`, section);
+  if (!example) {
+    link(section, 'Plan this route / verified downloads', {area:'plan', view:'briefing'});
+    return;
+  }
   if (example) node('p', 'Distances follow the track’s horizontal great-circle axis; elevation is approximate.', section);
   if (!profile) {
     node('p', profileLoading ? 'Loading selected profile… Navigation remains available.' :
@@ -137,21 +149,21 @@ function render(focus = false, notify = true) {
       const revisions = node('button','View available revisions',recovery);
       revisions.onclick = () => { el('site-route-picker').open = true; el('site-revision').focus(); };
     }
-  } else if (s.revisionId !== bundle.route.currentRevisionId) {
+  } else if (bundle && s.revisionId !== bundle.route.currentRevisionId) {
     link(recovery, 'Use current revision (changes selection)', {revisionId:bundle.route.currentRevisionId});
   }
   const content = el('site-content'); content.replaceChildren();
-  content.setAttribute('aria-busy', String(profileLoading));
+  content.setAttribute('aria-busy', String(profileLoading || catalogLoading));
+  if (planner) planner.root.hidden = s.area !== 'plan';
   const grid = node('div','',content); grid.className = 'site-grid';
   if (s.area === 'plan') {
     const intro = card(grid, 'A clear start, without a map',
-      'Official 2027 routes are awaiting verification and publication approval. Dates, departures, fundraising and organizer briefing links are pending. Nothing here is an announced schedule.');
+      'Build a trip from the approved provisional route pack below. Source names and revisions are preserved; dates, departures, fundraising and organizer logistics remain unverified. Nothing here is an announced schedule.');
     const actions = node('div','',intro); actions.className = 'site-actions';
     if (bundle) {
       link(actions, 'Read selected route briefing', {area:'explore', view:'briefing'});
-      link(actions, 'Open optional example flyover', {area:'explore', view:'flyover'});
+      if (bundle.route.id === exampleRouteId) link(actions, 'Open optional example flyover', {area:'explore', view:'flyover'});
     }
-    card(grid, 'Trip planning · pending', 'Day/variant trip choices, totals, comparison and GPX/FIT downloads are not yet available. Explore the cleared example without committing a ride to your trip.');
   } else if (s.area === 'prepare') {
     const prepare = card(grid, 'Start with the example', 'Practice weeks, packing checklist and chapter-linked training are not yet available. You can already read the example sections and explore optional time assumptions without entering FTP.');
     const actions = node('div','',prepare); actions.className = 'site-actions';
@@ -164,7 +176,8 @@ function render(focus = false, notify = true) {
     const ride = card(grid, 'Briefing · awaiting verification', 'Calendar mapping, departure, contacts, logistics and sourced stops are not published. There is no “today” or “tomorrow” assignment. This is not live tracking or turn-by-turn navigation.');
     const actions = node('div','',ride); actions.className = 'site-actions';
     if (bundle) link(actions, 'Read selected route / section', {area:'explore', view:'briefing'});
-    card(grid, 'Downloads, print, offline & weather · pending', 'No ride card, selected-set download, saved offline pack or weather service is implemented here. Use the existing example briefing while online; do not rely on cached pages for navigation or current event information.');
+    const downloads = card(grid, 'Downloads in Plan; print, offline & weather pending', 'Choose route downloads in Plan. No ride card, saved offline pack or weather service is installed. Do not rely on cached pages for navigation or current event information.');
+    link(downloads, 'Open trip planner', {area:'plan', view:'briefing'});
   }
   if (bundle && s.area === 'explore') {
     const actions = node('div','',content); actions.className = 'site-actions';
@@ -268,12 +281,45 @@ window.addEventListener('pageshow', event => { if (event.persisted) restore(); }
 // Lightweight status/navigation renders before geometry, independently of maps.
 current = resolveLocation();
 render();
-export const shellReady = (async () => {
+const catalogReady = (async () => {
+  try {
+    const pointerLink = document.querySelector('link[rel="alternate"][title="Approved route catalog"]');
+    let pointerPath = 'assets/route-pack.json';
+    if (pointerLink) {
+      const url = new URL(pointerLink.href), base = new URL('./', location.href);
+      if (url.origin !== base.origin || !url.href.startsWith(base.href) || url.search || url.hash)
+        throw Error('Invalid public pack pointer');
+      pointerPath = url.pathname.slice(base.pathname.length);
+    }
+    const read = publicAssetReader(location.href);
+    const loaded = await loadPlannerPack(read, pointerPath);
+    const data = {};
+    for (const key of ['events','days','variants','routes','annotations'])
+      data[key] = [...exampleCatalog.data[key], ...loaded.catalog.data[key]];
+    catalog = createCatalog({schemaVersion:1, ...data});
+    await riderState.ready;
+    planner = installTripPlanner(shell, {...loaded, read, preferences:riderState,
+      openRoute:route => navigateSelection({area:'plan', view:'briefing', routeId:route.id,
+        revisionId:route.currentRevisionId, dayId:null, variantId:null}),
+      preview:route => selectionLink(changeSelection(current.state, {
+        area:'plan', view:'briefing', routeId:route.id, revisionId:route.currentRevisionId,
+        dayId:null, variantId:null,
+      }))});
+    el('site-catalog-status').textContent = 'Approved provisional routes · source labels, not a calendar schedule';
+  } catch {
+    el('site-catalog-status').textContent = 'Approved route pack unavailable or failed verification. Reload to retry; example remains separate.';
+  }
+  catalogLoading = false;
+})();
+const exampleReady = (async () => {
   try {
     const revision = catalog.resolve(exampleRouteId).revision.id;
     profiles[revision] = await loadProfile();
   } catch { /* Named profile-unavailable state is rendered, never a fake total. */ }
   profileLoading = false;
+})();
+export const shellReady = (async () => {
+  await Promise.all([catalogReady, exampleReady]);
   current = resolveLocation();
   render((location.search.length > 0 || location.hash.length > 0) && document.activeElement === document.body);
   shell.dataset.ready = 'true';

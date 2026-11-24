@@ -16,6 +16,9 @@ test('phone-sized cinematic follow, controls and asset fallbacks', {timeout: 600
     'js/ascent-estimator.mjs':'text/javascript', 'js/rider-scenario.mjs':'text/javascript',
     'js/preference-storage.mjs':'text/javascript', 'js/rider-preferences.mjs':'text/javascript',
     'js/preferences-view.mjs':'text/javascript',
+    'js/itinerary.mjs':'text/javascript', 'js/trip-planner.mjs':'text/javascript',
+    'js/trip-planner-view.mjs':'text/javascript', 'js/route-pack-contract.mjs':'text/javascript',
+    'js/route-analysis-loader.mjs':'text/javascript',
     'js/route-state.mjs':'text/javascript', 'js/site-shell.mjs':'text/javascript', 'assets/site.css':'text/css',
     'assets/semonzo.gpx':'application/xml'};
   const omit = new Set(), served = new Set(), legacy = [];
