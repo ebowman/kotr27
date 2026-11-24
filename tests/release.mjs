@@ -3,10 +3,11 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
-import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, extname, join } from 'node:path';
 import { build } from '../tools/build-release.mjs';
+import { readRoutePack } from '../tools/route-pack.mjs';
 import { browser, startupPageTarget, until } from './browser.mjs';
 import { estimateAscent } from '../js/ascent-estimator.mjs';
 
@@ -91,20 +92,26 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
     assert.deepEqual(await readFile(join(b, name)), await readFile(join(repeat, name)));
   }
   const names = await files(a);
+  const routePack = await readRoutePack(await realpath(src));
+  const packPointerName = 'assets/route-pack.' +
+    createHash('sha256').update(routePack.pointerBytes).digest('hex').slice(0,24) + '.json';
+  const routeFiles = [...routePack.files.keys(),packPointerName];
   const expected = ['assets','js','.nojekyll','index.html','explore.html','assets/flyover.js',
     'assets/terrain.js','assets/semonzo.gpx','assets/site.css','js/config.js',...['ascent-estimator','chapter-reveal',
       'climb-sensitivity','climb-sensitivity-view','plan-comparison','ride-clock',
       'rider-controls','rider-scenario','rider-preferences','preference-storage','preferences-view',
       'semonzo-profile','route-catalog','example-catalog','route-state','site-shell'].map(n=>`js/${n}.mjs`)];
+  expected.push(...routeFiles.map(n=>n.replace(/\.[0-9a-f]{24}\./,'.')));
   assert.deepEqual(names.map(n=>n.replace(/\.[0-9a-f]{24}\./,'.')).sort(),expected.sort());
   for (const n of names.filter(n=>n.includes('/'))) {
-    const hash = createHash('sha256').update(await readFile(join(a,n))).digest('hex').slice(0,24);
-    assert.ok(n.includes(`.${hash}.`), n);
+    const fullHash = createHash('sha256').update(await readFile(join(a,n))).digest('hex');
+    assert.ok(n.includes(`.${fullHash.slice(0,24)}.`) ||
+      routePack.files.has(n) && n.includes(fullHash), n);
   }
   assert.ok(!names.some(n=>/relief|\.svg$|\.webp$/.test(n)));
   assert.doesNotMatch(await readFile(join(a,'index.html'),'utf8'), /grappa-relief|ascent\.svg|relief-beacon/);
   assert.ok(!names.includes('assets/private.txt'));
-  assert.ok(!names.some(n=>n.endsWith('.json')));
+  assert.deepEqual(names.filter(n=>n.endsWith('.json')).sort(),routeFiles.filter(n=>n.endsWith('.json')).sort());
   // Check static AND dynamic local imports against the final hashed inventory.
   for (const name of names.filter(n=>/\.(mjs|js)$/.test(n))) {
     const text = await readFile(join(a,name),'utf8');

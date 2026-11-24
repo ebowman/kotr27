@@ -160,3 +160,39 @@ or serve it as a public artifact.
   Temporary build output was removed. The builder is unchanged.
 - `git diff --check` passes. No browser, full regression suite, staging,
   commit, deployment, Beads mutation or source-database write was performed.
+
+## Availability supplement · 2026-11-24, after the earlier intake
+
+The report above remains the historical `.2` four-file evidence. During `.5`,
+before its first independent review, the user supplied the three standard/short
+FITs through the same private handoff. The exact files were read-only validated
+and copied unchanged into the already ignored intake directory. No source
+database, earlier original or `inventory.json` was modified.
+
+| Stable RWGPS ID | Source name | Bytes | Records / finite positions / elevations | Cues | Haversine km | Raw gain m |
+|---|---|---:|---:|---:|---:|---:|
+| 57873183 | D2S_Vicentine Hills | 134,561 | 5,729 / 5,729 / 5,729 | 71 | 66.899994 | 1,618.0 |
+| 57873112 | D3S_Asolo | 119,098 | 5,016 / 5,016 / 5,016 | 97 | 57.495637 | 1,165.2 |
+| 57874050 | D4S_Brentha_Valley | 86,416 | 3,606 / 3,606 / 3,606 | 90 | 53.419859 | 1,261.6 |
+
+These are supplemental intake calculations using the earlier 6,371,008.8 m
+radius, not silently substituted source-listed statistics. Maximum adjacent
+gaps are respectively 311.258, 223.226 and 207.367 m. File/header checks,
+independent CRC and complete fitparse iteration pass; corruption/truncation
+negatives pass. Coordinates/elevations, monotonic encoded distances and cue
+positions/distances pass. The production importer also accepts all three under
+its existing bounds, timer/order/segment and gap policy without modification.
+No privacy markers or populated participant telemetry were detected; arbitrary
+text is still not presumed safe. Raw files/timing/device metadata remain private.
+
+Private `short-handoff-2026-11-24.json` supplements (does not rewrite) the
+original inventory, retaining source checksums, attribution and private source
+record provenance. Its bounded `validate_short_handoff.py` operation verifies
+exact source/copy equality and all four earlier original checksums. Handoff
+creation around 18:11 is not a provider revision date.
+
+**Current availability is now seven validated FIT originals. All GPX originals
+remain unavailable.** The [current import report](route-import.md) documents
+the actual four-to-seven addition through the production pipeline, unchanged
+earlier bundles, seven sanitized derived GPX tracks, continued FIT-download/cue
+limitations and unchanged calendar/surface/raw-gain uncertainties.

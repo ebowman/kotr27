@@ -1,0 +1,2 @@
+# Offline route importer; exact parser version audited in docs/route-import.md.
+fitparse==1.2.0

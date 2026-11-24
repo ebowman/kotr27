@@ -1,9 +1,10 @@
 // Node 22+, no dependencies. Only these explicitly public inputs may ship.
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createCatalog, verifyAsset } from '../js/route-catalog.mjs';
+import { readRoutePack } from './route-pack.mjs';
 
 const digest = data => createHash('sha256').update(data).digest('hex').slice(0, 24);
 function replace(text, from, to) {
@@ -15,7 +16,7 @@ export async function build(source, destination) {
   // Refuse existing trees (no mixing releases) and keep artifacts out of source.
   const root = await realpath(source);
   // Validate source catalog and pinned bytes before writing any public output.
-  // No discovery or recursive route intake: only the existing cleared example.
+  // No discovery or recursive route intake: example + explicit verified pack.
   const catalogFile = join(root, 'js/example-catalog.mjs');
   const {exampleCatalog} = await import(pathToFileURL(catalogFile).href + '?' + digest(await readFile(catalogFile)));
   createCatalog(exampleCatalog.data);
@@ -26,10 +27,37 @@ export async function build(source, destination) {
       await verifyAsset(ref, await readFile(join(root, ref.path)));
     }
   }
-  const out = join(await realpath(dirname(resolve(destination))), basename(resolve(destination)));
-  const rel = relative(root, out);
+  const routePack = await readRoutePack(root);
+  const target = join(await realpath(dirname(resolve(destination))), basename(resolve(destination)));
+  const rel = relative(root, target);
   if (!rel || !(rel === '..' || rel.startsWith('..' + sep))) throw Error('Output must be outside source');
-  await mkdir(out);
+  async function requireAbsent() {
+    try { await lstat(target); }
+    catch (error) { if (error.code === 'ENOENT') return; throw error; }
+    throw Error('Output already exists; never mix releases');
+  }
+  await requireAbsent();
+  // Build privately next to the destination and expose only a complete tree.
+  const out = await mkdtemp(join(dirname(target), '.kotr-release-'));
+  try {
+    await writeRelease(root, out, routePack);
+    await requireAbsent();
+    await rename(out, target);
+  } catch (error) {
+    await rm(out, {recursive:true, force:true});
+    throw error;
+  }
+}
+
+async function writeRelease(root, out, routePack) {
+  // Immutable content-addressed route assets already contain their full hashes.
+  // The pointer is itself hashed; HTML binds the entire transitive graph.
+  for (const [path, bytes] of routePack.files) {
+    await mkdir(join(out, dirname(path)), {recursive:true});
+    await writeFile(join(out, path), bytes);
+  }
+  const packEntry = `assets/route-pack.${digest(routePack.pointerBytes)}.json`;
+  await writeFile(join(out, packEntry), routePack.pointerBytes);
   const names = new Map();
   // Dependency-first allowlist. Specifiers in modules resolve from that
   // module (including dynamic imports in the classic flyover script).
@@ -72,6 +100,8 @@ export async function build(source, destination) {
     'explore.html':['js/rider-controls.mjs','assets/site.css'],
   })) {
     let html = await readFile(join(root, entry), 'utf8');
+    html = replace(html, '</head>',
+      `  <link rel="alternate" type="application/json" title="Approved route catalog" href="./${packEntry}">\n</head>`);
     for (const file of scripts) html = replace(html, './' + file, './' + names.get(file));
     html = replace(html, '<!-- release entry check -->',
       `<meta name="kotr-release" content="RELEASE_ID">\n  <script>${check}</script>`);
@@ -80,7 +110,7 @@ export async function build(source, destination) {
   await writeFile(join(out, '.nojekyll'), '');
 }
 
-if (resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   if (process.argv.length !== 3) throw Error('Usage: node tools/build-release.mjs NEW_OUTPUT_DIRECTORY');
   await build(fileURLToPath(new URL('../', import.meta.url)), process.argv[2]);
 }

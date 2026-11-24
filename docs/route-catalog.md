@@ -2,9 +2,14 @@
 
 `kotr27-800.4` — static data contract, not route intake or a new site shell.
 Runtime implementation and JSDoc types: [route-catalog.mjs](../js/route-catalog.mjs).
-The only shipped catalog is [example-catalog.mjs](../js/example-catalog.mjs).
+The example catalog is [example-catalog.mjs](../js/example-catalog.mjs).
 The multi-variant organizer fixture in [tests](../tests/route-catalog.mjs) is
-synthetic and is **not packaged**. No official 2027 metadata/geometry is included.
+synthetic and is **not packaged**. The subsequent
+[offline import contract](route-import.md) adds an explicitly allowlisted
+organizer pack via `assets/route-pack.json`: seven provisional records and seven
+sanitized geometries after the supplemental short-route FIT handoff. GPX
+originals remain unavailable. It uses this same schema
+without changing legacy example selection.
 
 ## Consumer contract
 
@@ -159,9 +164,11 @@ The public builder still uses its explicit dependency-first allowlist. It
 validates the source catalog/public permissions and GPX hash before creating
 output, rewrites the catalog asset path and every transitive module import to
 hashed filenames, and hashes final bytes. It refuses newly referenced assets
-outside the existing GPX allowlist. This catalog is **not** permission to
-expand that allowlist. Documentation, tests, private JSON reference and new
-route intake remain outside the artifact.
+outside the existing example GPX allowlist. The bounded `.5` importer adds a
+separate closed, hash-verified organizer-pack allowlist; see
+[route-import.md](route-import.md). This schema alone is **not** permission to
+expand either allowlist. Documentation, tests, private intake/originals and
+the legacy private JSON reference remain outside the artifact.
 
 The schema cannot detect secrets hidden in otherwise valid prose or grant
 legal rights; independent content/approval review and the release allowlist

@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "observedOn": "2026-11-24",
+  "approval": "User approval 2026-11-24; route names and sanitized geometry/downloads only",
+  "routes": [
+    {
+      "id": "rwgps-57874121", "name": "D1_Warm-up", "day": "d1", "variant": "warm-up",
+      "status": "provisional", "publicApproved": true,
+      "listed": {"distanceM": 19700, "gainM": 100},
+      "input": {"file": "57874121.fit", "format": "fit", "origin": "user-supplied-original", "observedOn": "2026-11-24", "sha256": "4125ffbcd7337c1507d8da331ba48cd267a8cbb778083f7beb40676032b58e38"}
+    },
+    {
+      "id": "rwgps-57873183", "name": "D2S_Vicentine Hills", "day": "d2", "variant": "short",
+      "status": "provisional", "publicApproved": true,
+      "listed": {"distanceM": 67000, "gainM": 1089},
+      "input": {"file": "57873183.fit", "format": "fit", "origin": "user-supplied-original", "observedOn": "2026-11-24", "sha256": "c7e6f93af6125fd5c55ed74c59fd61ceaed6fc662b3866be796eaaff44fe40b7"}
+    },
+    {
+      "id": "rwgps-57874024", "name": "D2L_Vicentine Hills", "day": "d2", "variant": "long",
+      "status": "provisional", "publicApproved": true,
+      "listed": {"distanceM": 86700, "gainM": 1929},
+      "input": {"file": "57874024.fit", "format": "fit", "origin": "user-supplied-original", "observedOn": "2026-11-24", "sha256": "65837886e6f95cacc141722fd4a08d2919289df2248b5694981ac191f33a9d32"}
+    },
+    {
+      "id": "rwgps-57873112", "name": "D3S_Asolo", "day": "d3", "variant": "short",
+      "status": "provisional", "publicApproved": true,
+      "listed": {"distanceM": 57600, "gainM": 837},
+      "input": {"file": "57873112.fit", "format": "fit", "origin": "user-supplied-original", "observedOn": "2026-11-24", "sha256": "bb25a720e3409da58b44e9fca5f7e241978456f2962f3a5558953875dc68aa87"}
+    },
+    {
+      "id": "rwgps-57873019", "name": "D3L_Monte_Grappa", "day": "d3", "variant": "long",
+      "status": "provisional", "publicApproved": true,
+      "listed": {"distanceM": 63200, "gainM": 1835},
+      "input": {"file": "57873019.fit", "format": "fit", "origin": "user-supplied-original", "observedOn": "2026-11-24", "sha256": "ebc88cc83b2e797ab7e566123e0f942cdbac1be4b299c360df67cde14e809574"}
+    },
+    {
+      "id": "rwgps-57874050", "name": "D4S_Brentha_Valley", "day": "d4", "variant": "short",
+      "status": "provisional", "publicApproved": true,
+      "listed": {"distanceM": 53500, "gainM": 666},
+      "input": {"file": "57874050.fit", "format": "fit", "origin": "user-supplied-original", "observedOn": "2026-11-24", "sha256": "e6c4f58b55f1cb98a25c18cd2450254683e0de37b2d3b59a18593493425d1655"}
+    },
+    {
+      "id": "rwgps-57874076", "name": "D4L_Brentha_Valley", "day": "d4", "variant": "long",
+      "status": "provisional", "publicApproved": true,
+      "listed": {"distanceM": 85300, "gainM": 1753},
+      "input": {"file": "57874076.fit", "format": "fit", "origin": "user-supplied-original", "observedOn": "2026-11-24", "sha256": "9d5daa1d5b07216e8fdbc7b5b2dd103012627a307b54216612bf62133b1bd387"}
+    }
+  ]
+}
