@@ -92,9 +92,9 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   }
   const names = await files(a);
   const expected = ['assets','js','.nojekyll','index.html','explore.html','assets/flyover.js',
-    'assets/terrain.js','assets/semonzo.gpx','js/config.js',...['ascent-estimator','chapter-reveal',
+    'assets/terrain.js','assets/semonzo.gpx','assets/site.css','js/config.js',...['ascent-estimator','chapter-reveal',
       'climb-sensitivity','climb-sensitivity-view','plan-comparison','ride-clock',
-      'rider-controls','rider-scenario','semonzo-profile','route-catalog','example-catalog'].map(n=>`js/${n}.mjs`)];
+      'rider-controls','rider-scenario','semonzo-profile','route-catalog','example-catalog','route-state','site-shell'].map(n=>`js/${n}.mjs`)];
   assert.deepEqual(names.map(n=>n.replace(/\.[0-9a-f]{24}\./,'.')).sort(),expected.sort());
   for (const n of names.filter(n=>n.includes('/'))) {
     const hash = createHash('sha256').update(await readFile(join(a,n))).digest('hex').slice(0,24);
@@ -114,7 +114,7 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   }
   const bNames = new Set(await files(b));
   assert.deepEqual(names.filter(n => !bNames.has(n)).sort(), names.filter(n =>
-    /(?:flyover|semonzo|semonzo-profile|example-catalog|rider-controls)\./.test(n)).sort());
+    /(?:flyover|semonzo|semonzo-profile|example-catalog|rider-controls|site-shell)\./.test(n)).sort());
   // A clock-only update must reach its importer and the ordinary explorer
   // marker without invalidating the independent flyover route.
   const c = join(tmp, 'clock-only');
@@ -124,6 +124,8 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   assert.deepEqual([...bNames].filter(n=>!cNames.has(n)).sort(), [...bNames].filter(n=>/\/(?:ride-clock|rider-controls)\./.test(n)).sort());
   assert.deepEqual(await readFile(join(b,'index.html')), await readFile(join(c,'index.html')));
   const marker = async dir => (await readFile(join(dir,'explore.html'),'utf8')).match(/<meta name="kotr-release" content="([a-f0-9]{24})">/)[1];
+  const indexMarker = async dir => (await readFile(join(dir,'index.html'),'utf8')).match(/<meta name="kotr-release" content="([a-f0-9]{24})">/)[1];
+  const indexMarkers = new Map([[a,await indexMarker(a)],[b,await indexMarker(b)]]);
   assert.notEqual(await marker(b),await marker(c));
   // Each sensitivity-only edit invalidates exactly its transitive importers.
   // All other bytes, including every flyover input and index.html, stay stable.
@@ -150,16 +152,33 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   await edit('js/route-catalog.mjs', 'export function createCatalog', '/* release fixture */ export function createCatalog');
   await build(src,validatorRelease);
   const beforeValidator = await files(previous), afterValidator = await files(validatorRelease);
-  const catalogDependents = /\/(?:route-catalog|example-catalog|semonzo-profile|rider-controls|flyover)\./;
+  const catalogDependents = /\/(?:route-catalog|example-catalog|semonzo-profile|rider-controls|flyover|site-shell)\./;
   assert.deepEqual(beforeValidator.filter(n=>!afterValidator.includes(n)).sort(),
     beforeValidator.filter(n=>catalogDependents.test(n)).sort());
   for (const entry of ['index.html','explore.html'])
     assert.notDeepEqual(await readFile(join(previous,entry)),await readFile(join(validatorRelease,entry)));
+  // The new state helper is shared by both entries, and CSS is a first-class
+  // hashed runtime asset. Each edit must reach both entry freshness markers.
+  let shellPrevious = validatorRelease;
+  for (const [file, before, after, affected] of [
+    ['js/route-state.mjs', 'export function readSelection', '/* release fixture */ export function readSelection',
+      /\/(?:route-state|site-shell|rider-controls)\./],
+    ['assets/site.css', ':root', '/* release fixture */ :root', /\/site\./],
+  ]) {
+    const next = join(tmp,file.includes('.css') ? 'css-change' : 'state-change');
+    await edit(file,before,after);
+    await build(src,next);
+    const beforeNames = await files(shellPrevious), afterNames = await files(next);
+    assert.deepEqual(beforeNames.filter(n=>!afterNames.includes(n)).sort(),beforeNames.filter(n=>affected.test(n)).sort());
+    for (const entry of ['index.html','explore.html'])
+      assert.notDeepEqual(await readFile(join(shellPrevious,entry)),await readFile(join(next,entry)));
+    shellPrevious = next;
+  }
   let live = a, fail = false, probes = 0, plainNavigations = 0, replacements = 0;
   const legacyRequests=[];
   const allowed = new Set([...names, ...bNames].filter(n => extname(n)));
   const types = {'.html':'text/html','.js':'text/javascript','.mjs':'text/javascript','.gpx':'application/xml',
-    '.svg':'image/svg+xml','.webp':'image/webp'};
+    '.svg':'image/svg+xml','.webp':'image/webp','.css':'text/css'};
   const server = createServer(async (req, res) => {
     if (req.url === '/away') return res.writeHead(200, {'Content-Type':'text/html'}).end('<a href="/kotr27/">Return</a>');
     const url = new URL(req.url, 'http://localhost');
@@ -215,6 +234,11 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
       offline:true, latency:0, downloadThroughput:0, uploadThroughput:0
     });
     await js(`document.querySelector('a').click()`);
+    // Let entry freshness finish replacing the shell before opting in. The old
+    // default flyover delayed readiness; the lightweight shell is now earlier.
+    await until(() => js(`document.querySelector('#site-shell')?.dataset.ready === 'true' &&
+      document.querySelector('meta[name="kotr-release"]')?.content === '${indexMarkers.get(live)}'`));
+    await js(`document.querySelector('#site-content a[href*="view=flyover"]').click()`);
     await until(() => js(`document.querySelector('#deck')?.hidden === false`));
   };
   const summit = async () => {
@@ -222,7 +246,7 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
     return js('stats.textContent');
   };
   const explore = async () => {
-    await js(`document.querySelector('a[href="./explore.html"]').click()`);
+    await js(`document.querySelector('[data-site-clock]').click()`);
     await until(()=>js(`document.querySelector('#controls')?.disabled===false`));
     return js(`document.querySelector('script[type=module]').src`);
   };
@@ -313,14 +337,14 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   assert.deepEqual(await js('[localStorage.length,sessionStorage.length,document.cookie]'),[0,0,'']);
   live = b;
   await visit();
-  await until(() => js(`document.title.startsWith('B:') && document.querySelector('#deck')?.hidden === false`));
-  assert.equal(await js('location.href'), base+'/kotr27/');
+  await until(() => js(`document.querySelector('meta[name="kotr-release"]')?.content === '${indexMarkers.get(b)}' && document.querySelector('#deck')?.hidden === false`));
+  assert.match(await js('location.href'), /\/kotr27\/index.html\?area=explore&view=flyover&route=semonzo-example&rev=semonzo-example-v2/);
   assert.match(await summit(), /1846 m elevation/);
   assert.equal(plainNavigations, 1, 'return started from cached ordinary HTML');
   assert.equal(replacements, 1);
   await explore();
   const bControls = [...bNames].find(n=>n.includes('/rider-controls.'));
-  await until(()=>js(`location.href.endsWith('/kotr27/explore.html') && document.querySelector('script[type=module]')?.src.endsWith('${bControls}') && document.querySelector('#controls')?.disabled===false`));
+  await until(()=>js(`location.pathname.endsWith('/kotr27/explore.html') && document.querySelector('script[type=module]')?.src.endsWith('${bControls}') && document.querySelector('#controls')?.disabled===false`));
   const before = probes;
   await visit(); await until(() => probes > before);
   assert.match(await summit(), /1846 m elevation/);

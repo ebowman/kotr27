@@ -1,8 +1,8 @@
 import { displayMass, riderScenario } from './rider-scenario.mjs';
 import { renderChapters } from './chapter-reveal.mjs';
 import { installComparison } from './plan-comparison.mjs';
-import { loadProfile } from './semonzo-profile.mjs';
 import { createRideClock, stopChapterId } from './ride-clock.mjs';
+import { shellReady, navigateSelection, subscribeSelection } from './site-shell.mjs';
 
 const el = id => document.getElementById(id);
 const mass = el('mass'), unit = el('unit'), ftp = el('ftp'), effort = el('effort');
@@ -27,10 +27,14 @@ function installClock(profile) {
   const moving = (index, pace) => Math.round(state.estimate.chapters[index][pace].movingSeconds / 60);
   function chapter() {
     const c = chapters[selected];
+    const available = !!c && !!clock && !!state?.estimate;
     [...el('chapter-tabs').children].forEach((b,i)=>b.setAttribute('aria-pressed', String(i === selected)));
     el('clock-insight').hidden = !!c;
-    el('chapter-summary').hidden = !c;
-    if (!c) return;
+    el('chapter-summary').hidden = !available;
+    if (!available) {
+      el('chapter-summary').textContent = '';
+      return;
+    }
     const contrast = selected === 2 ? ` Long lift is gentler but takes ${moving(0,state.effort)} min in A.`
       : selected === 0 ? ` The steeper High step takes ${moving(2,state.effort)} min in A.` : ` ${c.notice}`;
     el('chapter-summary').textContent = `${c.name} · ${(100*c.netRiseM/(c.endM-c.startM)).toFixed(1)}% average grade. ` +
@@ -44,7 +48,7 @@ function installClock(profile) {
     const number = document.createElement('span');
     number.textContent = String(i+1).padStart(2,'0');
     b.append(number);
-    b.onclick = () => { selected = i; chapter(); };
+    b.onclick = () => navigateSelection({chapterId:c.id, distanceM:c.startM});
     el('chapter-tabs').append(b);
   });
   function draw(value) {
@@ -68,7 +72,7 @@ function installClock(profile) {
       : p.a.status === 'finished' ? 'Plan A stays at the summit while Plan B completes the climb.'
       : `${name(p.a.chapterId)}: ${chapters.find(c=>c.id===p.a.chapterId).notice}`;
   }
-  function scrub(value) { selected = -1; draw(value); chapter(); }
+  function scrub(value) { draw(value); chapter(); }
   slider.oninput = () => scrub(Number(slider.value));
   el('earlier').onclick = () => scrub(Math.max(0, Number(slider.value)-5));
   el('later').onclick = () => scrub(Number(slider.value)+5);
@@ -78,13 +82,12 @@ function installClock(profile) {
     el('clock-error').hidden = !!clock;
     el('clock-error').textContent = clock ? '' : 'No ride estimate. Check the rider inputs.';
     el('persona').textContent = state.kind === 'example' ? 'One fictional rider, Robin · Two plans' : 'One rider · Two plans';
-    if (!clock) return;
+    if (!clock) { chapter(); return; }
     slider.max = Math.ceil(clock.maxMinute);
     const title = pace => pace === 'slower' ? 'Time to talk' : 'Focused and steady';
     el('label-a').textContent = `A · ${title(state.effort)}`;
     el('label-b').textContent = `B · ${title(paceB.value)}`;
     if (jump && Number(stop.value)) {
-      selected = -1;
       const before = state.estimate.chapters.slice(0, chapters.findIndex(c => c.id === stopChapterId));
       minute = Math.ceil(before.reduce((s,c)=>s+c[paceB.value].movingSeconds,0)/60);
     }
@@ -93,7 +96,11 @@ function installClock(profile) {
   }
   paceB.addEventListener('change', () => refresh());
   stop.addEventListener('change', () => refresh(true));
-  return (next, reset) => { state = next; if (reset) { minute = 60; selected = -1; } refresh(); };
+  subscribeSelection(selection => {
+    selected = chapters.findIndex(c => c.id === selection.state.chapterId);
+    if (state) chapter();
+  });
+  return (next, reset) => { state = next; if (reset) { minute = 60; } refresh(); };
 }
 
 function install(profile, sensitivity) {
@@ -167,20 +174,29 @@ function install(profile, sensitivity) {
   el('controls').disabled = false;
 }
 
-try {
-  const profile = await loadProfile();
-  let sensitivity = () => {};
-  // A panel import/install failure must not disable the existing ride clock.
+let installed = false;
+async function initialize(selection) {
+  if (installed) return;
   try {
-    const { installSensitivity } = await import('./climb-sensitivity-view.mjs');
-    sensitivity = installSensitivity(profile);
+    // Never run the example engine beneath a missing/withdrawn/foreign link.
+    const profile = selection.profile;
+    if (!selection.bundle || !profile) throw Error('Selected example unavailable');
+    installed = true;
+    let sensitivity = () => {};
+    // A panel import/install failure must not disable the existing ride clock.
+    try {
+      const { installSensitivity } = await import('./climb-sensitivity-view.mjs');
+      sensitivity = installSensitivity(profile);
+    } catch {
+      el('sensitivity-error').textContent = 'The sensitivity panel is unavailable. No sensitivity estimate is shown.';
+    }
+    install(profile, sensitivity);
   } catch {
-    el('sensitivity-error').textContent = 'The sensitivity panel is unavailable. No sensitivity estimate is shown.';
+    result.textContent = 'The example profile is unavailable. No estimate can be shown.';
+    el('clock-error').hidden = false;
+    el('clock-error').textContent = result.textContent;
+    el('sensitivity-error').textContent = 'The sensitivity profile is unavailable. No sensitivity estimate is shown.';
   }
-  install(profile, sensitivity);
-} catch {
-  result.textContent = 'The example profile is unavailable. No estimate can be shown.';
-  el('clock-error').hidden = false;
-  el('clock-error').textContent = result.textContent;
-  el('sensitivity-error').textContent = 'The sensitivity profile is unavailable. No sensitivity estimate is shown.';
 }
+await shellReady;
+subscribeSelection(initialize);

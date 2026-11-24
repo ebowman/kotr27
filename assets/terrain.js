@@ -463,7 +463,7 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
         }
         previewEvents.signal.addEventListener('abort',()=>unwatchPreview());
         const reduced=matchMedia('(prefers-reduced-motion: reduce)');
-        let paused=reduced.matches, orbitTime=0, previous=null, orbitFrame=0;
+        let paused=true, orbitTime=0, previous=null, orbitFrame=0;
         function composeOverview() {
           const a=orbitTime*(2*Math.PI/(previewMesh ? 54 : 96)), side=Math.sin(a), wide=(1-Math.cos(a))/2;
           if (!previewMesh) {
@@ -564,7 +564,7 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
         previewEvents.signal.addEventListener('abort',stopOrbit);
         previewEvents.signal.addEventListener('abort',forgetFrame);
         previewButton.addEventListener('click',()=>{paused=!paused;motionControl();},opts);
-        reduced.addEventListener('change',()=>{paused=reduced.matches;motionControl();},opts);
+        reduced.addEventListener('change',()=>{if (reduced.matches) paused=true; motionControl();},opts);
         document.addEventListener('visibilitychange',motionControl,opts);
         function flatPreview(unsafe=false,failedTile) {
           if (stopped || !inOverview) return;

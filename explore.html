@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" href="data:,">
-  <title>Explore the example ascent · Semonzo</title>
+  <title>Explore · KOTR 2027 rider companion</title>
   <!-- release entry check -->
   <script type="module" src="./js/rider-controls.mjs"></script>
   <style>
@@ -96,10 +96,18 @@
       #clock-insight,#chapter-summary { font-size:.93rem; line-height:1.35 }
     }
   </style>
+  <link rel="stylesheet" href="./assets/site.css">
 </head>
-<body><main>
-  <header><span class="eyebrow">Semonzo · Ride clock</span><a href="./">Back to flyover</a></header>
-  <h1>How far up Monte Grappa in an hour?</h1>
+<body>
+<a class="skip" href="#site-heading">Skip to main content</a>
+<main id="main">
+  <div id="site-shell">
+    <h1 id="site-heading" tabindex="-1">Explore the Semonzo example</h1>
+    <p>Official 2027 route details await verification and publication approval. JavaScript enables the example ride clock and shared navigation.</p>
+    <a href="./index.html">Plan</a>
+  </div>
+  <div id="legacy-explorer" hidden>
+  <h2>How far up Monte Grappa in an hour?</h2>
   <p id="persona">One fictional rider, Robin · Two plans</p>
   <section id="ride" hidden aria-label="Shared ride clock">
     <div id="mountain">
@@ -244,5 +252,6 @@
   <p>Another climb’s time, length and gain alone can’t tell us sustained power: slopes, stops and wind can differ. Without FTP, we keep Robin’s example power rather than guessing yours.</p>
   <p>Provisional route: <a href="https://brouter.de/">BRouter</a>, using © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors (ODbL)</a>. Chapter distances and smoothed rises are calculated here from the flyover track; times are estimates, not recorded rides.</p>
   </details>
+  </div>
 </main></body>
 </html>

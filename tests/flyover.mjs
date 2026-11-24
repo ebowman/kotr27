@@ -13,6 +13,7 @@ test('phone-sized cinematic follow, controls and asset fallbacks', {timeout: 600
     'assets/terrain.js':'text/javascript', 'js/config.js':'text/javascript',
     'js/semonzo-profile.mjs':'text/javascript', 'js/example-catalog.mjs':'text/javascript',
     'js/route-catalog.mjs':'text/javascript',
+    'js/route-state.mjs':'text/javascript', 'js/site-shell.mjs':'text/javascript', 'assets/site.css':'text/css',
     'assets/semonzo.gpx':'application/xml'};
   const omit = new Set(), served = new Set(), legacy = [];
   const sdkStarted = Promise.withResolvers();
@@ -22,8 +23,7 @@ test('phone-sized cinematic follow, controls and asset fallbacks', {timeout: 600
     if (!Object.hasOwn(files, file) || omit.has(file)) {
       res.writeHead(404).end(); return;
     }
-    // The pinned SDK must start without waiting for GPX parsing.
-    if (file === 'assets/semonzo.gpx') await sdkStarted.promise;
+    // The shell can now load the local profile before opt-in to online terrain.
     // Never serve or inspect the provisioned config in a browser test.
     const data = file === 'js/config.js' ? 'window.KOTR_CONFIG = {};' :
       await readFile(new URL(`../${file}`, import.meta.url));
@@ -32,7 +32,8 @@ test('phone-sized cinematic follow, controls and asset fallbacks', {timeout: 600
   });
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   t.after(() => { server.closeAllConnections(); server.close(); });
-  const url = `http://127.0.0.1:${server.address().port}/kotr27/`;
+  const base = `http://127.0.0.1:${server.address().port}/kotr27/`;
+  const url = base+'?area=explore&view=flyover';
   // Intercept the SDK only. Exercise the real DOM, GPX, controller, clock,
   // camera math and fallback without making authenticated network requests.
   const sdk = `window.mapboxgl = {
@@ -348,11 +349,11 @@ test('phone-sized cinematic follow, controls and asset fallbacks', {timeout: 600
   assert.equal(await js('seek.value'),distance);
   assert.ok(await js(`play.disabled && +seek.value===${distance}`));
   failSDK=true;
-  await cmd('Page.navigate',{url:url+'?sdk-failed'});
-  await until(()=>js(`location.search==='?sdk-failed' && document.querySelector('#message')?.textContent.includes('unavailable')`));
+  await cmd('Page.navigate',{url:url+'&sdk-failed'});
+  await until(()=>js(`location.search.includes('sdk-failed') && document.querySelector('#message')?.textContent.includes('unavailable')`));
   assert.ok(await js(`!deck.hidden && profile.getAttribute('d').length>100 && !window.demo`));
   omit.add('js/config.js');
-  await cmd('Page.navigate',{url:url+'index.html'});
+  await cmd('Page.navigate',{url:base+'index.html?area=explore&view=flyover'});
   await until(()=>js(`location.pathname.endsWith('index.html') && document.querySelector('#deck')?.hidden === false`));
   assert.ok(await js(`message.getAttribute('role')==='status' && message.textContent.includes('unavailable')`));
   assert.ok(await js(`play.disabled && !seek.disabled`));

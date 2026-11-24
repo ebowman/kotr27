@@ -71,12 +71,12 @@ for (const width of [320,1200]) test(`packaged ${width}px private keyboard walkt
     out = join(tmp,'kotr27');
     await build(fileURLToPath(new URL('../',import.meta.url)),out);
   }
-  const types = {'.mjs':'text/javascript','.js':'text/javascript','.html':'text/html','.gpx':'application/xml'};
+  const types = {'.mjs':'text/javascript','.js':'text/javascript','.html':'text/html','.gpx':'application/xml','.css':'text/css'};
   const files = (await readdir(out,{recursive:true})).filter(f=>types[extname(f)]);
   let missing = false;
   const server = createServer(async (req, res) => {
     if (!req.url.startsWith('/kotr27/')) return res.writeHead(404).end();
-    const file = req.url.slice('/kotr27/'.length) || 'index.html';
+    const file = new URL(req.url,'http://localhost').pathname.slice('/kotr27/'.length) || 'index.html';
     if (!files.includes(file) || (missing && file.endsWith('.gpx'))) return res.writeHead(404).end();
     res.writeHead(200, { 'Content-Type': types[extname(file)], 'Cache-Control':'no-store' })
       .end(await readFile(join(out,file)));
@@ -93,11 +93,11 @@ for (const width of [320,1200]) test(`packaged ${width}px private keyboard walkt
   await cmd('Emulation.setEmulatedMedia', { features:[{name:'prefers-reduced-motion', value:'reduce'}] });
   const resize = w => cmd('Emulation.setDeviceMetricsOverride', { width:w, height:width===320?568:800, deviceScaleFactor:1, mobile:width===320 });
   await resize(width);
-  await cmd('Page.navigate', {url:base});
+  await cmd('Page.navigate', {url:base+'?area=explore&view=flyover'});
   await until(()=>js(`document.querySelector('#deck')?.hidden === false`));
   const explorerStart = requests.length;
-  assert.match(await js(`document.querySelector('a[href="./explore.html"]').innerText`), /ride clock.*scrub.*compare two plans/i);
-  await js(`document.querySelector('a[href="./explore.html"]').click()`);
+  assert.match(await js(`document.querySelector('[data-site-clock]').innerText`), /ride clock.*scrub.*compare two plans/i);
+  await js(`document.querySelector('[data-site-clock]').click()`);
   await until(() => js(`document.querySelector('#controls')?.disabled === false`));
   assert.match(await js('document.body.innerText'), /How far up Monte Grappa in an hour/);
   const profileModule = files.find(f=>f.startsWith('js/semonzo-profile.'));
@@ -150,6 +150,7 @@ for (const width of [320,1200]) test(`packaged ${width}px private keyboard walkt
       await cmd('Input.dispatchMouseEvent',{type,...point,button:'left',clickCount:1});
   };
   await screenshot('hour');
+  await js(`document.getElementById('legacy-explorer').scrollIntoView({block:'start'})`);
   assert.ok(await js('minute.value==="60" && later.getBoundingClientRect().bottom<=innerHeight && !personal.open'));
   const markers = () => js(`['mark-a','mark-b'].map(id=>document.getElementById(id).getBoundingClientRect().toJSON())`);
   const [a,b] = await markers();
@@ -247,7 +248,7 @@ for (const width of [320,1200]) test(`packaged ${width}px private keyboard walkt
     for (const id of n.childIds || []) walk(ax.get(id));
   }
   walk(nodes[0]);
-  assert.deepEqual(headings,['How far up Monte Grappa in an hour?','Chapter by chapter',
+  assert.deepEqual(headings,['Explore the route','Semonzo example briefing','How far up Monte Grappa in an hour?','Chapter by chapter',
     'Two ways up the same climb','See a chapter in the flyover']);
   assert.ok(nodes.some(n=>n.role.value==='textbox' && n.name.value==='FTP in watts (optional)'));
   const ratios = await js(`(()=>{
@@ -324,6 +325,26 @@ for (const width of [320,1200]) test(`packaged ${width}px private keyboard walkt
   assert.ok(await js(`ride.hidden && !document.getElementById('clock-error').hidden`));
   assert.ok(await js(`document.querySelector('#chapter-game').hidden && !bands.children.length && !readout.children.length && !insight.textContent`));
   assert.equal(await js(`ftp.getAttribute('aria-invalid')`), 'true');
+  const invalidMessage = await text();
+  const invalidFieldMessage = await js(`document.getElementById('ftp-error').textContent`);
+  // Invalid rider estimates must not break the independent route selection,
+  // discard the draft, reveal stale times or abort heading-focus navigation.
+  for (const [index,chapter] of [[2,'half-step'],[3,'high-step']]) {
+    await js(`document.querySelector('#site-chapters li:nth-child(${index}) a').focus()`);
+    await enter();
+    assert.equal(await focus(),'site-heading');
+    assert.equal(await js(`new URL(location.href).searchParams.get('chapter')`),chapter);
+    assert.ok(await js(`!!document.querySelector('#site-profile') &&
+      document.querySelector('#site-chapters a[aria-current]').href.includes('chapter=${chapter}')`));
+    assert.equal(await js('ftp.value'),'oops');
+    assert.equal(await js(`ftp.getAttribute('aria-invalid')`),'true');
+    assert.equal(await text(),invalidMessage);
+    assert.equal(await js(`document.getElementById('ftp-error').textContent`),invalidFieldMessage);
+    assert.ok(await js(`!document.getElementById('clock-error').hidden &&
+      document.getElementById('clock-error').checkVisibility() && ride.hidden &&
+      document.getElementById('chapter-summary').textContent === ''`));
+    assert.deepEqual(exceptions,[]);
+  }
   await js('ftp.select()'); await key('Backspace', 'Backspace', 8);
   assert.match(await text(), /Partly assumed.*220 W \(Robin’s assumption\).*81.26 kg \(entered\)/);
   assert.match(await js(`document.querySelector('#shared-assumptions').textContent`), /Partly assumed.*81.26 kg rider \(entered\).*220 W FTP \(assumed\)/);
@@ -348,7 +369,7 @@ for (const width of [320,1200]) test(`packaged ${width}px private keyboard walkt
   assert.ok(await js(`work.checkVisibility()`));
   await tab(); await tab();
   assert.equal(await js('document.activeElement.hash'), '#seek-9000');
-  assert.equal(await js('location.href'), url);
+  assert.equal(await js('location.href'), url+'?area=explore&view=clock&route=semonzo-example&rev=semonzo-example-v1&chapter=high-step&at=11000');
   assert.deepEqual(await js('[localStorage.length, sessionStorage.length, document.cookie]'), [0, 0, '']);
   const {result:stores} = await cmd('Runtime.evaluate',{awaitPromise:true,returnByValue:true,
     expression:'Promise.all([indexedDB.databases(),caches.keys(),navigator.serviceWorker.getRegistrations()]).then(xs=>xs.map(x=>x.length))'});
@@ -360,7 +381,7 @@ for (const width of [320,1200]) test(`packaged ${width}px private keyboard walkt
   assert.equal(await js('location.pathname + location.search + location.hash'), '/kotr27/index.html#seek-9000');
   await until(()=>js('play.disabled'));
   assert.deepEqual(await js(`[seek.value,document.activeElement.id,play.disabled,stats.textContent.startsWith('9.0 km')]`),
-    ['9000','seek',true,true]);
+    ['9000','site-heading',true,true]);
   missing = true;
   await cmd('Page.navigate', {url});
   await until(async () => (await text()).includes('unavailable'));

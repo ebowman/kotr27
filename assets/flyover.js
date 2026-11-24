@@ -181,13 +181,14 @@
       resetCamera();
       render();
     }
-    seek.addEventListener('input', () => scrub(Number(seek.value)));
+    const publishSeek = () => document.dispatchEvent(new CustomEvent('kotr-seek', {detail:{distanceM:d}}));
+    seek.addEventListener('input', () => { scrub(Number(seek.value)); publishSeek(); });
     seek.addEventListener('keydown', e => {
       const delta = {ArrowRight: 100, ArrowUp: 100, ArrowLeft: -100, ArrowDown: -100}[e.key];
-      if (delta) { e.preventDefault(); scrub(d + delta); }
+      if (delta) { e.preventDefault(); scrub(d + delta); publishSeek(); }
     });
     el('reset').addEventListener('click', () => {
-      pause(); following = false; d = 0; resetCamera(); render();
+      pause(); following = false; d = 0; resetCamera(); render(); publishSeek();
     });
     document.addEventListener('visibilitychange', () => {
       if (document.hidden && playing) { pause(); render(); }
@@ -195,11 +196,16 @@
     render();
     el('deck').hidden = false;
     // A chapter link carries route metres only. Use the ordinary paused seek.
-    const chapter = /^#seek-(\d{1,6})$/.exec(location.hash);
-    if (chapter && Number(chapter[1]) <= total) {
-      scrub(Number(chapter[1]));
-      seek.focus();
-    }
+    const selectedDistance = Number(el('climb').dataset.distance || 0);
+    if (selectedDistance > 0) scrub(selectedDistance);
+    document.addEventListener('kotr-selection', event => {
+      pause();
+      const {state, bundle} = event.detail;
+      if (bundle && state.area === 'explore' && state.view === 'flyover') scrub(state.distanceM);
+      else render();
+      if (!el('preview-motion').hidden && el('preview-motion').textContent.startsWith('Pause'))
+        el('preview-motion').click();
+    });
     const startMap=()=>window.startTerrain(points, draw => { terrain = draw; render(); }, upcoming, setAvailability);
     el('retry').addEventListener('click',()=>{
       if (el('retry').hidden) return;

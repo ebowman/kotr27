@@ -15,7 +15,7 @@ const profile = JSON.parse(await readFile(new URL('assets/semonzo-chapters.v1.js
 // served modules only, so cache/coalescing and fault isolation are observable
 // without adding test hooks or a second physics implementation to the app.
 async function fixture(t) {
-  const files = ['explore.html', 'assets/semonzo.gpx',
+  const files = ['explore.html', 'assets/semonzo.gpx', 'assets/site.css',
     ...(await readdir(new URL('js/', root))).filter(f => f.endsWith('.mjs')).map(f => `js/${f}`)];
   const faults = { profile:false, panel:false };
   const server = createServer(async (req,res) => {
@@ -34,7 +34,7 @@ async function fixture(t) {
       'export function estimateAscent(profile, options = {}) {',
       `export function estimateAscent(profile, options = {}) {
         window.__physics = (window.__physics || 0) + 1;`);
-    res.writeHead(200, { 'Content-Type':{'.mjs':'text/javascript','.gpx':'application/xml','.html':'text/html'}[extname(file)],
+    res.writeHead(200, { 'Content-Type':{'.mjs':'text/javascript','.gpx':'application/xml','.html':'text/html','.css':'text/css'}[extname(file)],
       'Cache-Control':'no-store' }).end(text);
   });
   server.listen(0,'127.0.0.1');

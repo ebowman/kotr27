@@ -7,11 +7,12 @@
   <meta http-equiv="x-dns-prefetch-control" content="off">
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <link rel="icon" href="data:,">
-  <title>Semonzo example ascent · KOTR 2027</title>
-  <meta name="description" content="Explore the Semonzo example ascent of Monte Grappa, not an official KOTR 2027 route.">
-  <script defer src="./js/config.js"></script>
-  <script defer src="./assets/terrain.js"></script>
-  <script defer src="./assets/flyover.js"></script>
+  <title>Plan · KOTR 2027 rider companion</title>
+  <meta name="description" content="Plan, explore and prepare. Official 2027 routes await approval; the cleared Semonzo example is available.">
+  <script type="module" src="./js/site-shell.mjs"></script>
+  <script type="application/json" data-flyover-src="./js/config.js"></script>
+  <script type="application/json" data-flyover-src="./assets/terrain.js"></script>
+  <script type="application/json" data-flyover-src="./assets/flyover.js"></script>
   <style>
     :root { color-scheme: light; --paper:#f9f6ec; --ink:#163c34; --line:#b6c3b4; --rust:#8a3c22 }
     * { box-sizing:border-box }
@@ -59,15 +60,23 @@
     :focus-visible { outline:3px solid #aa4320; outline-offset:3px }
     @media (hover:hover) { a:hover,summary:hover { text-decoration:underline; text-decoration-thickness:2px } }
   </style>
+  <link rel="stylesheet" href="./assets/site.css">
 </head>
 <body>
-<main>
-  <header><strong>KOTR / 2027</strong><span>Monte Grappa · Route preview</span></header>
-  <section id="climb" aria-labelledby="profile-title">
+<a class="skip" href="#site-heading">Skip to main content</a>
+<main id="main">
+  <div id="site-shell">
+    <header class="site-header"><strong>KOTR / 2027</strong></header>
+    <h1 id="site-heading" tabindex="-1">Plan your ride</h1>
+    <p>Official 2027 route details await verification and publication approval.</p>
+    <p>JavaScript enables route selection and the Plan / Explore / Prepare / Ride week companion. No account or FTP needed.</p>
+    <a href="./explore.html">Semonzo example ride clock</a>
+  </div>
+  <section id="climb" aria-labelledby="profile-title" hidden>
     <p class="label">Example ascent · Not an official event route</p>
-    <h1 id="profile-title">Semonzo example ascent</h1>
+    <h2 id="profile-title">Semonzo example ascent · Optional flyover</h2>
     <p>An example ascent from Semonzo to Monte Grappa, not an official event route or group assignment.</p>
-    <p><a href="./explore.html">Try the ride clock: scrub through an hour on Monte Grappa and compare two plans.</a></p>
+    <p><a data-site-clock href="./explore.html">Try the ride clock: scrub through an hour on Monte Grappa and compare two plans.</a></p>
     <figure>
       <div class="ribbon"><span>SEMONZO / ASCENT STUDY</span><span id="mode">Route overview</span></div>
       <p id="message" role="status">Loading satellite terrain…</p>
@@ -82,7 +91,7 @@
             <button type="button" id="preview-motion" aria-controls="map" hidden>Pause preview</button>
             <button type="button" id="retry" hidden>Retry satellite view</button>
             <label>Speed <select id="speed"><option value=".5">½×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label>
-            <button type="button" id="reset">Route overview</button>
+            <button type="button" id="reset">Restart at route overview</button>
           </div>
           <p class="numbers" id="stats"></p>
           <label for="seek"><strong>Elevation profile</strong> · Seek along the climb</label>
