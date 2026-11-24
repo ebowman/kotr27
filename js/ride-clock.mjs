@@ -30,18 +30,35 @@ function timeline(estimate, pace, stopMinutes) {
   return { intervals, finishMinute: elapsedMinutes };
 }
 
-function position(plan, minute) {
+function position(plan, minute, startKey = 'startMinute', endKey = 'endMinute') {
   // Half-open intervals: arrival is stopped; departure is moving.
-  const w = plan.intervals.find(i => minute < i.endMinute);
+  const w = plan.intervals.find(i => minute < i[endKey]);
   if (!w) {
     const last = plan.intervals.at(-1);
     return {chapterId: last.chapterId, status: 'finished', distanceM: last.endM,
       elevationM: last.endElevationM};
   }
-  const fraction = (minute - w.startMinute) / (w.endMinute - w.startMinute);
+  const fraction = (minute - w[startKey]) / (w[endKey] - w[startKey]);
   return {chapterId: w.chapterId, status: w.status,
     distanceM: w.startM + fraction * (w.endM - w.startM),
     elevationM: w.startElevationM + fraction * (w.endElevationM - w.startElevationM)};
+}
+
+// Adapter for one estimateRouteTime result. No imports of the new model in
+// existing release entry trees, no physics or timeline reconstruction here.
+// All boundaries use source seconds, not rounded display minutes.
+export function createRouteClock(result) {
+  if (result?.status !== 'available' || result.model !== 'route-time-steady-windows-v1' ||
+      !Array.isArray(result.intervals) || !result.intervals.length ||
+      !Number.isFinite(result.total?.elapsedSeconds))
+    return {status: 'unavailable', reason: 'A current route-time result is required'};
+  const finishSeconds = result.total.elapsedSeconds;
+  return {status: 'available', identity: result.identity, finishSeconds,
+    atSecond(value) {
+      if (!Number.isFinite(value)) return null;
+      const seconds = Math.max(0, Math.min(value, finishSeconds));
+      return {seconds, ...position(result, seconds, 'startSeconds', 'endSeconds')};
+    }};
 }
 
 // Accept one riderScenario result; no re-estimation or retained rider inputs.
