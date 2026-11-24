@@ -13,6 +13,22 @@ import { estimateAscent } from '../js/ascent-estimator.mjs';
 // Local regression reference only; the browser receives runtime GPX, never JSON.
 const profile = JSON.parse(await readFile(new URL('../assets/semonzo-chapters.v1.json', import.meta.url)));
 
+test('release rejects restricted catalogs and non-allowlisted assets before writing output', async t => {
+  const tmp = await mkdtemp(join(tmpdir(), 'kotr-catalog-gate-'));
+  t.after(() => rm(tmp, {recursive:true, force:true}));
+  const src = join(tmp, 'source');
+  await mkdir(join(src, 'js'), {recursive:true});
+  await mkdir(join(src, 'assets'));
+  for (const file of ['js/route-catalog.mjs','js/example-catalog.mjs','assets/semonzo.gpx'])
+    await cp(new URL('../'+file, import.meta.url), join(src,file));
+  const file = join(src, 'js/example-catalog.mjs'), original = await readFile(file, 'utf8');
+  await writeFile(file, original.replace("redistribution:'approved'", "redistribution:'unknown'"));
+  await assert.rejects(build(src, join(tmp, 'denied')), /public catalog requires/);
+  await writeFile(file, original.replace("path:'assets/semonzo.gpx'", "path:'assets/unapproved.gpx'"));
+  await assert.rejects(build(src, join(tmp, 'unapproved')), /not on public release allowlist/);
+  assert.deepEqual(await readdir(tmp), ['source']);
+});
+
 test('browser startup selects only the unique command-line blank page', async () => {
   const page = {targetId:'startup',type:'page',url:'about:blank'};
   const ignored = [
@@ -60,6 +76,12 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   };
   await edit('index.html', '<title>', '<title>B: ');
   await edit('assets/semonzo.gpx', '>1746.0</ele>', '>1846.0</ele>');
+  // An unmanifested byte change is never a valid release.
+  await assert.rejects(build(src, join(tmp, 'unverified')), /bytes do not match/);
+  const updatedHash = createHash('sha256').update(await readFile(join(src,'assets/semonzo.gpx'))).digest('hex');
+  await edit('js/example-catalog.mjs',
+    'bd4f3a18bf36bed53229a3efe04e6e5a47aab1b37e2fe597ea961d66de07ffa4', updatedHash);
+  await edit('js/example-catalog.mjs', "revisionId:'semonzo-example-v1'", "revisionId:'semonzo-example-v2'");
   await build(src, b);
   await build(src, repeat);
   const files = dir => readdir(dir, {recursive:true});
@@ -72,7 +94,7 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   const expected = ['assets','js','.nojekyll','index.html','explore.html','assets/flyover.js',
     'assets/terrain.js','assets/semonzo.gpx','js/config.js',...['ascent-estimator','chapter-reveal',
       'climb-sensitivity','climb-sensitivity-view','plan-comparison','ride-clock',
-      'rider-controls','rider-scenario','semonzo-profile'].map(n=>`js/${n}.mjs`)];
+      'rider-controls','rider-scenario','semonzo-profile','route-catalog','example-catalog'].map(n=>`js/${n}.mjs`)];
   assert.deepEqual(names.map(n=>n.replace(/\.[0-9a-f]{24}\./,'.')).sort(),expected.sort());
   for (const n of names.filter(n=>n.includes('/'))) {
     const hash = createHash('sha256').update(await readFile(join(a,n))).digest('hex').slice(0,24);
@@ -83,7 +105,7 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   assert.ok(!names.includes('assets/private.txt'));
   assert.ok(!names.some(n=>n.endsWith('.json')));
   // Check static AND dynamic local imports against the final hashed inventory.
-  for (const name of names.filter(n=>n.endsWith('.mjs'))) {
+  for (const name of names.filter(n=>/\.(mjs|js)$/.test(n))) {
     const text = await readFile(join(a,name),'utf8');
     for (const [,spec] of text.matchAll(/(?:from\s*|import\s*\()\s*['"](\.[^'"]+)['"]/g)) {
       assert.match(spec, /\.[0-9a-f]{24}\.mjs$/);
@@ -92,7 +114,7 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   }
   const bNames = new Set(await files(b));
   assert.deepEqual(names.filter(n => !bNames.has(n)).sort(), names.filter(n =>
-    /(?:flyover|semonzo|semonzo-profile|rider-controls)\./.test(n)).sort());
+    /(?:flyover|semonzo|semonzo-profile|example-catalog|rider-controls)\./.test(n)).sort());
   // A clock-only update must reach its importer and the ordinary explorer
   // marker without invalidating the independent flyover route.
   const c = join(tmp, 'clock-only');
@@ -123,6 +145,16 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
     assert.notEqual(await marker(previous),await marker(next));
     previous = next;
   }
+  // A validator change must invalidate both legacy entry dependency trees.
+  const validatorRelease = join(tmp,'validator-change');
+  await edit('js/route-catalog.mjs', 'export function createCatalog', '/* release fixture */ export function createCatalog');
+  await build(src,validatorRelease);
+  const beforeValidator = await files(previous), afterValidator = await files(validatorRelease);
+  const catalogDependents = /\/(?:route-catalog|example-catalog|semonzo-profile|rider-controls|flyover)\./;
+  assert.deepEqual(beforeValidator.filter(n=>!afterValidator.includes(n)).sort(),
+    beforeValidator.filter(n=>catalogDependents.test(n)).sort());
+  for (const entry of ['index.html','explore.html'])
+    assert.notDeepEqual(await readFile(join(previous,entry)),await readFile(join(validatorRelease,entry)));
   let live = a, fail = false, probes = 0, plainNavigations = 0, replacements = 0;
   const legacyRequests=[];
   const allowed = new Set([...names, ...bNames].filter(n => extname(n)));
@@ -150,14 +182,28 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   t.after(() => { server.closeAllConnections(); server.close(); });
   const base = `http://127.0.0.1:${server.address().port}`;
   const requests = [], interceptionErrors = [];
+  // Keep bounded lifecycle evidence for the intermittent invalid-ID failure.
+  // No retries or ignored protocol errors: the final assertion stays strict.
+  const lifecycle = [];
   const {cmd, js, exceptions} = await browser(t, (m, send) => {
+    if (['Network.requestWillBeSent','Network.loadingFailed','Fetch.requestPaused'].includes(m.method)) {
+      const {requestId, networkId, request, canceled, errorText} = m.params;
+      lifecycle.push({method:m.method, requestId, networkId, url:request?.url, canceled, errorText});
+      if (lifecycle.length > 100) lifecycle.shift();
+    }
     if (m.method === 'Network.requestWillBeSent') requests.push(m.params.request.url);
     if (m.method === 'Fetch.requestPaused') {
       const {requestId,request} = m.params;
       const local = new URL(request.url).origin === base;
       send(local ? 'Fetch.continueRequest' : 'Fetch.failRequest',
         {requestId,...(!local && {errorReason:'BlockedByClient'})})
-        .catch(error=>interceptionErrors.push(error.message));
+        .catch(error=>{
+          interceptionErrors.push(error.message);
+          t.diagnostic(JSON.stringify({
+            interceptionFailure:{requestId, url:request.url, networkId:m.params.networkId, error:error.message},
+            lifecycle,
+          }));
+        });
     }
   });
   await cmd('Network.enable');

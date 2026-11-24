@@ -11,6 +11,7 @@ const format = n => Number(n.toFixed(2));
 
 function installClock(profile) {
   const {segments, chapters, distanceM} = profile;
+  el('route-end').textContent = `${(distanceM/1000).toFixed(1)} km · summit`;
   const slider = el('minute'), paceB = el('pace-b'), stop = el('stop-b');
   const points = [[0, segments[0].startElevationM], ...segments.map(s => [s.endM, s.endElevationM])];
   const low = Math.min(...points.map(p => p[1])), high = Math.max(...points.map(p => p[1]));

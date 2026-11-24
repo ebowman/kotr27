@@ -5,21 +5,12 @@
   const km = metres => (metres / 1000).toFixed(1);
 
   async function load() {
-    const response = await fetch('./assets/semonzo.gpx');
-    if (!response.ok) throw Error('Route unavailable');
-    const xml = new DOMParser().parseFromString(await response.text(), 'application/xml');
-    const points = [];
-    for (const pt of xml.querySelectorAll('trkpt')) {
-      const lon = Number(pt.getAttribute('lon')), lat = Number(pt.getAttribute('lat'));
-      const height = Number(pt.querySelector('ele')?.textContent);
+    const {loadExampleTrack} = await import('../js/semonzo-profile.mjs');
+    // Same pinned geometry and horizontal distance axis as the chapter model.
+    return (await loadExampleTrack()).map(({lon, lat, height, distanceM}) => {
       const east = (lon - 11.78) * 77450, north = (lat - 45.84) * 111200;
-      const prev = points.at(-1);
-      const d = prev ? prev.d + Math.hypot(east - prev.east, north - prev.north) : 0;
-      if (!Number.isFinite(d + height)) throw Error('Invalid route');
-      if (!prev || d > prev.d) points.push({ lon, lat, east, north, height, d });
-    }
-    if (points.length < 2) throw Error('Empty route');
-    return points;
+      return {lon, lat, east, north, height, d:distanceM};
+    });
   }
 
   function start(points) {

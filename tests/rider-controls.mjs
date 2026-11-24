@@ -104,6 +104,20 @@ for (const width of [320,1200]) test(`packaged ${width}px private keyboard walkt
   const {result:derived} = await cmd('Runtime.evaluate',{awaitPromise:true,returnByValue:true,
     expression:`import('./${profileModule}').then(m=>m.loadProfile())`});
   for (const key of ['schemaVersion','distanceM','chapters','segments']) assert.deepEqual(derived.value[key], route[key]);
+  // Shared geometry parsing must not turn absent elevation into a flat/zero
+  // fallback. The flyover and model now use this same parser/distance axis.
+  const {result:invalidTrack} = await cmd('Runtime.evaluate',{awaitPromise:true,returnByValue:true,
+    expression:`import('./${profileModule}').then(m => {
+      const xml = text => new DOMParser().parseFromString(text, 'application/xml');
+      return ['','<ele></ele>','<ele>NaN</ele>'].map(elevation => {
+        try {
+          m.readExampleTrack(xml('<gpx><trk><trkseg><trkpt lat="45" lon="11">' +
+            elevation + '</trkpt><trkpt lat="45.001" lon="11"><ele>100</ele></trkpt></trkseg></trk></gpx>'));
+          return 'unexpected success';
+        } catch (error) { return error.message; }
+      });
+    })`});
+  assert.deepEqual(invalidTrack.value, Array(3).fill('Missing GPX measurement'));
   const before = requests.length;
   const text = () => js(`document.querySelector('#result').textContent`);
   const focus = () => js(`document.activeElement.id`);

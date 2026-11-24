@@ -162,6 +162,13 @@ sys.stdout.buffer.write(im.crop((2300,300,3300,900)).convert("I").convert("I;16"
     const sdk = await readFile(process.env.MAPBOX_GL_215);
     assert.equal(createHash('sha256').update(sdk).digest('hex'),
       '302ee91531bc123693caa52eb74f71a2fb9ff61311f54d59ec3c04325dc5b2f7');
+    const sourceGPX = await readFile(new URL('../assets/semonzo.gpx',import.meta.url));
+    // Keep the synthetic camera fixture and its manifest hash in lockstep.
+    // Production loaders still verify every byte; never bypass that check.
+    const fixtureGPX = roadHeight ? sourceGPX : sourceGPX.toString().replace(
+      /(<trkpt lon="([^"]+)" lat="([^"]+)"><ele>)([^<]+)/g,(_,tag,lon,lat,h)=>
+        tag+((scenario==='cold' ? 1250 : ['ride','ridge'].includes(scenario) ? ridgeHeight(+lon,+lat) : 500)+h*.01));
+    const hash = data => createHash('sha256').update(data).digest('hex');
     const server = createServer(async (req,res) => {
       const path = req.url;
       if (/^\/(sat|dem|cover)\//.test(path)) {
@@ -205,13 +212,14 @@ sys.stdout.buffer.write(im.crop((2300,300,3300,900)).convert("I").convert("I;16"
       else if (path === '/sdk.css') res.writeHead(200,{'Content-Type':'text/css'}).end(
         '.mapboxgl-map{overflow:hidden}.mapboxgl-canvas,.mapboxgl-marker{position:absolute;top:0;left:0}');
       else if (path === '/js/config.js') res.end('window.KOTR_CONFIG={}');
-      else if (path === '/' || /^\/assets\/(flyover\.js|terrain\.js|semonzo\.gpx)$/.test(path)) {
+      else if (path === '/' || /^\/assets\/(flyover\.js|terrain\.js|semonzo\.gpx)$/.test(path) ||
+          /^\/js\/(semonzo-profile|example-catalog|route-catalog)\.mjs$/.test(path)) {
         let body = await readFile(new URL('..'+(path==='/'?'/index.html':path),import.meta.url));
         // Keep the real route geometry; give its test GPX a vertical datum
         // consistent with the synthetic DEM used for the camera experiments.
-        if (path.endsWith('.gpx') && !roadHeight) body=body.toString().replace(
-          /(<trkpt lon="([^"]+)" lat="([^"]+)"><ele>)([^<]+)/g,(_,tag,lon,lat,h)=>
-            tag+((scenario==='cold' ? 1250 : ['ride','ridge'].includes(scenario) ? ridgeHeight(+lon,+lat) : 500)+h*.01));
+        if (path.endsWith('.gpx')) body=fixtureGPX;
+        if (path === '/js/example-catalog.mjs') body=body.toString().replace(hash(sourceGPX),hash(fixtureGPX));
+        if (path.endsWith('.mjs')) res.setHeader('Content-Type','text/javascript');
         if (path.endsWith('terrain.js')) body = body.toString().replace('https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl','/sdk');
         // Drive only the player's RAF deterministically; the SDK keeps its
         // own render loop and its normal terrain/DOM update schedule.

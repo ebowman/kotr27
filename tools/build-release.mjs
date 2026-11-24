@@ -2,7 +2,8 @@
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { createCatalog, verifyAsset } from '../js/route-catalog.mjs';
 
 const digest = data => createHash('sha256').update(data).digest('hex').slice(0, 24);
 function replace(text, from, to) {
@@ -13,17 +14,32 @@ function replace(text, from, to) {
 export async function build(source, destination) {
   // Refuse existing trees (no mixing releases) and keep artifacts out of source.
   const root = await realpath(source);
+  // Validate source catalog and pinned bytes before writing any public output.
+  // No discovery or recursive route intake: only the existing cleared example.
+  const catalogFile = join(root, 'js/example-catalog.mjs');
+  const {exampleCatalog} = await import(pathToFileURL(catalogFile).href + '?' + digest(await readFile(catalogFile)));
+  createCatalog(exampleCatalog.data);
+  for (const route of exampleCatalog.data.routes) for (const revision of route.revisions) {
+    for (const ref of [revision.geometry, revision.profile, revision.climbs, revision.pois, ...(revision.downloads ?? [])]) {
+      if (!ref?.path) continue;
+      if (ref.path !== 'assets/semonzo.gpx') throw Error(`Asset not on public release allowlist: ${ref.path}`);
+      await verifyAsset(ref, await readFile(join(root, ref.path)));
+    }
+  }
   const out = join(await realpath(dirname(resolve(destination))), basename(resolve(destination)));
   const rel = relative(root, out);
   if (!rel || !(rel === '..' || rel.startsWith('..' + sep))) throw Error('Output must be outside source');
   await mkdir(out);
   const names = new Map();
   // Dependency-first allowlist. Specifiers in modules resolve from that
-  // module, while the classic flyover script fetches relative to its page.
+  // module (including dynamic imports in the classic flyover script).
+  // Catalog asset paths alone are deployment-root-relative.
   const graph = {
     'assets/semonzo.gpx': [], 'js/config.js': [], 'assets/terrain.js': [],
-    'assets/flyover.js': ['./assets/semonzo.gpx'],
-    'js/semonzo-profile.mjs': ['../assets/semonzo.gpx'],
+    'js/route-catalog.mjs': [],
+    'js/example-catalog.mjs': ['./route-catalog.mjs','assets/semonzo.gpx'],
+    'js/semonzo-profile.mjs': ['./example-catalog.mjs'],
+    'assets/flyover.js': ['../js/semonzo-profile.mjs'],
     'js/ascent-estimator.mjs': [], 'js/rider-scenario.mjs': ['./ascent-estimator.mjs'],
     'js/climb-sensitivity.mjs': ['./ascent-estimator.mjs'],
     'js/climb-sensitivity-view.mjs': ['./climb-sensitivity.mjs'],
@@ -34,7 +50,7 @@ export async function build(source, destination) {
   for (const [file, deps] of Object.entries(graph)) {
     let data = await readFile(join(root, file));
     for (const spec of deps) {
-      const dir = file.endsWith('.mjs') ? dirname(file) : '.';
+      const dir = spec.startsWith('assets/') ? '.' : dirname(file);
       const name = names.get(join(dir, spec));
       if (!name) throw Error(`Unresolved release dependency: ${file} → ${spec}`);
       data = replace(data.toString(), spec, spec.replace(basename(spec), basename(name)));

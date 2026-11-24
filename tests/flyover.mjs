@@ -11,6 +11,8 @@ import { browser, until } from './browser.mjs';
 test('phone-sized cinematic follow, controls and asset fallbacks', {timeout: 60000}, async t => {
   const files = {'index.html':'text/html','assets/flyover.js':'text/javascript',
     'assets/terrain.js':'text/javascript', 'js/config.js':'text/javascript',
+    'js/semonzo-profile.mjs':'text/javascript', 'js/example-catalog.mjs':'text/javascript',
+    'js/route-catalog.mjs':'text/javascript',
     'assets/semonzo.gpx':'application/xml'};
   const omit = new Set(), served = new Set(), legacy = [];
   const sdkStarted = Promise.withResolvers();
