@@ -102,7 +102,8 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
       'rider-controls','rider-scenario','rider-preferences','preference-storage','preferences-view',
       'semonzo-profile','route-analysis','route-analysis-loader','route-pack-contract','route-catalog','example-catalog','route-state','site-shell',
       'itinerary','trip-planner','trip-planner-view','route-time','route-playback','route-playback-adapters',
-      'route-session','route-briefing','route-briefing-view','route-comparison','route-comparison-view'].map(n=>`js/${n}.mjs`)];
+      'route-session','route-briefing','route-briefing-view','route-comparison','route-comparison-view',
+      'route-pace','route-pace-view'].map(n=>`js/${n}.mjs`)];
   expected.push(...routeFiles.map(n=>n.replace(/\.[0-9a-f]{24}\./,'.')));
   assert.deepEqual(names.map(n=>n.replace(/\.[0-9a-f]{24}\./,'.')).sort(),expected.sort());
   for (const n of names.filter(n=>n.includes('/'))) {
@@ -125,24 +126,24 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   const bNames = new Set(await files(b));
   assert.deepEqual(names.filter(n => !bNames.has(n)).sort(), names.filter(n =>
     /(?:flyover|semonzo|semonzo-profile|example-catalog|route-playback-adapters|rider-controls|site-shell)\./.test(n)).sort());
-  // A clock-only update must reach its importer and the ordinary explorer
-  // marker without invalidating the independent flyover route.
+  // The shared route clock now reaches BOTH document shells, but still does
+  // not change the independent camera script or geometry bytes.
   const c = join(tmp, 'clock-only');
   await edit('js/ride-clock.mjs', 'export function createRideClock', '/* release fixture */ export function createRideClock');
   await build(src, c);
   const cNames = new Set(await files(c));
-  assert.deepEqual([...bNames].filter(n=>!cNames.has(n)).sort(), [...bNames].filter(n=>/\/(?:ride-clock|rider-controls)\./.test(n)).sort());
-  assert.deepEqual(await readFile(join(b,'index.html')), await readFile(join(c,'index.html')));
+  assert.deepEqual([...bNames].filter(n=>!cNames.has(n)).sort(), [...bNames].filter(n=>/\/(?:ride-clock|route-pace-view|site-shell|rider-controls)\./.test(n)).sort());
+  assert.notDeepEqual(await readFile(join(b,'index.html')), await readFile(join(c,'index.html')));
   const marker = async dir => (await readFile(join(dir,'explore.html'),'utf8')).match(/<meta name="kotr-release" content="([a-f0-9]{24})">/)[1];
   const indexMarker = async dir => (await readFile(join(dir,'index.html'),'utf8')).match(/<meta name="kotr-release" content="([a-f0-9]{24})">/)[1];
   const indexMarkers = new Map([[a,await indexMarker(a)],[b,await indexMarker(b)]]);
   assert.notEqual(await marker(b),await marker(c));
   // Each sensitivity-only edit invalidates exactly its transitive importers.
-  // All other bytes, including every flyover input and index.html, stay stable.
+  // Both entry markers change; unrelated assets (including camera) stay stable.
   let previous = c;
   for (const [module, changed] of [
-    ['climb-sensitivity', ['climb-sensitivity','climb-sensitivity-view','rider-controls']],
-    ['climb-sensitivity-view', ['climb-sensitivity-view','rider-controls']],
+    ['climb-sensitivity', ['climb-sensitivity','climb-sensitivity-view','route-pace-view','site-shell','rider-controls']],
+    ['climb-sensitivity-view', ['climb-sensitivity-view','route-pace-view','site-shell','rider-controls']],
   ]) {
     const next = join(tmp,module);
     await edit(`js/${module}.mjs`, 'import {', '/* release fixture */ import {');
@@ -151,10 +152,11 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
     const affected = n => changed.some(m=>n.startsWith(`js/${m}.`));
     assert.deepEqual(beforeNames.filter(n=>!afterNames.includes(n)).sort(),beforeNames.filter(affected).sort());
     assert.deepEqual(afterNames.filter(n=>!beforeNames.includes(n)).sort(),afterNames.filter(affected).sort());
-    for (const name of beforeNames.filter(n=>extname(n) && n !== 'explore.html' && !affected(n))) {
+    for (const name of beforeNames.filter(n=>extname(n) && !['explore.html','index.html'].includes(n) && !affected(n))) {
       assert.deepEqual(await readFile(join(previous,name)),await readFile(join(next,name)),name);
     }
     assert.notEqual(await marker(previous),await marker(next));
+    assert.notEqual(await indexMarker(previous),await indexMarker(next));
     previous = next;
   }
   // A validator change must invalidate both legacy entry dependency trees.
@@ -172,9 +174,13 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   let shellPrevious = validatorRelease;
   for (const [file, before, after, affected] of [
     ['js/route-analysis.mjs', 'export function analyzeRoute', '/* release fixture */ export function analyzeRoute',
-      /\/(?:route-analysis|route-analysis-loader|trip-planner|trip-planner-view|semonzo-profile|route-time|route-playback-adapters|route-briefing|route-briefing-view|route-comparison-view|site-shell|rider-controls|flyover)\./],
+      /\/(?:route-analysis|route-analysis-loader|trip-planner|trip-planner-view|semonzo-profile|route-time|route-pace|route-pace-view|route-playback-adapters|route-briefing|route-briefing-view|route-comparison-view|site-shell|rider-controls|flyover)\./],
     ['js/route-playback.mjs', 'export function createRoutePlayback', '/* release fixture */ export function createRoutePlayback',
-      /\/(?:route-playback|route-session|route-briefing-view|route-comparison-view|site-shell|rider-controls|flyover)\./],
+      /\/(?:route-playback|route-session|route-pace-view|route-briefing-view|route-comparison-view|site-shell|rider-controls|flyover)\./],
+    ['js/route-pace.mjs', 'export function createRoutePace', '/* release fixture */ export function createRoutePace',
+      /\/(?:route-pace|route-pace-view|trip-planner-view|site-shell|rider-controls)\./],
+    ['js/route-pace-view.mjs', 'export function installRoutePace', '/* release fixture */ export function installRoutePace',
+      /\/(?:route-pace-view|site-shell|rider-controls)\./],
     ['js/route-briefing.mjs', 'export function briefingAt', '/* release fixture */ export function briefingAt',
       /\/(?:route-briefing|route-briefing-view|route-comparison-view|site-shell|rider-controls)\./],
     ['js/route-comparison.mjs', 'export function comparisonRow', '/* release fixture */ export function comparisonRow',

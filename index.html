@@ -86,11 +86,12 @@
       <figcaption class="panel">
         <p class="label">Provisional preview · Not for navigation</p>
         <div id="deck" hidden>
+          <p id="flyover-ride-time">Estimated ride time uses the shared pace scenario, not animation rate.</p>
           <div class="controls">
             <button type="button" id="play">Play flyover</button>
             <button type="button" id="preview-motion" aria-controls="map" hidden>Pause preview</button>
             <button type="button" id="retry" hidden>Retry satellite view</button>
-            <label>Speed <select id="speed"><option value=".5">½×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label>
+            <label>Animation rate <select id="speed"><option value=".5">½×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label>
             <button type="button" id="reset">Restart at route overview</button>
           </div>
           <p class="numbers" id="stats"></p>

@@ -32,7 +32,7 @@ export function createAnalysisPlaybackRoute(analysis, {estimate, recording} = {}
 
 // The old example uses exact track distances with a millimetre-rounded profile.
 // Keep the raw endpoint and authored chapter starts, not a rescaled official axis.
-export function createSemonzoPlaybackRoute(points, profile) {
+export function createSemonzoPlaybackRoute(points, profile, {estimate} = {}) {
   if (!Array.isArray(points) || points.length < 2 || !profile?.chapters?.length)
     throw TypeError('Example track and authored profile required');
   const track = points.map(p => ({...p}));
@@ -48,7 +48,14 @@ export function createSemonzoPlaybackRoute(points, profile) {
     annotationRevisionId: 'none'});
   const chapters = profile.chapters.map((c, i) => Object.freeze({...c,
     endM: i === profile.chapters.length - 1 ? distanceM : c.endM}));
+  if (estimate?.identity && !sameIdentity(estimate.identity, identity))
+    throw TypeError('Example estimate identity mismatch');
   return Object.freeze({identity, distanceM, chapters: Object.freeze(chapters),
+    // The verified legacy profile rounds only the endpoint to millimetres.
+    // Map that endpoint exactly, without changing intermediate seek distances.
+    estimatedAtDistance: d => estimate?.status === 'available' ?
+      routeTimeAtDistance(estimate, d === distanceM ? profile.distanceM : Math.min(d, profile.distanceM)) :
+      estimate ?? unavailable('No estimate supplied'),
     positionAt(d) {
       let a = 0, b = track.length - 1;
       while (b - a > 1) {

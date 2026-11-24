@@ -147,6 +147,17 @@ export function createRoutePlayback({loadRoute, animationDurationSeconds = 150,
   const api = {
     getSnapshot: () => snapshot,
     selectRoute,
+    replaceRoute(value) {
+      if (!usable()) return snapshot;
+      validateRoute(value, state.selection);
+      if (value.distanceM !== route.distanceM ||
+          JSON.stringify(value.identity) !== JSON.stringify(route.identity))
+        throw TypeError('Replacement must retain exact route identity and distance');
+      pause();
+      route = value;
+      try { position(state.distanceM); return publish(); }
+      catch { return fail('route-projection'); }
+    },
     seekDistance,
     selectChapter,
     nextChapter: () => selectChapter(state.nextChapterId),

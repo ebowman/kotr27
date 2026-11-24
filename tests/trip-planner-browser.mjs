@@ -50,15 +50,28 @@ async function fixture(t) {
 
 for (const width of [320,1280]) test(`packaged planner ${width}px: seven choices, keyboard, exact downloads, reload and changes`, async t => {
   const f = await fixture(t);
-  const requests = [];
+  const requests = [], downloads = [];
   const {cmd,js,exceptions} = await browser(t,m => {
     if (m.method === 'Network.requestWillBeSent') requests.push(m.params.request.url);
+    if (m.method === 'Browser.downloadWillBegin' || m.method === 'Browser.downloadProgress')
+      downloads.push({method:m.method,...m.params});
   });
   await cmd('Page.enable');
   await cmd('Network.enable');
   await cmd('Network.setBlockedURLs',{urls:['https://*']});
   await cmd('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:width<600});
-  await cmd('Browser.setDownloadBehavior',{behavior:'allow',downloadPath:f.downloads});
+  await cmd('Browser.setDownloadBehavior',{behavior:'allow',downloadPath:f.downloads,eventsEnabled:true});
+  const completed = async started => until(()=>{
+    const terminal=downloads.find(d=>d.guid===started.guid && ['completed','canceled'].includes(d.state));
+    if (terminal) assert.equal(terminal.state,'completed','browser must complete, not cancel, this download');
+    return terminal;
+  });
+  const downloadedFile = async (route, since) => {
+    const name=`${route.id}--${route.currentRevisionId}.gpx`;
+    const started=await until(()=>downloads.slice(since).find(d=>d.suggestedFilename===name));
+    await completed(started);
+    return readFile(join(f.downloads,name));
+  };
   const ready = () => until(() => js(`document.querySelector('#trip-planner')?.dataset.ready === 'true' &&
     document.querySelector('#site-shell')?.dataset.ready === 'true'`));
   const key = async (key,code,n) => {
@@ -114,24 +127,34 @@ for (const width of [320,1280]) test(`packaged planner ${width}px: seven choices
   assert.deepEqual(await state('return s.snapshot().itinerary;'),saved);
   assert.match(await js('location.href'),/route=rwgps-/,'incoming active route is separate');
   // Single download bytes match the public revision (not the raw private FIT).
+  let downloadBoundary=downloads.length;
   await js(`document.getElementById('trip-gpx-${d1.id}').click()`);
-  await until(async () => (await readdir(f.downloads)).some(n => n === `${d1.id}--${d1.currentRevisionId}.gpx`));
-  const downloaded = await readFile(join(f.downloads,`${d1.id}--${d1.currentRevisionId}.gpx`));
+  // Chrome may create an empty destination before writing it. Await the
+  // correlated browser completion event, not filename appearance or UI handoff.
+  const downloaded = await downloadedFile(d1,downloadBoundary);
   assert.equal(createHash('sha256').update(downloaded).digest('hex'),d1.revisions[0].geometry.sha256);
   await until(() => js(`document.getElementById('trip-download-results').textContent.includes('handed-to-browser')`));
   assert.doesNotMatch(downloaded.toString(),/<time>|<name>|<metadata>|<extensions>/);
   // One corrupt batch member must not suppress healthy choices or pretend saved.
   const bad = f.pack.catalog.routes.find(r => r.id === saved.choices.find(c => c.routeId !== d1.id).routeId);
   f.faults.path = bad.revisions[0].geometry.path; f.faults.corrupt = true;
+  downloadBoundary=downloads.length;
   await js(`document.getElementById('trip-download-gpx').click()`);
   await until(() => js(`!document.getElementById('trip-download-gpx').disabled &&
     document.getElementById('trip-download-results').textContent.includes('Not offered')`));
   const report = await js(`document.getElementById('trip-download-results').textContent`);
   assert.match(report,/checksum mismatch/); assert.match(report,/handed-to-browser/);
+  const healthy=saved.choices.filter(c=>c.routeId!==bad.id).length;
+  const started=await until(()=>{
+    const begins=downloads.slice(downloadBoundary).filter(d=>d.method==='Browser.downloadWillBegin');
+    return begins.length===healthy && begins;
+  });
+  await Promise.all(started.map(completed));
   assert.ok(!(await readdir(f.downloads)).some(n => n.startsWith(bad.id)));
   f.faults.path = null;
+  downloadBoundary=downloads.length;
   await js(`document.getElementById('trip-gpx-${bad.id}').click()`);
-  await until(async () => (await readdir(f.downloads)).some(n => n === `${bad.id}--${bad.currentRevisionId}.gpx`));
+  await downloadedFile(bad,downloadBoundary);
   for (const name of await readdir(f.downloads)) {
     const route = f.pack.catalog.routes.find(r => name === `${r.id}--${r.currentRevisionId}.gpx`);
     if (!route) continue; // Browser may suffix an already-saved duplicate.

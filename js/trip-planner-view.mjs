@@ -1,5 +1,6 @@
 import { emptyItinerary, itineraryRows, chooseRoute, tripTotals } from './itinerary.mjs';
 import { plannerAnalysis, routeSourceLink, downloadRoutes, browserDownload } from './trip-planner.mjs';
+import { routePace, paceScenarios, formatDuration } from './route-pace.mjs';
 
 const node = (tag, text, parent) => {
   const e = document.createElement(tag); e.textContent = text; parent.append(e); return e;
@@ -47,6 +48,15 @@ export function installTripPlanner(parent, {pack, catalog, read, preferences, pr
       (total.missing.length ? `Partial subtotal: ${total.available}/${total.selected} routes available. Missing metrics: ${total.missing.join(', ')}.` :
         total.selected ? 'Totals cover selected routes only, not unselected groups.' : 'Empty itinerary; no rides inferred.'), root);
     summary.id = 'trip-summary'; summary.tabIndex = -1; summary.setAttribute('role','status');
+    const time=routePace.trip(rows,analyses);
+    const timing=node('p',`${paceScenarios[routePace.snapshot().scenario]} · Estimated trip: ` +
+      `${formatDuration(time.total.movingSeconds)} moving + ${formatDuration(time.total.stopSeconds)} planned stops = ` +
+      `${formatDuration(time.total.elapsedSeconds)} elapsed. ` +
+      (time.missing.length ? `Partial subtotal; unavailable: ${time.missing.join(', ')}. No substituted profile.` :
+        rows.length ? 'Same unrounded route models as Explore pace / ride clock.' : 'No routes selected; no ride inferred.') +
+      ' Edit optional rider inputs, scenario and revision-bound chapter stops in Explore. Mechanical work is not food calories.',root);
+    timing.id='trip-time';
+    for (const [k,v] of Object.entries(time.total)) timing.dataset[k]=String(v);
     const list = node('ul', '', root); list.id = 'trip-itinerary';
     for (const row of rows) node('li',
       `${row.choice.dayId}: ${row.route?.name ?? row.choice.routeId} · ${row.choice.revisionId} · ${row.status}`, list);
@@ -137,6 +147,7 @@ export function installTripPlanner(parent, {pack, catalog, read, preferences, pr
     if (JSON.stringify(next) === JSON.stringify(itinerary)) return;
     itinerary = next; generation++; render();
   });
+  routePace.subscribe(render);
   render();
   const ready = Promise.all(catalog.data.routes.map(async route => {
     if (!route.currentRevisionId) return;

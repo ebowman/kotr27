@@ -248,7 +248,8 @@ for (const width of [320,1200]) test(`packaged ${width}px private keyboard walkt
     for (const id of n.childIds || []) walk(ax.get(id));
   }
   walk(nodes[0]);
-  assert.deepEqual(headings,['Explore the route','Semonzo example briefing','How far up Monte Grappa in an hour?','Chapter by chapter',
+  assert.deepEqual(headings,['Explore the route','Semonzo example briefing','Semonzo example ascent · Pace and ride clock',
+    'How far up Monte Grappa in an hour?','Chapter by chapter',
     'Two ways up the same climb','See a chapter in the flyover']);
   assert.ok(nodes.some(n=>n.role.value==='textbox' && n.name.value==='FTP in watts (optional)'));
   const ratios = await js(`(()=>{

@@ -88,7 +88,8 @@ for (const width of [320,375,1280]) test(`packaged shell ${width}px: no-map, his
   await key('Enter','Enter',13);
   await until(() => js(`!!document.querySelector('#site-chapters a')`));
   assert.equal(await js('document.activeElement.id'),'site-heading');
-  assert.ok(await js(`document.getElementById('legacy-explorer').hidden`),'briefing before ride clock');
+  assert.ok(await js(`!document.getElementById('legacy-explorer') || document.getElementById('legacy-explorer').hidden`),
+    'briefing before legacy ride clock, in either document shell');
   await js(`document.querySelector('#site-chapters li:nth-child(3) a').focus()`);
   await key('Enter','Enter',13);
   assert.equal(await js('document.activeElement.id'),'site-heading');
@@ -96,13 +97,15 @@ for (const width of [320,375,1280]) test(`packaged shell ${width}px: no-map, his
   assert.match(chapterURL,/chapter=high-step/);
   assert.match(chapterURL,/rev=semonzo-example-v1/);
   assert.match(await js(`document.querySelector('#site-content').textContent`),/11.0 km selected/);
-  // Destination headings render before async GPX completion applies navigation
-  // focus. Hold that response to prove heading text alone is not readiness.
-  profileGate = Promise.withResolvers();
+  // Common areas now stay in the same document, preserving memory-only pace,
+  // rider and trip choices. They must not refetch/reinitialize the profile.
+  // Wait for the independent seven-route planner before baselining requests;
+  // example shell readiness alone does not mean those GPXs have all arrived.
+  await until(() => js(`document.getElementById('trip-planner')?.dataset.ready === 'true'`));
   const beforePrepare = profileRequests;
   await js(`document.querySelector('.site-nav a:nth-child(3)').click()`);
   await until(() => js(`document.querySelector('#site-heading')?.textContent === 'Prepare for the ride'`));
-  await until(() => profileRequests > beforePrepare);
+  assert.equal(profileRequests,beforePrepare);
   const preferences = files.find(file => file.startsWith('js/preferences-view.'));
   const reviewed = await cmd('Runtime.evaluate', {expression:
     `import('./${preferences}').then(async m=>{await m.riderState.ready;return m.riderState.snapshot();})`,
@@ -110,10 +113,9 @@ for (const width of [320,375,1280]) test(`packaged shell ${width}px: no-map, his
   assert.ok(!reviewed.exceptionDetails);
   assert.deepEqual(reviewed.result.value.consent, {rider:false, preferences:false});
   assert.equal(reviewed.result.value.validation.kind, 'example');
-  assert.equal(await js('document.activeElement.tagName'),'BODY');
-  assert.notEqual(await js(`document.querySelector('#site-shell').dataset.ready`),'true');
-  assert.equal(await js(`document.querySelector('#site-content').getAttribute('aria-busy')`),'true');
-  profileGate.resolve();
+  assert.equal(await js('document.activeElement.id'),'site-heading');
+  assert.equal(await js(`document.querySelector('#site-shell').dataset.ready`),'true');
+  assert.equal(await js(`document.querySelector('#site-content').getAttribute('aria-busy')`),'false');
   await ready();
   assert.match(await js('location.href'),/chapter=high-step/);
   assert.equal(await js('document.activeElement.id'),'site-heading');

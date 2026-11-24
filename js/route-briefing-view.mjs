@@ -143,8 +143,13 @@ export function installRouteBriefing(parent, onSeek) {
       if (!s.position || s.identity?.revisionId!==a.revisionId) return;
       const b=briefingAt(a,s.distanceM), x=1000*s.distanceM/a.distanceM, [cx,cy]=project(s.position);
       estimateStatus.textContent=s.estimatedRide.status==='unavailable' ?
-        'Ride-time estimate unavailable: source-derived profile is outside the shared model domain. Extreme processed grades are not corrected or verified road grades. Route reading remains available.' :
-        'Ride-time modeling is separate from this animation; no personal duration or recorded time is asserted here.';
+        'Ride-time estimate unavailable: correct or clear invalid rider inputs, or this profile is outside the shared model domain. Extreme processed grades are not corrected or verified road grades. Route reading remains available.' :
+        `Estimated ride time: ${(s.estimatedRide.elapsedSeconds/60).toFixed(1)} min elapsed, ` +
+        `${(s.estimatedRide.movingSeconds/60).toFixed(1)} min moving. Same shared pace scenario; not animation or recorded time.`;
+      for (const k of ['movingSeconds','elapsedSeconds','stopSeconds']) {
+        if (s.estimatedRide.status==='available') estimateStatus.dataset[k]=String(s.estimatedRide[k]);
+        else delete estimateStatus.dataset[k];
+      }
       for (const e of [map,profile,status]) e.dataset.distance=String(s.distanceM);
       cursor.setAttribute('x1',x); cursor.setAttribute('x2',x);
       dot.setAttribute('cx',cx); dot.setAttribute('cy',cy);

@@ -176,6 +176,16 @@
     el('speed').addEventListener('change', () => controller.setAnimationRate(Number(el('speed').value)));
     subscribePlayback(snapshot => {
       if (snapshot.identity?.routeId !== 'semonzo-example' || !snapshot.position) return;
+      const hud=el('flyover-ride-time'), time=snapshot.estimatedRide;
+      if (hud) {
+        hud.textContent=time.status==='available' ?
+          `Estimated ride: ${(time.elapsedSeconds/60).toFixed(1)} min elapsed · ${(time.movingSeconds/60).toFixed(1)} min moving. Shared pace scenario; not animation or recorded time.` :
+          'Estimated ride time unavailable; correct or clear rider inputs. Animation remains independent.';
+        for (const k of ['movingSeconds','elapsedSeconds','stopSeconds']) {
+          if (time.status==='available') hud.dataset[k]=String(time[k]);
+          else delete hud.dataset[k];
+        }
+      }
       const previous = d;
       d = snapshot.distanceM;
       playing = snapshot.phase === 'playing';

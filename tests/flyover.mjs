@@ -21,6 +21,8 @@ test('phone-sized cinematic follow, controls and asset fallbacks', {timeout: 600
     'js/route-analysis-loader.mjs':'text/javascript',
     'js/route-playback.mjs':'text/javascript', 'js/route-playback-adapters.mjs':'text/javascript',
     'js/route-session.mjs':'text/javascript', 'js/route-time.mjs':'text/javascript',
+    'js/route-pace.mjs':'text/javascript', 'js/route-pace-view.mjs':'text/javascript',
+    'js/ride-clock.mjs':'text/javascript',
     'js/route-briefing.mjs':'text/javascript', 'js/route-briefing-view.mjs':'text/javascript',
     'js/route-comparison.mjs':'text/javascript', 'js/route-comparison-view.mjs':'text/javascript',
     'js/route-state.mjs':'text/javascript', 'js/site-shell.mjs':'text/javascript', 'assets/site.css':'text/css',

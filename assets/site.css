@@ -46,6 +46,18 @@ a { color:inherit; text-underline-offset:.2em }
 .trip-route h3 { font:600 1.15rem/1.4 system-ui,sans-serif }
 .trip-change { border-left:4px solid var(--rust); padding:.75rem; background:#fffdf6 }
 #trip-summary { font-weight:700 }
+#route-pace { margin:2rem 0; min-width:0; overflow-wrap:anywhere; border-top:2px solid var(--line); padding-top:1rem }
+#route-pace input { font:inherit; max-width:100%; min-height:44px }
+#route-pace input[type="range"] { display:block; width:100% }
+#route-pace select { width:100% }
+#pace-chapters { max-height:24rem; overflow:auto; padding-left:1.5rem }
+#pace-sens-chart { border:1px solid var(--line); background:#fffdf6 }
+#pace-sens-chart svg { display:block; width:100%; height:auto }
+#pace-sens-chart text { fill:var(--ink); font:18px system-ui,sans-serif }
+#pace-sens-chart [data-i] { cursor:pointer }
+#pace-sens-scale { display:flex; justify-content:space-between }
+#pace-sens-comparisons { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,15rem),1fr)); gap:1rem }
+#pace-sens-comparisons section { min-width:0; border-top:1px solid var(--line) }
 #route-briefing { margin:1.5rem 0; overflow-wrap:anywhere; min-width:0 }
 #briefing-chapters { padding-left:1.5rem; max-height:26rem; overflow:auto; border:1px solid var(--line); padding-right:.6rem }
 #briefing-chapters li { padding:.5rem }

@@ -1,5 +1,4 @@
 // Local, revision-bound duration estimates, not recorded or animation time.
-// No UI/runtime entry imports this module until the downstream integration.
 // Public contract, limits and D4S availability: docs/route-time.md.
 import { analysisRecipe } from './route-analysis.mjs';
 import { estimateEffort } from './ascent-estimator.mjs';
@@ -127,7 +126,7 @@ function timedResult(analysis, estimate, stops, assumptions) {
   }
   return freeze({schemaVersion: 1, status: 'available', model: routeTimeModel,
     identity: {...analysis.identity}, distanceM: analysis.distanceM,
-    elevationBasis: analysisRecipe, assumptions: {...assumptions, stopSeconds: stopped},
+    elevationBasis: analysis.recipe, assumptions: {...assumptions, stopSeconds: stopped},
     chapters, intervals,
     total: {...estimate.total, stopSeconds: stopped, elapsedSeconds: moving + stopped}});
 }
@@ -140,12 +139,27 @@ function timedResult(analysis, estimate, stops, assumptions) {
 export function estimateRouteTime(analysis, options = {}) {
   if (analysis?.status !== 'supported')
     return unavailable('unsupported-analysis', 'Supported geometry and elevation analysis required; no flat fallback');
-  let profile, resolved, stops;
+  let profile;
   try { profile = profileFrom(analysis); }
   catch (error) {
     if (!(error instanceof TypeError || error instanceof RangeError)) throw error;
     return unavailable('invalid-analysis', error.message);
   }
+  return estimateProfileTime(analysis, profile, options);
+}
+
+// Explicit legacy adapter: retain the verified example's authored chapters and
+// millimetre-rounded windows, NOT an organizer analysis or resampled geometry.
+export function estimateExampleTime(profile, identity, options = {}) {
+  if (identity?.routeId !== 'semonzo-example' || identity?.recipe !== 'semonzo-chapters-v1' ||
+      !text(identity.revisionId) || !/^[a-f0-9]{64}$/.test(identity.geometrySha256) ||
+      !text(identity.annotationRevisionId))
+    return unavailable('invalid-example', 'Verified Semonzo example identity required');
+  return estimateProfileTime({...profile, identity, recipe: identity.recipe}, profile, options);
+}
+
+function estimateProfileTime(analysis, profile, options) {
+  let resolved, stops;
   try { resolved = optionsFrom(options); }
   catch (error) {
     if (!(error instanceof TypeError || error instanceof RangeError)) throw error;

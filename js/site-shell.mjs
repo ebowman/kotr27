@@ -1,6 +1,6 @@
 import { exampleCatalog, exampleRouteId } from './example-catalog.mjs';
 import { loadProfile, loadExampleTrack } from './semonzo-profile.mjs';
-import { areas, changeSelection, readSelection, selectionLink } from './route-state.mjs';
+import { areas, changeSelection, readSelection, selectionLink as publicSelectionLink } from './route-state.mjs';
 import { installPreferences, riderState } from './preferences-view.mjs';
 import { createCatalog } from './route-catalog.mjs';
 import { publicAssetReader, loadPlannerPack, createAnalysisStore } from './trip-planner.mjs';
@@ -8,15 +8,40 @@ import { installTripPlanner } from './trip-planner-view.mjs';
 import { createAnalysisPlaybackRoute, createSemonzoPlaybackRoute } from './route-playback-adapters.mjs';
 import { routePlayback, registerPlaybackRoute, subscribePlayback } from './route-session.mjs';
 import { installRouteBriefing } from './route-briefing-view.mjs';
-import { estimateRouteTime } from './route-time.mjs';
+import { routePace } from './route-pace.mjs';
+import { installRoutePace } from './route-pace-view.mjs';
 import { installRouteComparison } from './route-comparison-view.mjs';
 import { comparisonViews } from './route-comparison.mjs';
 
 const el = id => document.getElementById(id);
+// Common Plan/Explore/pace views run in either shell. Do not lose memory-only
+// rider/scenario/itinerary state just to change a route or area. Only the two
+// genuinely document-specific legacy example engines require navigation.
+const documentEntry=location.pathname.endsWith('explore.html') ? 'explore.html' : 'index.html';
+function selectionLink(state) {
+  const legacy=state.routeId===exampleRouteId && state.area==='explore' &&
+    ['clock','sensitivity','flyover'].includes(state.view);
+  return legacy ? publicSelectionLink(state) :
+    publicSelectionLink(state).replace(/^\.\/(?:index|explore)\.html/,`./${documentEntry}`);
+}
 const labels = {plan:'Plan', explore:'Explore', prepare:'Prepare', 'ride-week':'Ride week'};
 let catalog = exampleCatalog, planner = null, comparison = null, catalogLoading = true;
 const profiles = {};
 const pendingProfiles = new Set();
+const playbackFactories = new Map();
+let exampleAnalysis;
+function preparePlayback(revisionId) {
+  const entry=playbackFactories.get(revisionId);
+  if (!entry) return null;
+  const route=entry.make(routePace.model(entry.analysis));
+  registerPlaybackRoute(route);
+  return route;
+}
+routePace.subscribe(()=>{
+  const snapshot=routePlayback.getSnapshot();
+  const route=preparePlayback(snapshot.identity?.revisionId);
+  if (route) routePlayback.replaceRoute(route);
+});
 let current, flyoverStarted = false, profileLoading = true;
 const resolveLocation = () => {
   const query = new URL(location.href).searchParams;
@@ -77,6 +102,7 @@ function reflectPosition(snapshot, chapterId = null) {
   }
 }
 const linkedBriefing = installRouteBriefing(shell, reflectPosition);
+const linkedPace = installRoutePace(shell, riderState, reflectPosition);
 subscribePlayback(snapshot=>{
   if (snapshot.identity?.routeId!==exampleRouteId || !snapshot.position) return;
   const text=el('site-example-position');
@@ -238,7 +264,8 @@ function render(focus = false, notify = true) {
     const actions = node('div','',content); actions.className = 'site-actions';
     for (const [view,label] of (bundle.route.id === exampleRouteId ?
       [['briefing','Route briefing'],['clock','Example ride clock'],['sensitivity','FTP / weight sensitivity'],['flyover','Optional 3D flyover']] :
-      [['briefing','Route briefing'],['compare','Compare variants'],['skyline','Skyline'],['radial','Radial']])) {
+      [['briefing','Route briefing'],['clock','Pace / ride clock'],['sensitivity','FTP / weight sensitivity'],
+        ['compare','Compare variants'],['skyline','Skyline'],['radial','Radial']])) {
       const a = link(actions,label,{view});
       if (s.view === view) a.setAttribute('aria-current','page');
     }
@@ -257,7 +284,7 @@ function render(focus = false, notify = true) {
     };
   }
   const exampleEngine = bundle?.route.id === exampleRouteId && bundle.revision.id === catalog.resolve(exampleRouteId).revision.id;
-  if (bundle && s.area === 'explore' && s.view !== 'briefing' && !comparisonViews.includes(s.view) && !exampleEngine)
+  if (bundle && s.area === 'explore' && s.view === 'flyover' && !exampleEngine)
     node('p', 'This interactive view is unavailable for the selected revision. Its route briefing remains available; no example has been substituted.', content);
   if (explorer) explorer.hidden = !exampleEngine || s.area !== 'explore' || !['clock','sensitivity'].includes(s.view);
   if (flyover) flyover.hidden = !exampleEngine || s.area !== 'explore' || s.view !== 'flyover';
@@ -267,11 +294,13 @@ function render(focus = false, notify = true) {
     startFlyover();
   }
   linkedBriefing.show(current);
+  linkedPace.show(current,bundle?.route.id===exampleRouteId ? exampleAnalysis : null);
   comparison?.show(current);
   if (notify) {
-    if (code === 'ready' && profiles[s.revisionId]?.status !== 'unsupported' && profiles[s.revisionId])
+    if (code === 'ready' && profiles[s.revisionId]?.status !== 'unsupported' && profiles[s.revisionId]) {
+      preparePlayback(s.revisionId);
       routePlayback.selectRoute(s);
-    else routePlayback.clear();
+    } else routePlayback.clear();
   }
   for (const listener of listeners) listener(current);
   if (notify) document.dispatchEvent(new CustomEvent('kotr-selection', {detail:current}));
@@ -318,7 +347,7 @@ export function navigateSelection(patch, {replace = false, focus = true, notify 
   const url = new URL(href, location.href);
   // Keep each legacy engine in its own document; browser history restores the
   // same public selection. No rider inputs are copied between documents.
-  const here = location.pathname.endsWith('explore.html') ? 'explore.html' : 'index.html';
+  const here = documentEntry;
   if (!url.pathname.endsWith(here)) {
     riderState.select(href).then(() => location.assign(href));
     return;
@@ -374,8 +403,10 @@ const catalogReady = (async () => {
       pendingProfiles.add(revision.id);
       analysisFor(route.id,revision.id).then(analysis=>{
         profiles[revision.id]=analysis;
-        if (analysis.status==='supported') registerPlaybackRoute(createAnalysisPlaybackRoute(analysis,
-          {estimate:estimateRouteTime(analysis)}));
+        if (analysis.status==='supported') {
+          playbackFactories.set(revision.id,{analysis,make:estimate=>createAnalysisPlaybackRoute(analysis,{estimate})});
+          preparePlayback(revision.id);
+        }
       }).catch(()=>{ /* Explicit unavailable UI, never substituted geometry. */ }).finally(()=>{
         pendingProfiles.delete(revision.id);
         if (current.state.routeId===route.id && current.state.revisionId===revision.id && !catalogLoading) {
@@ -403,7 +434,12 @@ const exampleReady = (async () => {
   try {
     const revision = catalog.resolve(exampleRouteId).revision.id;
     profiles[revision] = await loadProfile();
-    registerPlaybackRoute(createSemonzoPlaybackRoute(await loadExampleTrack(),profiles[revision]));
+    const points=await loadExampleTrack(), profile=profiles[revision];
+    const adapter=createSemonzoPlaybackRoute(points,profile);
+    exampleAnalysis={identity:adapter.identity,exampleProfile:profile,chapters:profile.chapters};
+    playbackFactories.set(revision,{analysis:exampleAnalysis,
+      make:estimate=>createSemonzoPlaybackRoute(points,profile,{estimate})});
+    preparePlayback(revision);
   } catch { /* Named profile-unavailable state is rendered, never a fake total. */ }
   profileLoading = false;
 })();

@@ -22,7 +22,8 @@ function axis(center, radius, min, max) {
   return [...new Set([...samples, center])].sort((a, b) => a - b);
 }
 
-export function sensitivityUnavailable(message = 'The sensitivity profile or panel is unavailable. No sensitivity estimate is shown.') {
+export function sensitivityUnavailable(message = 'The sensitivity profile or panel is unavailable. No sensitivity estimate is shown.', lookup = el) {
+  const el = lookup;
   el('content').hidden = true;
   el('chart').replaceChildren();
   for (const name of ['baseline', 'limits', 'scale', 'selection', 'minutes', 'watts', 'ftp', 'mass', 'comparisons']) {
@@ -32,17 +33,24 @@ export function sensitivityUnavailable(message = 'The sensitivity profile or pan
   el('error').textContent = message;
 }
 
-export function installSensitivity(profile) {
+export function installSensitivity(profile, {lookup = el, identity = 'legacy', cache = new Map(),
+  onBuild = () => {}} = {}) {
+  const el = lookup;
   let data, state, unit = 'kg', key, frame, row = 0, col = 0;
+  let generation = 0, unavailableMessage;
   const effort = el('effort'), chart = el('chart');
   const mass = kg => unit === 'lb' ? kg / kgPerLb : kg;
   const color = (seconds, low, high) =>
     `hsl(190 55% ${82 - 52 * (high === low ? 0.5 : (seconds - low) / (high - low))}%)`;
-  function fail(message) {
+  function cancel() {
+    generation++;
     cancelAnimationFrame(frame);
     frame = undefined;
+  }
+  function fail(message) {
+    cancel();
     data = key = undefined;
-    sensitivityUnavailable(message);
+    sensitivityUnavailable(message, el);
   }
   // All callbacks, including drawing errors, are panel-local.
   const guarded = fn => (...args) => {
@@ -198,10 +206,16 @@ export function installSensitivity(profile) {
     frame = undefined;
     const fraction = Number(effort.value) / 100;
     const { riderKg, ftpW } = state.estimate.assumptions;
-    const nextKey = JSON.stringify([riderKg,ftpW,fraction]);
+    const nextKey = JSON.stringify([identity,riderKg,ftpW,fraction,12]);
     if (key !== nextKey) {
-      data = buildClimbSensitivity(profile, { riderKgAxis:axis(riderKg,20,20,250),
-        ftpWAxis:axis(ftpW,100,30,650), baseline:{riderKg,ftpW}, bikeKitKg:12, effortFraction:fraction });
+      data = cache.get(nextKey);
+      if (!data) {
+        data = buildClimbSensitivity(profile, { riderKgAxis:axis(riderKg,20,20,250),
+          ftpWAxis:axis(ftpW,100,30,650), baseline:{riderKg,ftpW}, bikeKitKg:12, effortFraction:fraction });
+        cache.set(nextKey,data);
+        if (cache.size > 8) cache.delete(cache.keys().next().value);
+        onBuild(data);
+      }
       key = nextKey;
       baseline();
     }
@@ -211,10 +225,13 @@ export function installSensitivity(profile) {
     el('content').hidden = false;
   }
   const update = guarded((next, displayUnit, reset = false) => {
-    state = next;
-    unit = displayUnit;
     if (reset) { effort.value = '80'; if (data) baseline(); }
     el('effort-label').textContent = `${effort.value}%`;
+    // Unsupported targets have no active profile or baseline. Controls and
+    // late rider updates cannot reactivate one; only setProfile can do that.
+    if (!profile) { fail(unavailableMessage); return; }
+    state = next;
+    unit = displayUnit;
     if (!state?.estimate) {
       fail(state?.kind === 'invalid'
         ? 'No sensitivity estimate. Correct or clear the rider inputs. ' + Object.values(state.errors).join(' ')
@@ -225,14 +242,17 @@ export function installSensitivity(profile) {
     // animation-frame callback. No async physics can overwrite a newer input.
     el('content').hidden = true;
     el('error').textContent = 'Updating sensitivity…';
-    cancelAnimationFrame(frame);
-    frame = requestAnimationFrame(guarded(refresh));
+    cancel();
+    const request = generation;
+    frame = requestAnimationFrame(guarded(() => {
+      if (request === generation) refresh();
+    }));
   });
   effort.oninput = () => update(state,unit);
   el('mode').onchange = el('view').onchange = guarded(() => { if (data) draw(); });
   el('home').onclick = guarded(() => { if (data) { baseline(); draw(); } });
-  el('ftp').onchange = guarded(() => { col = Number(el('ftp').value); draw(); });
-  el('mass').onchange = guarded(() => { row = Number(el('mass').value); draw(); });
+  el('ftp').onchange = guarded(() => { if (data) { col = Number(el('ftp').value); draw(); } });
+  el('mass').onchange = guarded(() => { if (data) { row = Number(el('mass').value); draw(); } });
   chart.onclick = guarded(event => {
     const target = event.target.closest('[data-i]');
     if (!target || !data) return;
@@ -252,5 +272,20 @@ export function installSensitivity(profile) {
     }
     draw();
   });
+  // Invalidate active authority, not the bounded cache of immutable, correctly
+  // keyed results. Returning to a valid target can reuse its own cached mesh,
+  // but must receive current rider inputs before any controls can render it.
+  update.invalidate = message => {
+    cancel();
+    profile = identity = state = data = key = undefined;
+    row = col = 0;
+    unavailableMessage = message;
+    sensitivityUnavailable(message, el);
+  };
+  update.setProfile = (next, nextIdentity) => {
+    update.invalidate();
+    profile = next; identity = nextIdentity;
+  };
+  update.cancel = cancel;
   return update;
 }
