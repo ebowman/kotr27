@@ -12,7 +12,7 @@ test('phone-sized cinematic follow, controls and asset fallbacks', {timeout: 600
   const files = {'index.html':'text/html','assets/flyover.js':'text/javascript',
     'assets/terrain.js':'text/javascript', 'js/config.js':'text/javascript',
     'js/semonzo-profile.mjs':'text/javascript', 'js/example-catalog.mjs':'text/javascript',
-    'js/route-catalog.mjs':'text/javascript',
+    'js/route-catalog.mjs':'text/javascript', 'js/route-analysis.mjs':'text/javascript',
     'js/ascent-estimator.mjs':'text/javascript', 'js/rider-scenario.mjs':'text/javascript',
     'js/preference-storage.mjs':'text/javascript', 'js/rider-preferences.mjs':'text/javascript',
     'js/preferences-view.mjs':'text/javascript',

@@ -100,7 +100,7 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
     'assets/terrain.js','assets/semonzo.gpx','assets/site.css','js/config.js',...['ascent-estimator','chapter-reveal',
       'climb-sensitivity','climb-sensitivity-view','plan-comparison','ride-clock',
       'rider-controls','rider-scenario','rider-preferences','preference-storage','preferences-view',
-      'semonzo-profile','route-catalog','example-catalog','route-state','site-shell'].map(n=>`js/${n}.mjs`)];
+      'semonzo-profile','route-analysis','route-analysis-loader','route-pack-contract','route-catalog','example-catalog','route-state','site-shell'].map(n=>`js/${n}.mjs`)];
   expected.push(...routeFiles.map(n=>n.replace(/\.[0-9a-f]{24}\./,'.')));
   assert.deepEqual(names.map(n=>n.replace(/\.[0-9a-f]{24}\./,'.')).sort(),expected.sort());
   for (const n of names.filter(n=>n.includes('/'))) {
@@ -160,7 +160,7 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   await edit('js/route-catalog.mjs', 'export function createCatalog', '/* release fixture */ export function createCatalog');
   await build(src,validatorRelease);
   const beforeValidator = await files(previous), afterValidator = await files(validatorRelease);
-  const catalogDependents = /\/(?:route-catalog|example-catalog|semonzo-profile|rider-controls|flyover|site-shell)\./;
+  const catalogDependents = /\/(?:route-catalog|route-pack-contract|route-analysis-loader|example-catalog|semonzo-profile|rider-controls|flyover|site-shell)\./;
   assert.deepEqual(beforeValidator.filter(n=>!afterValidator.includes(n)).sort(),
     beforeValidator.filter(n=>catalogDependents.test(n)).sort());
   for (const entry of ['index.html','explore.html'])
@@ -169,6 +169,8 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   // hashed runtime asset. Each edit must reach both entry freshness markers.
   let shellPrevious = validatorRelease;
   for (const [file, before, after, affected] of [
+    ['js/route-analysis.mjs', 'export function analyzeRoute', '/* release fixture */ export function analyzeRoute',
+      /\/(?:route-analysis|route-analysis-loader|semonzo-profile|site-shell|rider-controls|flyover)\./],
     ['js/route-state.mjs', 'export function readSelection', '/* release fixture */ export function readSelection',
       /\/(?:route-state|site-shell|rider-controls)\./],
     ['js/rider-scenario.mjs', 'export function validateRider', '/* release fixture */ export function validateRider',
@@ -194,7 +196,7 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   const legacyRequests=[];
   const allowed = new Set([...names, ...bNames].filter(n => extname(n)));
   const types = {'.html':'text/html','.js':'text/javascript','.mjs':'text/javascript','.gpx':'application/xml',
-    '.svg':'image/svg+xml','.webp':'image/webp','.css':'text/css'};
+    '.svg':'image/svg+xml','.webp':'image/webp','.css':'text/css','.json':'application/json'};
   const server = createServer(async (req, res) => {
     if (req.url === '/away') return res.writeHead(200, {'Content-Type':'text/html'}).end('<a href="/kotr27/">Return</a>');
     const url = new URL(req.url, 'http://localhost');
@@ -351,6 +353,55 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   assert.ok(requests.some(u=>/\/climb-sensitivity\.[a-f0-9]{24}\.mjs$/.test(u)));
   assert.ok(!requests.some(u=>u.endsWith('.json')));
   assert.deepEqual(await js('[localStorage.length,sessionStorage.length,document.cookie]'),[0,0,'']);
+  // Only after checking the legacy example's strict no-JSON behavior, explicitly
+  // load organizer data. Exercise the packaged producer validator in a browser,
+  // without Node imports/Buffer or treating hashes as semantic validation.
+  const analysisLoader=names.find(n=>n.startsWith('js/route-analysis-loader.'));
+  const catalogModule=names.find(n=>n.startsWith('js/route-catalog.'));
+  const loaded=await cmd('Runtime.evaluate',{awaitPromise:true,returnByValue:true,expression:`(async()=>{
+    const {loadRouteAnalysis}=await import('./${analysisLoader}');
+    const {verifyAsset}=await import('./${catalogModule}');
+    const pointer=await fetch('./${packPointerName}').then(r=>r.json());
+    const bytes=await fetch('./'+pointer.path).then(r=>r.arrayBuffer());
+    await verifyAsset(pointer,bytes);
+    const pack=JSON.parse(new TextDecoder().decode(bytes)), results=[];
+    for (const row of pack.routes) {
+      const analysis=await loadRouteAnalysis({pack,routeId:row.routeId,revisionId:row.revisionId,
+        readAsset:path=>fetch('./'+path).then(r=>r.arrayBuffer())});
+      results.push({routeId:analysis.routeId,status:analysis.status,points:analysis.points.length});
+    }
+    // Rehash malformed profiles AND manifests: valid hashes must not make
+    // coercible gap metadata acceptable to the packaged browser boundary.
+    const rejected=[], encode=value=>new TextEncoder().encode(JSON.stringify(value));
+    const hash=async bytes=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),
+      b=>b.toString(16).padStart(2,'0')).join('');
+    for (const field of ['maxM','over200m']) for (const type of ['string','array']) {
+      const changed=structuredClone(pack), row=changed.routes[0];
+      const revision=changed.catalog.routes.find(r=>r.id===row.routeId).revisions[0];
+      const raw=await fetch('./'+revision.profile.path).then(r=>r.json());
+      raw.gaps[field]=type==='string' ? String(raw.gaps[field]) : [raw.gaps[field]];
+      const profileBytes=encode(raw);
+      revision.profile.sha256=await hash(profileBytes);
+      revision.profile.path='assets/route-profile-'+revision.profile.sha256+'.json';
+      const manifestBytes=encode(changed), sha256=await hash(manifestBytes);
+      await verifyAsset({path:'assets/route-manifest-'+sha256+'.json',sha256},manifestBytes);
+      await verifyAsset(revision.profile,profileBytes);
+      try {
+        await loadRouteAnalysis({pack:JSON.parse(new TextDecoder().decode(manifestBytes)),
+          routeId:row.routeId,revisionId:row.revisionId,
+          readAsset:path=>path===revision.profile.path ? profileBytes :
+            fetch('./'+path).then(r=>r.arrayBuffer())});
+        rejected.push({field,type,error:null});
+      } catch (error) { rejected.push({field,type,error:error.message}); }
+    }
+    return {results,rejected};
+  })()`});
+  assert.ok(!loaded.exceptionDetails,JSON.stringify(loaded.exceptionDetails));
+  assert.deepEqual(loaded.result.value.results,routePack.pack.routes.map(r=>({
+    routeId:r.routeId,status:'supported',points:r.pointCount,
+  })));
+  assert.deepEqual(loaded.result.value.rejected,['maxM','over200m'].flatMap(field=>
+    ['string','array'].map(type=>({field,type,error:'Route pack: invalid gap metadata'}))));
   live = b;
   await visit();
   await until(() => js(`document.querySelector('meta[name="kotr-release"]')?.content === '${indexMarkers.get(b)}' && document.querySelector('#deck')?.hidden === false`));

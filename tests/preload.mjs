@@ -213,7 +213,7 @@ sys.stdout.buffer.write(im.crop((2300,300,3300,900)).convert("I").convert("I;16"
         '.mapboxgl-map{overflow:hidden}.mapboxgl-canvas,.mapboxgl-marker{position:absolute;top:0;left:0}');
       else if (path === '/js/config.js') res.end('window.KOTR_CONFIG={}');
       else if (path === '/' || /^\/assets\/(flyover\.js|terrain\.js|semonzo\.gpx)$/.test(path) ||
-          /^\/js\/(semonzo-profile|example-catalog|route-catalog)\.mjs$/.test(path)) {
+          /^\/js\/(semonzo-profile|example-catalog|route-catalog|route-analysis)\.mjs$/.test(path)) {
         let body = await readFile(new URL('..'+(path==='/'?'/index.html':path),import.meta.url));
         // Keep the real route geometry; give its test GPX a vertical datum
         // consistent with the synthetic DEM used for the camera experiments.

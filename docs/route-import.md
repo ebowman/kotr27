@@ -258,6 +258,21 @@ renamed into a new destination only after completion; later module/read errors
 also cannot expose a partial release. Existing output trees are refused.
 This does not select organizer routes in the legacy UI.
 
+### Shared runtime analysis (kotr27-800.6)
+
+[Route analysis](route-analysis.md) now consumes these same verified geometry
+and raw-profile bundles for distance-window profiles, ordered terrain chapters,
+climb intervals and revision-bound annotation queries. Source-listed, raw and
+processed totals remain distinct. This does not rewrite the v1 importer,
+manifest, seven revisions or available-format claims; no persisted climb/POI
+asset or real organizer facility evidence is added.
+
+The browser loader and this tool's Node release boundary now share the closed
+producer validator in `js/route-pack-contract.mjs`. Hash-valid but unsupported
+semantics, duplicate/conflicting summaries and invalid source totals are
+rejected by both. Runtime reads the selected route's assets; publication still
+verifies all assets. This refactoring does not change imported bytes/revisions.
+
 ### Earlier validation · 2026-11-24, before supplemental short-route handoff
 
 - `python3 tests/route_import.py` — **9 passed**, including mandatory real FIT
