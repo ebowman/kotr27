@@ -1,7 +1,7 @@
 // Public navigation only. Rider values, local filenames and provider tokens
 // deliberately have no fields here. The catalog is the identity authority.
 export const areas = ['plan', 'explore', 'prepare', 'ride-week'];
-export const views = ['briefing', 'clock', 'sensitivity', 'flyover'];
+export const views = ['briefing', 'clock', 'sensitivity', 'flyover', 'compare', 'skyline', 'radial'];
 const publicId = value => /^[a-z][a-z0-9-]*$/.test(value || '');
 const keys = ['area', 'view', 'day', 'variant', 'route', 'rev', 'chapter', 'at'];
 

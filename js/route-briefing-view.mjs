@@ -173,7 +173,7 @@ export function installRouteBriefing(parent, onSeek) {
     root,
     show(resolved) {
       const a=resolved.profile;
-      visible=resolved.state.area==='explore' && Boolean(a?.identity);
+      visible=resolved.state.area==='explore' && !['compare','skyline','radial'].includes(resolved.state.view) && Boolean(a?.identity);
       root.hidden=!visible;
       if (!visible) return;
       if (identity!==a.identity) { identity=a.identity; analysis=a; build(resolved.bundle,analysis); }

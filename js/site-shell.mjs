@@ -9,10 +9,12 @@ import { createAnalysisPlaybackRoute, createSemonzoPlaybackRoute } from './route
 import { routePlayback, registerPlaybackRoute, subscribePlayback } from './route-session.mjs';
 import { installRouteBriefing } from './route-briefing-view.mjs';
 import { estimateRouteTime } from './route-time.mjs';
+import { installRouteComparison } from './route-comparison-view.mjs';
+import { comparisonViews } from './route-comparison.mjs';
 
 const el = id => document.getElementById(id);
 const labels = {plan:'Plan', explore:'Explore', prepare:'Prepare', 'ride-week':'Ride week'};
-let catalog = exampleCatalog, planner = null, catalogLoading = true;
+let catalog = exampleCatalog, planner = null, comparison = null, catalogLoading = true;
 const profiles = {};
 const pendingProfiles = new Set();
 let current, flyoverStarted = false, profileLoading = true;
@@ -214,6 +216,7 @@ function render(focus = false, notify = true) {
     const actions = node('div','',intro); actions.className = 'site-actions';
     if (bundle) {
       link(actions, 'Read selected route briefing', {area:'explore', view:'briefing'});
+      link(actions, 'Compare routes / Skyline / Radial', {area:'explore', view:'compare'});
       if (bundle.route.id === exampleRouteId) link(actions, 'Open optional example flyover', {area:'explore', view:'flyover'});
     }
   } else if (s.area === 'prepare') {
@@ -235,12 +238,14 @@ function render(focus = false, notify = true) {
     const actions = node('div','',content); actions.className = 'site-actions';
     for (const [view,label] of (bundle.route.id === exampleRouteId ?
       [['briefing','Route briefing'],['clock','Example ride clock'],['sensitivity','FTP / weight sensitivity'],['flyover','Optional 3D flyover']] :
-      [['briefing','Route briefing']])) {
+      [['briefing','Route briefing'],['compare','Compare variants'],['skyline','Skyline'],['radial','Radial']])) {
       const a = link(actions,label,{view});
       if (s.view === view) a.setAttribute('aria-current','page');
     }
     if (bundle.route.id === exampleRouteId) node('p', '3D is optional and uses online Mapbox services: requests expose your IP and the example region to the provider. Playback is an animation, not an estimated ride time. Open only if you want motion and online terrain.', content);
-    briefing(content);
+    if (!comparisonViews.includes(s.view)) briefing(content);
+    if (comparisonViews.includes(s.view) && !comparison)
+      node('p','Route comparison unavailable while the approved catalog is loading or could not be verified.',content);
   }
   const explorer = el('legacy-explorer'), flyover = el('climb');
   const clockLink = document.querySelector('[data-site-clock]');
@@ -252,7 +257,7 @@ function render(focus = false, notify = true) {
     };
   }
   const exampleEngine = bundle?.route.id === exampleRouteId && bundle.revision.id === catalog.resolve(exampleRouteId).revision.id;
-  if (bundle && s.area === 'explore' && s.view !== 'briefing' && !exampleEngine)
+  if (bundle && s.area === 'explore' && s.view !== 'briefing' && !comparisonViews.includes(s.view) && !exampleEngine)
     node('p', 'This interactive view is unavailable for the selected revision. Its route briefing remains available; no example has been substituted.', content);
   if (explorer) explorer.hidden = !exampleEngine || s.area !== 'explore' || !['clock','sensitivity'].includes(s.view);
   if (flyover) flyover.hidden = !exampleEngine || s.area !== 'explore' || s.view !== 'flyover';
@@ -262,6 +267,7 @@ function render(focus = false, notify = true) {
     startFlyover();
   }
   linkedBriefing.show(current);
+  comparison?.show(current);
   if (notify) {
     if (code === 'ready' && profiles[s.revisionId]?.status !== 'unsupported' && profiles[s.revisionId])
       routePlayback.selectRoute(s);
@@ -362,6 +368,8 @@ const catalogReady = (async () => {
       data[key] = [...exampleCatalog.data[key], ...loaded.catalog.data[key]];
     catalog = createCatalog({schemaVersion:1, ...data});
     const analysisFor = createAnalysisStore(loaded.pack,read);
+    comparison = installRouteComparison(shell, {catalog:loaded.catalog, analysisFor,
+      navigate:navigateSelection, href:patch=>selectionLink(changeSelection(current.state,patch))});
     for (const route of loaded.catalog.data.routes) for (const revision of route.revisions) {
       pendingProfiles.add(revision.id);
       analysisFor(route.id,revision.id).then(analysis=>{
@@ -383,6 +391,8 @@ const catalogReady = (async () => {
         area:'plan', view:'briefing', routeId:route.id, revisionId:route.currentRevisionId,
         dayId:null, variantId:null,
       }))});
+    // Plan's choices/downloads precede its secondary comparison workspace.
+    shell.append(comparison.root);
     el('site-catalog-status').textContent = 'Approved provisional routes · source labels, not a calendar schedule';
   } catch {
     el('site-catalog-status').textContent = 'Approved route pack unavailable or failed verification. Reload to retry; example remains separate.';

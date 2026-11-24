@@ -21,7 +21,7 @@ export function validatePreferenceLink(link) {
   const url = new URL(link, 'https://local.invalid/');
   if (url.hash) return false;
   const allowed = {
-    area:/^(plan|explore|prepare|ride-week)$/, view:/^(briefing|clock|sensitivity|flyover)$/,
+    area:/^(plan|explore|prepare|ride-week)$/, view:/^(briefing|clock|sensitivity|flyover|compare|skyline|radial)$/,
     day:/^[a-z][a-z0-9-]*$/, variant:/^[a-z][a-z0-9-]*$/,
     route:/^(?:[a-z][a-z0-9-]*)?$/, rev:/^(?:[a-z][a-z0-9-]*)?$/,
     chapter:/^[a-z][a-z0-9-]*$/, at:/^(?:0|[1-9]\d*)(?:\.\d{1,3})?$/,

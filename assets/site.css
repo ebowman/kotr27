@@ -57,6 +57,25 @@ a { color:inherit; text-underline-offset:.2em }
 #briefing-seek { width:100%; display:block }
 #briefing-position { font-weight:700 }
 #briefing-controls { position:relative }
+#route-comparison { margin:2rem 0; min-width:0; overflow-wrap:anywhere }
+#route-comparison fieldset { min-width:0; margin:1rem 0; border:1px solid var(--line) }
+#route-comparison fieldset label { min-height:44px; padding:.4rem }
+#route-comparison input { min-width:1.2rem; min-height:1.2rem }
+#route-comparison .site-actions [aria-current] { background:var(--ink); color:white }
+.comparison-route { margin:1rem 0 }
+.comparison-route[data-selected="true"] { border:3px solid var(--rust) }
+.comparison-route button[aria-current] { font-weight:700; border-left:5px solid var(--rust) !important }
+.comparison-route .comparison-open { display:block; min-height:44px; padding:.6rem 0 }
+.comparison-route svg { display:block; width:100%; background:#eff1df; margin:1rem 0 }
+.comparison-profile { height:auto; min-height:8rem }
+.comparison-outline, .comparison-radial { max-width:32rem }
+.comparison-radial text, .comparison-radial circle { cursor:pointer }
+.comparison-route table { width:100%; border-collapse:collapse; text-align:left }
+.comparison-route th, .comparison-route td { padding:.3rem; border-bottom:1px solid var(--line) }
+.comparison-route ol { padding-left:1.4rem }
+@media (max-width:600px) {
+  .comparison-route details { border-left:3px solid var(--line); padding-left:.5rem }
+}
 #trip-itinerary, #trip-download-results { padding-left:1.4rem }
 #legacy-explorer, #climb { margin-top:1.5rem }
 #legacy-explorer h2 { font-size:clamp(1.7rem,4vw,2.4rem) }
