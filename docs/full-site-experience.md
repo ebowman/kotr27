@@ -6,6 +6,8 @@ Product interaction contract · 24 November 2026 · `kotr27-800.1`
 
 This is a design specification, not an implementation, launch approval, event announcement or completion checklist. It defines the full **Plan / Explore / Prepare / Ride week** experience and the acceptance journeys that subsequent bounded implementation must satisfy. “Must” below describes that target, not a capability already shipped.
 
+The companion [architecture decision](full-site-architecture.md) defines the static/online/offline boundary, proposed resource and storage limits, publishing gates and separately gated server options; it grants no implementation or deployment authorization.
+
 The 2026 audit used read-only `gh api` source reads at **ebowman/kotr26@98cd86dc6443dcf713e125fa2ef53cee629c4339**, including page scripts, parsers, storage, flyover, weather and the elapsed-time PRD, not just the README. All 2026 evidence below is **S: statically observed code/markup**. **U: runtime unverified** applies to every row: no 2026 browser run, actual device download, camera quality, provider response, accessibility or physiological accuracy was validated here. A declaration in a PRD is design evidence only; it is not proof of working software. In particular, the [README page inventory][s-readme] is a discovery index, not an acceptance result.
 
 2027 integration observations are local source inspection, not new runtime validation. Existing test files are regression seams, not tests claimed to have run for this documentation change.
