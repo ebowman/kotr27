@@ -16,13 +16,17 @@ for (const width of [320,375,1280]) test(`packaged shell ${width}px: no-map, his
   await build(fileURLToPath(new URL('../',import.meta.url)),out);
   const files = await readdir(out,{recursive:true});
   const types = {'.html':'text/html','.mjs':'text/javascript','.js':'text/javascript','.css':'text/css','.gpx':'application/xml'};
-  const profileGate = Promise.withResolvers();
+  let profileGate = Promise.withResolvers(), profileRequests = 0;
+  t.after(() => profileGate.resolve());
   const server = createServer(async (req,res) => {
     const url = new URL(req.url,'http://localhost');
     const file = url.pathname.slice('/kotr27/'.length) || 'index.html';
     if (!url.pathname.startsWith('/kotr27/') || !files.includes(file) || !types[extname(file)])
       return res.writeHead(404).end();
-    if (file.endsWith('.gpx')) await profileGate.promise;
+    if (file.endsWith('.gpx')) {
+      profileRequests++;
+      await profileGate.promise;
+    }
     // Never serve provisioned configuration in tests.
     const bytes = file.startsWith('js/config.') ? 'window.KOTR_CONFIG = {};' : await readFile(join(out,file));
     res.writeHead(200,{'Content-Type':types[extname(file)],'Cache-Control':'no-store'}).end(bytes);
@@ -38,7 +42,9 @@ for (const width of [320,375,1280]) test(`packaged shell ${width}px: no-map, his
   await cmd('Network.setBlockedURLs',{urls:['https://*']});
   await cmd('Emulation.setDeviceMetricsOverride',{width,height:850,deviceScaleFactor:1,mobile:width<600});
   await cmd('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
-  const ready = () => until(() => js(`document.querySelector('#site-shell')?.dataset.ready === 'true' && document.querySelector('#site-selection')?.textContent.includes('semonzo-example-v1')`));
+  const ready = () => until(() => js(`document.querySelector('#site-shell')?.dataset.ready === 'true' &&
+    document.querySelector('#site-content')?.getAttribute('aria-busy') === 'false' &&
+    document.querySelector('#site-selection')?.textContent.includes('semonzo-example-v1')`));
   const key = async (key,code,n) => {
     for (const type of ['keyDown','keyUp']) await cmd('Input.dispatchKeyEvent',{type,key,code,windowsVirtualKeyCode:n,
       ...(key === 'Enter' && type === 'keyDown' && {text:'\r'})});
@@ -66,26 +72,48 @@ for (const width of [320,375,1280]) test(`packaged shell ${width}px: no-map, his
   assert.match(chapterURL,/chapter=high-step/);
   assert.match(chapterURL,/rev=semonzo-example-v1/);
   assert.match(await js(`document.querySelector('#site-content').textContent`),/11.0 km selected/);
+  // Destination headings render before async GPX completion applies navigation
+  // focus. Hold that response to prove heading text alone is not readiness.
+  profileGate = Promise.withResolvers();
+  const beforePrepare = profileRequests;
   await js(`document.querySelector('.site-nav a:nth-child(3)').click()`);
   await until(() => js(`document.querySelector('#site-heading')?.textContent === 'Prepare for the ride'`));
+  await until(() => profileRequests > beforePrepare);
+  const preferences = files.find(file => file.startsWith('js/preferences-view.'));
+  const reviewed = await cmd('Runtime.evaluate', {expression:
+    `import('./${preferences}').then(async m=>{await m.riderState.ready;return m.riderState.snapshot();})`,
+    awaitPromise:true, returnByValue:true});
+  assert.ok(!reviewed.exceptionDetails);
+  assert.deepEqual(reviewed.result.value.consent, {rider:false, preferences:false});
+  assert.equal(reviewed.result.value.validation.kind, 'example');
+  assert.equal(await js('document.activeElement.tagName'),'BODY');
+  assert.notEqual(await js(`document.querySelector('#site-shell').dataset.ready`),'true');
+  assert.equal(await js(`document.querySelector('#site-content').getAttribute('aria-busy')`),'true');
+  profileGate.resolve();
+  await ready();
   assert.match(await js('location.href'),/chapter=high-step/);
   assert.equal(await js('document.activeElement.id'),'site-heading');
   assert.match(await js('document.body.innerText'),/not yet available/);
   await js(`document.querySelector('.site-nav a:nth-child(4)').click()`);
+  await until(() => js(`document.querySelector('.site-nav a:nth-child(4)')?.getAttribute('aria-current') === 'page'`));
+  await ready();
   assert.match(await js('location.href'),/chapter=high-step/);
   assert.match(await js('document.body.innerText'),/no “today” or “tomorrow”/);
   await js('history.back()');
   await until(() => js(`document.querySelector('#site-heading')?.textContent === 'Prepare for the ride'`));
+  await ready();
   await js('history.back()');
   await until(() => js(`location.href === ${JSON.stringify(chapterURL)} && !!document.querySelector('#site-chapters a[aria-current]')`));
   await js('history.forward()');
   await until(() => js(`document.querySelector('#site-heading')?.textContent === 'Prepare for the ride'`));
+  await ready();
   await cmd('Page.reload');
   await ready();
   assert.match(await js('location.href'),/chapter=high-step/);
   for (const area of [1,2,3,4]) {
     await js(`document.querySelector('.site-nav a:nth-child(${area})').click()`);
     await until(() => js(`document.querySelector('.site-nav a:nth-child(${area})')?.getAttribute('aria-current') === 'page'`));
+    await ready();
     assert.ok(await js(`document.documentElement.scrollWidth <= innerWidth`));
     await js(`document.documentElement.style.fontSize='200%'`);
     assert.ok(await js(`document.documentElement.scrollWidth <= innerWidth`),'200% text enlargement retains wrapping');

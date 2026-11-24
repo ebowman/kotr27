@@ -40,14 +40,17 @@ export async function build(source, destination) {
     'js/example-catalog.mjs': ['./route-catalog.mjs','assets/semonzo.gpx'],
     'js/semonzo-profile.mjs': ['./example-catalog.mjs'],
     'js/route-state.mjs': [],
-    'js/site-shell.mjs': ['./example-catalog.mjs','./semonzo-profile.mjs','./route-state.mjs'],
-    'assets/flyover.js': ['../js/semonzo-profile.mjs'],
     'js/ascent-estimator.mjs': [], 'js/rider-scenario.mjs': ['./ascent-estimator.mjs'],
+    'js/preference-storage.mjs': ['./rider-scenario.mjs'],
+    'js/rider-preferences.mjs': ['./rider-scenario.mjs','./preference-storage.mjs'],
+    'js/preferences-view.mjs': ['./preference-storage.mjs','./rider-preferences.mjs'],
+    'js/site-shell.mjs': ['./example-catalog.mjs','./semonzo-profile.mjs','./route-state.mjs','./preferences-view.mjs'],
+    'assets/flyover.js': ['../js/semonzo-profile.mjs'],
     'js/climb-sensitivity.mjs': ['./ascent-estimator.mjs'],
     'js/climb-sensitivity-view.mjs': ['./climb-sensitivity.mjs'],
     'js/chapter-reveal.mjs': [], 'js/plan-comparison.mjs': [],
     'js/ride-clock.mjs': [],
-    'js/rider-controls.mjs': ['./rider-scenario.mjs','./chapter-reveal.mjs','./plan-comparison.mjs','./site-shell.mjs','./ride-clock.mjs','./climb-sensitivity-view.mjs'],
+    'js/rider-controls.mjs': ['./preferences-view.mjs','./chapter-reveal.mjs','./plan-comparison.mjs','./site-shell.mjs','./ride-clock.mjs','./climb-sensitivity-view.mjs'],
   };
   for (const [file, deps] of Object.entries(graph)) {
     let data = await readFile(join(root, file));

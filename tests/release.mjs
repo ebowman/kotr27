@@ -94,7 +94,8 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   const expected = ['assets','js','.nojekyll','index.html','explore.html','assets/flyover.js',
     'assets/terrain.js','assets/semonzo.gpx','assets/site.css','js/config.js',...['ascent-estimator','chapter-reveal',
       'climb-sensitivity','climb-sensitivity-view','plan-comparison','ride-clock',
-      'rider-controls','rider-scenario','semonzo-profile','route-catalog','example-catalog','route-state','site-shell'].map(n=>`js/${n}.mjs`)];
+      'rider-controls','rider-scenario','rider-preferences','preference-storage','preferences-view',
+      'semonzo-profile','route-catalog','example-catalog','route-state','site-shell'].map(n=>`js/${n}.mjs`)];
   assert.deepEqual(names.map(n=>n.replace(/\.[0-9a-f]{24}\./,'.')).sort(),expected.sort());
   for (const n of names.filter(n=>n.includes('/'))) {
     const hash = createHash('sha256').update(await readFile(join(a,n))).digest('hex').slice(0,24);
@@ -163,9 +164,17 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   for (const [file, before, after, affected] of [
     ['js/route-state.mjs', 'export function readSelection', '/* release fixture */ export function readSelection',
       /\/(?:route-state|site-shell|rider-controls)\./],
+    ['js/rider-scenario.mjs', 'export function validateRider', '/* release fixture */ export function validateRider',
+      /\/(?:rider-scenario|preference-storage|rider-preferences|preferences-view|site-shell|rider-controls)\./],
+    ['js/preference-storage.mjs', 'export function createPreferenceStorage', '/* release fixture */ export function createPreferenceStorage',
+      /\/(?:preference-storage|rider-preferences|preferences-view|site-shell|rider-controls)\./],
+    ['js/rider-preferences.mjs', 'export function createRiderPreferences', '/* release fixture */ export function createRiderPreferences',
+      /\/(?:rider-preferences|preferences-view|site-shell|rider-controls)\./],
+    ['js/preferences-view.mjs', 'export function installPreferences', '/* release fixture */ export function installPreferences',
+      /\/(?:preferences-view|site-shell|rider-controls)\./],
     ['assets/site.css', ':root', '/* release fixture */ :root', /\/site\./],
   ]) {
-    const next = join(tmp,file.includes('.css') ? 'css-change' : 'state-change');
+    const next = join(tmp, file.replaceAll('/', '-') + '-change');
     await edit(file,before,after);
     await build(src,next);
     const beforeNames = await files(shellPrevious), afterNames = await files(next);

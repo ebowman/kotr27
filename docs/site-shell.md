@@ -34,6 +34,10 @@ contract. Route/revision changes clear section and distance. Selecting a
 chapter uses its revision-bound start distance. Area switches preserve it.
 This is active exploration, **not an itinerary or remembered rider profile**.
 
+Optional device persistence is now described in [rider preferences](rider-preferences.md).
+It keeps measurement consent separate from route/UI consent; incoming route
+links still take precedence and remembered revisions open only explicitly.
+
 Area/route/revision/chapter/view actions push history; continuous flyover seeks
 replace it. Popstate, fragment changes, refresh and bfcache restoration validate
 the selection again and pause playback. Navigation focuses the area heading;

@@ -11,9 +11,11 @@ export function displayMass(text, enteredUnit, unit) {
   return String(Number((unit === 'kg' ? value * kgPerLb : value / kgPerLb).toFixed(8)));
 }
 
-export function riderScenario(profile, { mass, enteredUnit, ftp, effort }) {
+export function validateRider({ mass, enteredUnit, ftp, effort }) {
   const errors = {};
   const options = { slowerFraction: 0.7, fasterFraction: 0.8 };
+  if (typeof mass !== 'string' || typeof ftp !== 'string')
+    throw new TypeError('Rider entries must be text');
   if (!['kg', 'lb'].includes(enteredUnit) || !['slower', 'faster'].includes(effort))
     throw new TypeError('Unknown unit or effort');
   if (mass !== '') {
@@ -27,9 +29,15 @@ export function riderScenario(profile, { mass, enteredUnit, ftp, effort }) {
       errors.ftp = 'Use a number from 30 to 650 watts, or leave FTP blank.';
   }
   if (Object.keys(errors).length) return { kind: 'invalid', errors };
-  const estimate = estimateAscent(profile, options);
   return {
     kind: mass && ftp ? 'personal' : mass || ftp ? 'partial' : 'example',
-    supplied: { mass: !!mass, ftp: !!ftp }, estimate, effort,
+    supplied: { mass: !!mass, ftp: !!ftp }, options, effort,
   };
+}
+
+export function riderScenario(profile, input) {
+  const state = validateRider(input);
+  if (state.kind === 'invalid') return state;
+  const {options, ...validated} = state;
+  return {...validated, estimate:estimateAscent(profile, options)};
 }

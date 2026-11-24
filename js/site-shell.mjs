@@ -1,6 +1,7 @@
 import { exampleCatalog, exampleRouteId } from './example-catalog.mjs';
 import { loadProfile } from './semonzo-profile.mjs';
 import { areas, changeSelection, readSelection, selectionLink } from './route-state.mjs';
+import { installPreferences, riderState } from './preferences-view.mjs';
 
 const el = id => document.getElementById(id);
 const labels = {plan:'Plan', explore:'Explore', prepare:'Prepare', 'ride-week':'Ride week'};
@@ -37,6 +38,15 @@ shell.innerHTML = `
   <footer class="site-footer">Static companion preview · Not for navigation. No account or FTP needed.
     No offline pack is installed by this site; ordinary browser caching is not an offline guarantee.</footer>`;
 document.querySelector('main').append(shell.querySelector('.site-footer'));
+installPreferences(shell.querySelector('.site-header'), {
+  edit:() => {
+    if (el('personal') && !el('legacy-explorer').hidden) {
+      el('personal').open = true;
+      el('mass').focus();
+    } else navigateSelection({area:'explore', view:'clock'});
+  },
+  selection:() => selectionLink(current.state),
+});
 
 function link(parent, text, patch, {replace = false} = {}) {
   const a = node('a', text, parent);
@@ -149,7 +159,7 @@ function render(focus = false, notify = true) {
       link(actions, 'Read selected section', {area:'explore', view:'briefing'});
       link(actions, 'Explore example time assumptions', {area:'explore', view:'clock'});
     }
-    card(grid, 'Rider information stays optional', 'The existing ride clock and sensitivity tools use an explicitly fictional example unless you enter values. Rider weight and FTP remain on that page, never in navigation links.');
+    card(grid, 'Rider information stays optional', 'The ride clock and sensitivity tools share one validated profile and use fictional assumptions for omitted values. Entries stay in memory unless you choose Remember in Preferences & privacy; never in navigation links.');
   } else if (s.area === 'ride-week') {
     const ride = card(grid, 'Briefing · awaiting verification', 'Calendar mapping, departure, contacts, logistics and sourced stops are not published. There is no “today” or “tomorrow” assignment. This is not live tracking or turn-by-turn navigation.');
     const actions = node('div','',ride); actions.className = 'site-actions';
@@ -226,7 +236,11 @@ export function navigateSelection(patch, {replace = false, focus = true, notify 
   // Keep each legacy engine in its own document; browser history restores the
   // same public selection. No rider inputs are copied between documents.
   const here = location.pathname.endsWith('explore.html') ? 'explore.html' : 'index.html';
-  if (!url.pathname.endsWith(here)) { location.assign(href); return; }
+  if (!url.pathname.endsWith(here)) {
+    riderState.select(href).then(() => location.assign(href));
+    return;
+  }
+  riderState.select(href);
   history[replace ? 'replaceState' : 'pushState'](null, '', href);
   current = resolveLocation();
   render(focus, notify);
@@ -246,7 +260,7 @@ document.querySelector('.skip').addEventListener('click', event => {
   event.preventDefault();
   el('site-heading').focus();
 });
-const restore = () => { current = resolveLocation(); render(true); };
+const restore = () => { current = resolveLocation(); riderState.select(selectionLink(current.state)); render(true); };
 window.addEventListener('popstate', restore);
 window.addEventListener('hashchange', restore);
 window.addEventListener('pageshow', event => { if (event.persisted) restore(); });

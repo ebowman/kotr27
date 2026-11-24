@@ -1,4 +1,4 @@
-import { displayMass, riderScenario } from './rider-scenario.mjs';
+import { riderState } from './preferences-view.mjs';
 import { renderChapters } from './chapter-reveal.mjs';
 import { installComparison } from './plan-comparison.mjs';
 import { createRideClock, stopChapterId } from './ride-clock.mjs';
@@ -106,26 +106,28 @@ function installClock(profile) {
 function install(profile, sensitivity) {
   const compare = installComparison(profile);
   const clock = installClock(profile);
-  let originalMass, enteredUnit, previousKey, previousState;
+  let previousKey, previousState;
+  function unavailable() {
+    renderChapters(profile, {});
+    compare({});
+    clock({});
+    sensitivity({}, unit.value);
+    result.textContent = 'The chapter profile or scenario is unavailable. No estimate can be shown.';
+  }
   function render(resetClock = false) {
     let state;
     try {
-      const key = JSON.stringify([originalMass, enteredUnit, ftp.value, effort.value]);
+      const input = riderState.snapshot().input;
+      const key = JSON.stringify([input.mass, input.enteredUnit, input.ftp, input.effort]);
       // A display-unit switch retains the original entry and physical estimate.
-      state = key === previousKey ? previousState : riderScenario(profile, {
-        mass: originalMass, enteredUnit, ftp: ftp.value, effort: effort.value,
-      });
+      state = key === previousKey ? previousState : riderState.scenario(profile);
       previousKey = key;
       previousState = state;
       renderChapters(profile, state);
       compare(state);
       clock(state, resetClock === true);
     } catch {
-      renderChapters(profile, {});
-      compare({});
-      clock({});
-      sensitivity({}, unit.value);
-      result.textContent = 'The chapter profile or scenario is unavailable. No estimate can be shown.';
+      unavailable();
       return;
     }
     sensitivity(state, unit.value, resetClock === true);
@@ -148,28 +150,33 @@ function install(profile, sensitivity) {
       `Rider: ${format(a.riderKg)} kg (${state.supplied.mass ? 'entered' : 'Robin’s assumption'}); ` +
       `bike and kit: ${a.bikeKitKg} kg (assumed). Still air, no stops.`;
   }
-  function reset() {
-    mass.value = ftp.value = originalMass = '';
-    unit.value = enteredUnit = 'kg';
-    effort.value = 'slower';
-    el('pace-b').value = 'faster';
-    el('stop-b').value = '0';
-    render(true);
-  }
-  reset();
-  mass.oninput = () => { originalMass = mass.value; enteredUnit = unit.value; render(); };
+  riderState.subscribe(({input}, reset) => {
+    // Do not reformat the entry being typed; conversion only changes display.
+    const shown = riderState.displayedMass();
+    if (mass.value !== shown) mass.value = shown;
+    ftp.value = input.ftp;
+    unit.value = input.unit;
+    effort.value = input.effort;
+    if (reset) {
+      el('pace-b').value = 'faster';
+      el('stop-b').value = '0';
+    }
+    render(reset);
+  });
+  mass.oninput = () => riderState.update({mass:mass.value, enteredUnit:unit.value});
   unit.onchange = () => {
     if (mass.getAttribute('aria-invalid') === 'true') {
-      unit.value = enteredUnit;
+      unit.value = riderState.snapshot().input.unit;
       result.textContent = 'No estimate. Correct or clear the weight entry before switching units.';
       mass.focus();
       return;
     }
-    mass.value = displayMass(originalMass, enteredUnit, unit.value);
-    render();
+    riderState.update({unit:unit.value});
   };
-  ftp.oninput = effort.onchange = render;
-  el('example').onclick = el('clear').onclick = reset;
+  ftp.oninput = () => riderState.update({ftp:ftp.value});
+  effort.onchange = () => ['slower','faster'].includes(effort.value)
+    ? riderState.update({effort:effort.value}) : unavailable();
+  el('example').onclick = el('clear').onclick = () => riderState.example();
   el('know-ftp').onclick = () => { el('personal').open = true; ftp.focus(); };
   el('controls').disabled = false;
 }
@@ -199,4 +206,5 @@ async function initialize(selection) {
   }
 }
 await shellReady;
+await riderState.ready;
 subscribeSelection(initialize);
