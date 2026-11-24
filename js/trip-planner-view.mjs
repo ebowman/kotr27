@@ -5,7 +5,7 @@ const node = (tag, text, parent) => {
   const e = document.createElement(tag); e.textContent = text; parent.append(e); return e;
 };
 const km = n => (n/1000).toFixed(1);
-export function installTripPlanner(parent, {pack, catalog, read, preferences, preview, openRoute}) {
+export function installTripPlanner(parent, {pack, catalog, read, preferences, preview, openRoute, analysisFor}) {
   const analyses = new Map(), errors = new Set();
   let itinerary = preferences.snapshot().itinerary ?? emptyItinerary();
   let generation = 0, busy = false, outcomes = [], pending = true;
@@ -140,7 +140,8 @@ export function installTripPlanner(parent, {pack, catalog, read, preferences, pr
   render();
   const ready = Promise.all(catalog.data.routes.map(async route => {
     if (!route.currentRevisionId) return;
-    try { analyses.set(route.currentRevisionId, await plannerAnalysis(pack, read, route)); }
+    try { analyses.set(route.currentRevisionId, await (analysisFor ?
+      analysisFor(route.id, route.currentRevisionId) : plannerAnalysis(pack, read, route))); }
     catch { errors.add(route.id); }
   })).then(() => { pending = false; render(); });
   return {root, ready};

@@ -34,6 +34,17 @@ export async function loadPlannerPack(read, pointerPath = 'assets/route-pack.jso
 export async function plannerAnalysis(pack, read, route) {
   return loadRouteAnalysis({pack, readAsset:read, routeId:route.id, revisionId:route.currentRevisionId});
 }
+// Shared by Plan and Explore. One verification/derivation per pinned revision
+// per document; failures stay explicit until a document reload.
+export function createAnalysisStore(pack, read) {
+  const pending = new Map();
+  return (routeId, revisionId) => {
+    const key = `${routeId}:${revisionId}`;
+    if (!pending.has(key)) pending.set(key,
+      loadRouteAnalysis({pack, readAsset:read, routeId, revisionId}));
+    return pending.get(key);
+  };
+}
 export function routeSourceLink(route) {
   const match = /^rwgps-(\d+)$/.exec(route.id);
   return match ? `https://ridewithgps.com/routes/${match[1]}` : null;

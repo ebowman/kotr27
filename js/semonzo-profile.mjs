@@ -63,8 +63,11 @@ export async function loadProfile() {
   return deriveProfile(await loadExampleXML());
 }
 
-async function loadExampleXML() {
-  return new DOMParser().parseFromString(await loadExampleGPX(), 'application/xml');
+// Profile, legacy map and shared playback use the same verified document.
+// A failed load remains unavailable until reload; no hidden network retry.
+let exampleXML;
+function loadExampleXML() {
+  return exampleXML ??= loadExampleGPX().then(gpx=>new DOMParser().parseFromString(gpx,'application/xml'));
 }
 
 export async function loadExampleTrack() {

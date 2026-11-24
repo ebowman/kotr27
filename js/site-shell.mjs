@@ -1,23 +1,32 @@
 import { exampleCatalog, exampleRouteId } from './example-catalog.mjs';
-import { loadProfile } from './semonzo-profile.mjs';
+import { loadProfile, loadExampleTrack } from './semonzo-profile.mjs';
 import { areas, changeSelection, readSelection, selectionLink } from './route-state.mjs';
 import { installPreferences, riderState } from './preferences-view.mjs';
 import { createCatalog } from './route-catalog.mjs';
-import { publicAssetReader, loadPlannerPack } from './trip-planner.mjs';
+import { publicAssetReader, loadPlannerPack, createAnalysisStore } from './trip-planner.mjs';
 import { installTripPlanner } from './trip-planner-view.mjs';
+import { createAnalysisPlaybackRoute, createSemonzoPlaybackRoute } from './route-playback-adapters.mjs';
+import { routePlayback, registerPlaybackRoute, subscribePlayback } from './route-session.mjs';
+import { installRouteBriefing } from './route-briefing-view.mjs';
+import { estimateRouteTime } from './route-time.mjs';
 
 const el = id => document.getElementById(id);
 const labels = {plan:'Plan', explore:'Explore', prepare:'Prepare', 'ride-week':'Ride week'};
 let catalog = exampleCatalog, planner = null, catalogLoading = true;
 const profiles = {};
+const pendingProfiles = new Set();
 let current, flyoverStarted = false, profileLoading = true;
 const resolveLocation = () => {
-  const resolved = readSelection(location.href, catalog, profiles, exampleRouteId, {loading:profileLoading});
+  const query = new URL(location.href).searchParams;
+  const revision = query.get('rev') ?? catalog.data.routes.find(r=>r.id===query.get('route'))?.currentRevisionId;
+  const resolved = readSelection(location.href, catalog, profiles, exampleRouteId,
+    {loading:profileLoading || catalogLoading || pendingProfiles.has(revision)});
   if (catalogLoading && resolved.code === 'missing')
     return {...resolved, code:'loading', message:'Loading approved route catalog…'};
   return resolved;
 };
 const listeners = new Set();
+const linkPatches = new WeakMap();
 const node = (tag, text, parent) => {
   const element = document.createElement(tag);
   if (text) element.textContent = text;
@@ -46,6 +55,41 @@ shell.innerHTML = `
   <footer class="site-footer">Static companion preview · Not for navigation. No account or FTP needed.
     No offline pack is installed by this site; ordinary browser caching is not an offline guarantee.</footer>`;
 document.querySelector('main').append(shell.querySelector('.site-footer'));
+function reflectPosition(snapshot, chapterId = null) {
+  if (!snapshot.position || snapshot.identity?.routeId !== current.state.routeId ||
+      snapshot.identity?.revisionId !== current.state.revisionId) return;
+  // Persistable selection is not a second playback accumulator. Keep a rounded
+  // finish link inside the exact route endpoint (which can end mid-millimetre).
+  const distanceM=Math.round(snapshot.distanceM*1000)/1000 > snapshot.totalDistanceM ?
+    Math.floor(snapshot.totalDistanceM*1000)/1000 : snapshot.distanceM;
+  const next = {...current.state, distanceM, chapterId};
+  // Scrubbing updates links without replacing the controls or reloading the
+  // controller from a rounded URL. Exact distance lives only in the controller.
+  current = {...current, state:next};
+  const href=selectionLink(next);
+  history.replaceState(null,'',href);
+  riderState.select(href);
+  for (const a of shell.querySelectorAll('a')) {
+    const patch=linkPatches.get(a);
+    if (patch) a.href=selectionLink(changeSelection(next,patch));
+  }
+}
+const linkedBriefing = installRouteBriefing(shell, reflectPosition);
+subscribePlayback(snapshot=>{
+  if (snapshot.identity?.routeId!==exampleRouteId || !snapshot.position) return;
+  const text=el('site-example-position');
+  if (text) text.textContent=`${(snapshot.distanceM/1000).toFixed(1)} km selected · ` +
+    `${((snapshot.totalDistanceM-snapshot.distanceM)/1000).toFixed(1)} km remaining. No verified stop or water information.`;
+  const cursor=el('site-profile-cursor');
+  if (cursor) {
+    const x=1000*snapshot.distanceM/snapshot.totalDistanceM;
+    cursor.setAttribute('x1',x); cursor.setAttribute('x2',x);
+  }
+  for (const link of shell.querySelectorAll('#site-chapters a')) {
+    if (new URL(link.href).searchParams.get('chapter')===snapshot.chapterId) link.setAttribute('aria-current','location');
+    else link.removeAttribute('aria-current');
+  }
+});
 installPreferences(shell.querySelector('.site-header'), {
   edit:() => {
     if (el('personal') && !el('legacy-explorer').hidden) {
@@ -58,6 +102,7 @@ installPreferences(shell.querySelector('.site-header'), {
 
 function link(parent, text, patch, {replace = false} = {}) {
   const a = node('a', text, parent);
+  linkPatches.set(a,patch);
   a.href = selectionLink(changeSelection(current.state, patch));
   a.addEventListener('click', event => {
     if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -93,9 +138,11 @@ function briefing(parent) {
   const section = card(parent, example ? 'Semonzo example briefing' : `${bundle.route.name} · Briefing`,
     example ?
     'Semonzo → Monte Grappa summit. A provisional ascent study, not an official event route, stage or group assignment. Surface and stops are not verified.'
-    : 'This route’s detailed briefing is not available in this release. No example geometry or estimates have been substituted.');
+    : 'The linked route briefing below uses the selected revision. No example geometry or estimates have been substituted.');
   node('p', `${bundle.revision.provenance.source} Observed ${bundle.revision.provenance.observedOn}.`, section);
   if (!example) {
+    if (!profile) node('p', pendingProfiles.has(state.revisionId) ? 'Verifying selected route profile…' :
+      'Profile unavailable: route files could not be verified. Reload to retry; route metadata and other choices remain available.',section);
     link(section, 'Plan this route / verified downloads', {area:'plan', view:'briefing'});
     return;
   }
@@ -107,7 +154,8 @@ function briefing(parent) {
   }
   const gain = profile.chapters.reduce((sum,c) => sum + c.ascentM, 0);
   node('p', `${(profile.distanceM/1000).toFixed(1)} km · ${Math.round(gain)} m derived ascent, sampled at 250 m (not raw point-to-point ascent).`, section);
-  node('p', `${(state.distanceM/1000).toFixed(1)} km selected · ${((profile.distanceM-state.distanceM)/1000).toFixed(1)} km remaining. No verified stop or water information.`, section);
+  const position=node('p', `${(state.distanceM/1000).toFixed(1)} km selected · ${((profile.distanceM-state.distanceM)/1000).toFixed(1)} km remaining. No verified stop or water information.`, section);
+  position.id='site-example-position';
   const list = node('ol', '', section); list.id = 'site-chapters';
   for (const c of profile.chapters) {
     const li = node('li', '', list);
@@ -124,6 +172,10 @@ function briefing(parent) {
   const points = [[0, heights[0]], ...profile.segments.map(s => [s.endM, s.endElevationM])];
   path.setAttribute('d', `M0 100 L${points.map(([d,h]) => `${1000*d/profile.distanceM} ${95-90*(h-low)/(high-low)}`).join(' L')} L1000 100 Z`);
   path.setAttribute('fill','#729379'); svg.append(path); section.append(svg);
+  const cursor=document.createElementNS(svg.namespaceURI,'line');
+  cursor.id='site-profile-cursor';
+  for (const [k,v] of Object.entries({x1:0,x2:0,y1:0,y2:100,stroke:'#8a3c22','stroke-width':4})) cursor.setAttribute(k,v);
+  svg.append(cursor);
 }
 function render(focus = false, notify = true) {
   const active = document.activeElement;
@@ -153,7 +205,7 @@ function render(focus = false, notify = true) {
     link(recovery, 'Use current revision (changes selection)', {revisionId:bundle.route.currentRevisionId});
   }
   const content = el('site-content'); content.replaceChildren();
-  content.setAttribute('aria-busy', String(profileLoading || catalogLoading));
+  content.setAttribute('aria-busy', String(profileLoading || catalogLoading || pendingProfiles.has(s.revisionId)));
   if (planner) planner.root.hidden = s.area !== 'plan';
   const grid = node('div','',content); grid.className = 'site-grid';
   if (s.area === 'plan') {
@@ -181,11 +233,13 @@ function render(focus = false, notify = true) {
   }
   if (bundle && s.area === 'explore') {
     const actions = node('div','',content); actions.className = 'site-actions';
-    for (const [view,label] of [['briefing','Route briefing'],['clock','Example ride clock'],['sensitivity','FTP / weight sensitivity'],['flyover','Optional 3D flyover']]) {
+    for (const [view,label] of (bundle.route.id === exampleRouteId ?
+      [['briefing','Route briefing'],['clock','Example ride clock'],['sensitivity','FTP / weight sensitivity'],['flyover','Optional 3D flyover']] :
+      [['briefing','Route briefing']])) {
       const a = link(actions,label,{view});
       if (s.view === view) a.setAttribute('aria-current','page');
     }
-    node('p', '3D is optional and uses online Mapbox services: requests expose your IP and the example region to the provider. Playback is an animation, not an estimated ride time. Open only if you want motion and online terrain.', content);
+    if (bundle.route.id === exampleRouteId) node('p', '3D is optional and uses online Mapbox services: requests expose your IP and the example region to the provider. Playback is an animation, not an estimated ride time. Open only if you want motion and online terrain.', content);
     briefing(content);
   }
   const explorer = el('legacy-explorer'), flyover = el('climb');
@@ -206,6 +260,12 @@ function render(focus = false, notify = true) {
   if (flyover && !flyover.hidden && !profileLoading) {
     flyover.dataset.distance = s.distanceM;
     startFlyover();
+  }
+  linkedBriefing.show(current);
+  if (notify) {
+    if (code === 'ready' && profiles[s.revisionId]?.status !== 'unsupported' && profiles[s.revisionId])
+      routePlayback.selectRoute(s);
+    else routePlayback.clear();
   }
   for (const listener of listeners) listener(current);
   if (notify) document.dispatchEvent(new CustomEvent('kotr-selection', {detail:current}));
@@ -243,6 +303,10 @@ export function subscribeSelection(listener) {
   return () => listeners.delete(listener);
 }
 export function navigateSelection(patch, {replace = false, focus = true, notify = true} = {}) {
+  const snapshot=routePlayback.getSnapshot();
+  if (snapshot.position && snapshot.identity.routeId===current.state.routeId &&
+      snapshot.identity.revisionId===current.state.revisionId)
+    reflectPosition(snapshot,current.state.chapterId && snapshot.distanceM===current.state.distanceM ? current.state.chapterId : null);
   const next = changeSelection(current.state, patch);
   const href = selectionLink(next);
   const url = new URL(href, location.href);
@@ -265,7 +329,7 @@ el('site-route').onchange = e => {
   navigateSelection({dayId:null, variantId:null, routeId:e.target.value, revisionId:catalog.data.routes.find(r => r.id === e.target.value).currentRevisionId});
 };
 el('site-revision').onchange = e => { if (e.target.value) navigateSelection({revisionId:e.target.value}); };
-document.addEventListener('kotr-seek', e => navigateSelection({chapterId:null, distanceM:e.detail.distanceM}, {replace:true, focus:false, notify:false}));
+document.addEventListener('kotr-seek', () => reflectPosition(routePlayback.getSnapshot()));
 // Skip is a focus operation, not route navigation: changing a legacy seek
 // fragment would discard its selection. Keep the native href for no-JS use.
 document.querySelector('.skip').addEventListener('click', event => {
@@ -297,8 +361,22 @@ const catalogReady = (async () => {
     for (const key of ['events','days','variants','routes','annotations'])
       data[key] = [...exampleCatalog.data[key], ...loaded.catalog.data[key]];
     catalog = createCatalog({schemaVersion:1, ...data});
+    const analysisFor = createAnalysisStore(loaded.pack,read);
+    for (const route of loaded.catalog.data.routes) for (const revision of route.revisions) {
+      pendingProfiles.add(revision.id);
+      analysisFor(route.id,revision.id).then(analysis=>{
+        profiles[revision.id]=analysis;
+        if (analysis.status==='supported') registerPlaybackRoute(createAnalysisPlaybackRoute(analysis,
+          {estimate:estimateRouteTime(analysis)}));
+      }).catch(()=>{ /* Explicit unavailable UI, never substituted geometry. */ }).finally(()=>{
+        pendingProfiles.delete(revision.id);
+        if (current.state.routeId===route.id && current.state.revisionId===revision.id && !catalogLoading) {
+          current=resolveLocation(); render(false);
+        }
+      });
+    }
     await riderState.ready;
-    planner = installTripPlanner(shell, {...loaded, read, preferences:riderState,
+    planner = installTripPlanner(shell, {...loaded, read, analysisFor, preferences:riderState,
       openRoute:route => navigateSelection({area:'plan', view:'briefing', routeId:route.id,
         revisionId:route.currentRevisionId, dayId:null, variantId:null}),
       preview:route => selectionLink(changeSelection(current.state, {
@@ -315,6 +393,7 @@ const exampleReady = (async () => {
   try {
     const revision = catalog.resolve(exampleRouteId).revision.id;
     profiles[revision] = await loadProfile();
+    registerPlaybackRoute(createSemonzoPlaybackRoute(await loadExampleTrack(),profiles[revision]));
   } catch { /* Named profile-unavailable state is rendered, never a fake total. */ }
   profileLoading = false;
 })();

@@ -13,7 +13,10 @@
     });
   }
 
-  function start(points) {
+  async function start(points) {
+    const {routePlayback:controller, subscribePlayback} = await import('../js/route-session.mjs');
+    const {createLegacyFlyoverAdapter} = await import('../js/route-playback-adapters.mjs');
+    const legacy = createLegacyFlyoverAdapter(controller);
     const total = points.at(-1).d;
     const heights = points.map(p => p.height);
     const low = Math.min(...heights), high = Math.max(...heights);
@@ -22,7 +25,9 @@
     seek.max = Math.ceil(total);
     el('length').textContent = `${km(total)} km`;
 
-    let d = 0, following = false, playing = false, last = null, frame = 0;
+    // d/playing are read-only projections for the existing camera rail, never
+    // integrated here. The document session is the sole RAF/position owner.
+    let d = 0, following = false, playing = false;
     function sample(distance) {
       distance = Math.max(0, Math.min(total, distance));
       let a = 0, b = points.length - 1;
@@ -58,7 +63,7 @@
       angle = 0;
     }
     const duration = 150;
-    const rate = () => total / duration * Number(el('speed').value);
+    const rate = () => total / duration * controller.getSnapshot().animationRate;
     const ease = x => { x=Math.max(0,Math.min(1,x)); return x*x*(3-2*x); };
     // Block the shot in metres, not frames: the broad chord sees the exit of
     // a bend before the rider gets there. Unwrap and ease its trailing-quarter
@@ -87,7 +92,8 @@
       return {focus:aim(distance), distance, turn:composition(distance).angle-angle};
     }
     function render(seconds = 0) {
-      const point = sample(d);
+      const position=controller.getSnapshot().position;
+      const point = position ? {lon:position.lon,lat:position.lat,height:position.rawElevationM} : sample(d);
       point.d=d;
       const snap = !focus;
       if (snap) {
@@ -114,14 +120,16 @@
       el('stats').textContent = text;
       seek.setAttribute('aria-valuetext', text);
       updateMode();
-      play.textContent = availability==='unavailable' ? 'Flyover unavailable'
-        : playing ? 'Pause' : d === total ? 'Replay flyover' : 'Play flyover';
-      terrain?.(point, following, focus, angle, seconds, snap, playing);
+      if (!el('climb').hidden) terrain?.(point, following, focus, angle, seconds, snap, playing);
     }
     function updateMode() {
       el('mode').textContent = availability==='standby' ? 'Elevation profile' : playing ? (availability==='ready' ? 'Cinematic flyover' :
         availability==='flat' || availability==='promoting' ? 'Flat satellite ride' : 'Buffering')
-        : !following ? 'Route overview' : availability==='unavailable' ? 'Elevation profile' : d === total ? 'Summit' : 'Paused';
+        : !following ? 'Route overview' : d === total ? 'Summit' : availability==='loading' ? 'Buffering · paused' :
+          availability==='unavailable' ? 'Elevation profile' : 'Paused';
+      play.disabled=availability==='loading' || availability==='unavailable';
+      play.textContent = availability==='unavailable' ? 'Flyover unavailable' : availability==='loading' ? 'Terrain loading · paused'
+        : playing ? 'Pause' : d === total ? 'Replay flyover' : 'Play flyover';
     }
     let discardMap;
     function setAvailability(state, retryable=false, discard) {
@@ -130,9 +138,9 @@
       if (state===availability) return;
       availability=state;
       el('map').parentElement.classList.toggle('departing',playing && d===0 && state==='loading');
-      last=null; // No elapsed buffering time is owed, even between two RAFs.
+      if (!el('climb').hidden && (state==='loading' || state==='unavailable')) pause();
       if (state==='unavailable') {
-        pause();
+        if (!el('climb').hidden) pause();
         terrain=null;
         play.disabled=true;
         play.textContent='Flyover unavailable';
@@ -140,46 +148,21 @@
       updateMode();
     }
     function pause() {
-      playing = false;
+      controller.pause();
       el('map').parentElement.classList.remove('departing');
-      cancelAnimationFrame(frame);
-      last = null;
-    }
-    function tick(now) {
-      if (!playing) return;
-      const waiting=availability!=='ready' && availability!=='flat';
-      if (waiting || last===null) {
-        last=waiting ? null : now;
-        frame=requestAnimationFrame(tick);
-        return;
-      }
-      const velocity = rate();
-      const gap = last === null ? 0 : (now-last)/1000;
-      // A stalled foreground frame is not distance owed. Discard its backlog
-      // for all consumers, including the orbit, and rebase on this timestamp.
-      const seconds = Math.min(gap > .5 ? 1/60 : Math.min(.15,gap), (total - d) / velocity);
-      d = Math.min(total, d + seconds * velocity);
-      last = now;
-      if (d === total) pause();
-      render(seconds);
-      if (playing) frame = requestAnimationFrame(tick);
     }
     play.addEventListener('click', () => {
-      if (playing) pause();
-      else {
-        if (d === total) { d = 0; resetCamera(); }
-        following = playing = true;
-        if (d===0 && availability==='loading') el('map').parentElement.classList.add('departing');
-        frame = requestAnimationFrame(tick);
+      if (availability!=='loading' && availability!=='unavailable') {
+        if (!playing) controller.setAnimationRate(Number(el('speed').value));
+        // Rate changes publish the old finish pose. Reset after that publication
+        // so replay's zero-distance snapshot, not the finish, anchors the rail.
+        if (d === total) resetCamera();
+        legacy.toggle();
       }
-      render();
     });
     function scrub(value) {
-      pause();
-      following = true;
-      d = Math.max(0, Math.min(total, value));
       resetCamera();
-      render();
+      legacy.scrub(value);
     }
     const publishSeek = () => document.dispatchEvent(new CustomEvent('kotr-seek', {detail:{distanceM:d}}));
     seek.addEventListener('input', () => { scrub(Number(seek.value)); publishSeek(); });
@@ -188,10 +171,18 @@
       if (delta) { e.preventDefault(); scrub(d + delta); publishSeek(); }
     });
     el('reset').addEventListener('click', () => {
-      pause(); following = false; d = 0; resetCamera(); render(); publishSeek();
+      resetCamera(); legacy.reset(); publishSeek();
     });
-    document.addEventListener('visibilitychange', () => {
-      if (document.hidden && playing) { pause(); render(); }
+    el('speed').addEventListener('change', () => controller.setAnimationRate(Number(el('speed').value)));
+    subscribePlayback(snapshot => {
+      if (snapshot.identity?.routeId !== 'semonzo-example' || !snapshot.position) return;
+      const previous = d;
+      d = snapshot.distanceM;
+      playing = snapshot.phase === 'playing';
+      following = snapshot.cameraMode !== 'overview';
+      const seconds = playing && d >= previous ? (d-previous)/rate() : 0;
+      if (!playing && d !== previous) resetCamera();
+      render(seconds);
     });
     render();
     el('deck').hidden = false;
@@ -199,10 +190,8 @@
     const selectedDistance = Number(el('climb').dataset.distance || 0);
     if (selectedDistance > 0) scrub(selectedDistance);
     document.addEventListener('kotr-selection', event => {
-      pause();
-      const {state, bundle} = event.detail;
-      if (bundle && state.area === 'explore' && state.view === 'flyover') scrub(state.distanceM);
-      else render();
+      // Shell owns resolved selections; do not start a second async selection.
+      render();
       if (!el('preview-motion').hidden && el('preview-motion').textContent.startsWith('Pause'))
         el('preview-motion').click();
     });

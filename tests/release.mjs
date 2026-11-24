@@ -101,7 +101,8 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
       'climb-sensitivity','climb-sensitivity-view','plan-comparison','ride-clock',
       'rider-controls','rider-scenario','rider-preferences','preference-storage','preferences-view',
       'semonzo-profile','route-analysis','route-analysis-loader','route-pack-contract','route-catalog','example-catalog','route-state','site-shell',
-      'itinerary','trip-planner','trip-planner-view'].map(n=>`js/${n}.mjs`)];
+      'itinerary','trip-planner','trip-planner-view','route-time','route-playback','route-playback-adapters',
+      'route-session','route-briefing','route-briefing-view'].map(n=>`js/${n}.mjs`)];
   expected.push(...routeFiles.map(n=>n.replace(/\.[0-9a-f]{24}\./,'.')));
   assert.deepEqual(names.map(n=>n.replace(/\.[0-9a-f]{24}\./,'.')).sort(),expected.sort());
   for (const n of names.filter(n=>n.includes('/'))) {
@@ -123,7 +124,7 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   }
   const bNames = new Set(await files(b));
   assert.deepEqual(names.filter(n => !bNames.has(n)).sort(), names.filter(n =>
-    /(?:flyover|semonzo|semonzo-profile|example-catalog|rider-controls|site-shell)\./.test(n)).sort());
+    /(?:flyover|semonzo|semonzo-profile|example-catalog|route-playback-adapters|rider-controls|site-shell)\./.test(n)).sort());
   // A clock-only update must reach its importer and the ordinary explorer
   // marker without invalidating the independent flyover route.
   const c = join(tmp, 'clock-only');
@@ -161,7 +162,7 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   await edit('js/route-catalog.mjs', 'export function createCatalog', '/* release fixture */ export function createCatalog');
   await build(src,validatorRelease);
   const beforeValidator = await files(previous), afterValidator = await files(validatorRelease);
-  const catalogDependents = /\/(?:route-catalog|route-pack-contract|route-analysis-loader|trip-planner|trip-planner-view|example-catalog|semonzo-profile|rider-controls|flyover|site-shell)\./;
+  const catalogDependents = /\/(?:route-catalog|route-pack-contract|route-analysis-loader|trip-planner|trip-planner-view|example-catalog|semonzo-profile|route-playback-adapters|rider-controls|flyover|site-shell)\./;
   assert.deepEqual(beforeValidator.filter(n=>!afterValidator.includes(n)).sort(),
     beforeValidator.filter(n=>catalogDependents.test(n)).sort());
   for (const entry of ['index.html','explore.html'])
@@ -171,7 +172,11 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   let shellPrevious = validatorRelease;
   for (const [file, before, after, affected] of [
     ['js/route-analysis.mjs', 'export function analyzeRoute', '/* release fixture */ export function analyzeRoute',
-      /\/(?:route-analysis|route-analysis-loader|trip-planner|trip-planner-view|semonzo-profile|site-shell|rider-controls|flyover)\./],
+      /\/(?:route-analysis|route-analysis-loader|trip-planner|trip-planner-view|semonzo-profile|route-time|route-playback-adapters|route-briefing|route-briefing-view|site-shell|rider-controls|flyover)\./],
+    ['js/route-playback.mjs', 'export function createRoutePlayback', '/* release fixture */ export function createRoutePlayback',
+      /\/(?:route-playback|route-session|route-briefing-view|site-shell|rider-controls|flyover)\./],
+    ['js/route-briefing.mjs', 'export function briefingAt', '/* release fixture */ export function briefingAt',
+      /\/(?:route-briefing|route-briefing-view|site-shell|rider-controls)\./],
     ['js/route-state.mjs', 'export function readSelection', '/* release fixture */ export function readSelection',
       /\/(?:route-state|site-shell|rider-controls)\./],
     ['js/rider-scenario.mjs', 'export function validateRider', '/* release fixture */ export function validateRider',

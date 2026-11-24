@@ -19,6 +19,9 @@ test('phone-sized cinematic follow, controls and asset fallbacks', {timeout: 600
     'js/itinerary.mjs':'text/javascript', 'js/trip-planner.mjs':'text/javascript',
     'js/trip-planner-view.mjs':'text/javascript', 'js/route-pack-contract.mjs':'text/javascript',
     'js/route-analysis-loader.mjs':'text/javascript',
+    'js/route-playback.mjs':'text/javascript', 'js/route-playback-adapters.mjs':'text/javascript',
+    'js/route-session.mjs':'text/javascript', 'js/route-time.mjs':'text/javascript',
+    'js/route-briefing.mjs':'text/javascript', 'js/route-briefing-view.mjs':'text/javascript',
     'js/route-state.mjs':'text/javascript', 'js/site-shell.mjs':'text/javascript', 'assets/site.css':'text/css',
     'assets/semonzo.gpx':'application/xml'};
   const omit = new Set(), served = new Set(), legacy = [];
@@ -129,19 +132,20 @@ test('phone-sized cinematic follow, controls and asset fallbacks', {timeout: 600
   assert.ok(await js(`document.documentElement.scrollWidth <= innerWidth`));
   assert.ok(await js(`message.textContent.startsWith('Loading') && !document.querySelector('.viewport img,.viewport svg')`));
   await js(`play.click()`); await sleep(350);
-  assert.ok(await js(`+seek.value===0 && mode.textContent==='Buffering'`));
+  assert.ok(await js(`+seek.value===0 && play.disabled && play.textContent==='Terrain loading · paused'`),
+    'early Play cannot queue autoplay during terrain loading');
   sdkGate.resolve(); sdkGate=null;
   await until(()=>js(`!!window.demo?.camera`));
-  // Early Play uses the road and imagery first. Enter the explicit
-  // terrain seek path for the stale DOM and mesh-pick checks below.
-  await js(`demo.imagery=false;demo.events.render()`);
-  assert.ok(await js(`!demo.terrain && map.getAttribute('aria-busy')==='true' && +seek.value===0`));
-  await js(`demo.imagery=true;demo.events.render()`);
-  await until(()=>js(`mode.textContent==='Flat satellite ride' && +seek.value>0`));
+  // Loading never queues Play. Explicit seek prepares a paused destination;
+  // readiness alone cannot advance it.
+  await js(`seek.value=0;seek.dispatchEvent(new Event('input'));demo.imagery=false;demo.events.render()`);
+  assert.ok(await js(`map.getAttribute('aria-busy')==='true' && +seek.value===0`));
+  await js(`demo.imagery=true;demo.events.render();demo.events.render()`);
+  assert.equal(await js('+seek.value'),0);
   await js(`reset.click(); seek.value=0;seek.dispatchEvent(new Event('input'));play.click()`);
   assert.ok(await js(`const firstDraw=demo.events.render;demo.initialLoad();firstDraw===demo.events.render`),
     'a late global load must not install a second ride controller');
-  assert.ok(await js(`+seek.value===0 && mode.textContent==='Buffering'`));
+  assert.ok(await js(`+seek.value===0 && mode.textContent==='Buffering · paused'`));
   // Even when every source reports ready, a stale DOM pose or terrain
   // pick must not unhide the map or let the clock escape.
   await js(`window.dot=document.querySelector('.rider-beacon'); dot.style.marginLeft='10.9px';
@@ -151,13 +155,17 @@ test('phone-sized cinematic follow, controls and asset fallbacks', {timeout: 600
   assert.ok(await js(`map.getAttribute('aria-busy')==='true' && +seek.value===0`));
   await js(`demo.pickError=0; demo.ready=false`);
   await sleep(60); await js('demo.events.render()');
+  assert.equal(await js('+seek.value'),0,'late ready never resumes');
+  await js('play.click()');
   await until(()=>js(`+seek.value>10 && mode.textContent==='Cinematic flyover'`));
   // Losing visible imagery freezes the *existing* pose; unrelated pending
   // requests (demo.ready=false) must not prevent a visible ride resuming.
   const held=await js(`demo.imagery=false; demo.events.render(); +seek.value`);
   await sleep(350);
-  assert.ok(await js(`+seek.value===${held} && mode.textContent==='Buffering'`));
+  assert.ok(await js(`+seek.value===${held} && mode.textContent==='Buffering · paused'`));
   await js('demo.imagery=true; demo.events.render()');
+  assert.equal(await js('+seek.value'),held);
+  await js('play.click()');
   await until(()=>js(`+seek.value>${held}`));
   await js(`reset.click()`);
   assert.ok(await js(`demo.options.style.includes('satellite') && demo.terrain?.source==='dem'
@@ -187,7 +195,7 @@ test('phone-sized cinematic follow, controls and asset fallbacks', {timeout: 600
   await js(`demo.paintScale=1.25;seek.value=0;seek.dispatchEvent(new Event('input'));speed.value='4'; play.click(); demo.events.render()`);
   assert.ok(await js(`demo.terrain.exaggeration===1 && +seek.value===0 && map.getAttribute('aria-busy')==='true'`),
     'a 1x style cannot reveal a still-exaggerated picking surface');
-  await js('delete demo.paintScale;demo.events.render()');
+  await js('delete demo.paintScale;demo.events.render();demo.events.render();play.click()');
   assert.equal(await js('demo.hints.length'),0);
   await js('demo.events.render()');
   await sleep(1550);
@@ -205,7 +213,7 @@ test('phone-sized cinematic follow, controls and asset fallbacks', {timeout: 600
       window.cancelAnimationFrame = () => { next = null; };
       try {
         seek.value = ${start}; seek.dispatchEvent(new Event('input'));
-        speed.value = '${speedValue}'; play.click(); demo.events.render(); demo.events.render();
+        speed.value = '${speedValue}'; demo.events.render(); demo.events.render(); play.click();
         const samples = [];
         for (let n = 0; n <= ${hz}; n++) {
           next(1000 * n / ${hz});
@@ -256,7 +264,7 @@ test('phone-sized cinematic follow, controls and asset fallbacks', {timeout: 600
     window.cancelAnimationFrame = () => { next = null; };
     try {
       seek.value = 2450; seek.dispatchEvent(new Event('input'));
-      speed.value = '4'; play.click(); demo.events.render();
+      speed.value = '4'; demo.events.render(); demo.events.render(); play.click();
       next(0); next(1000/60);
       const capture = () => [+seek.value,demo.camera.position.altitude];
       const before = capture();
@@ -264,15 +272,17 @@ test('phone-sized cinematic follow, controls and asset fallbacks', {timeout: 600
       next(2000+1000/60); const after = capture();
       demo.events.render(); const missing=message.textContent;
       demo.queryTerrainElevation = () => demo.height()+220;
-      next(4000); const buffered=capture();
+      const buffered=capture();
       demo.events.sourcedata({sourceId:'dem'}); demo.events.render(); demo.events.render();
-      next(8000); const first=capture();
+      const stillPaused=!next;
+      play.click(); next(8000); const first=capture();
       next(8000+1000/60); const resumed = capture();
-      play.click(); return {before,after,buffered,first,resumed,missing,height:demo.height(),step:+seek.max*4/150/60};
+      play.click(); return {before,after,buffered,first,resumed,missing,stillPaused,height:demo.height(),step:+seek.max*4/150/60};
     } finally { window.requestAnimationFrame = raf; window.cancelAnimationFrame = cancel; demo.queryTerrainElevation = dem; }
   })()`);
   const {before,after,resumed,step} = delayed;
   assert.match(delayed.missing,/Loading terrain elevation/);
+  assert.ok(delayed.stillPaused,'terrain readiness does not restart the session RAF');
   assert.equal(delayed.buffered[0],after[0]); assert.equal(delayed.first[0],after[0]);
   assert.ok(Math.abs(after[0]-before[0]-step)<1 && Math.abs(resumed[0]-after[0]-step)<1);
   assert.ok(after[1] < before[1] && after[1] > before[1]-60);
@@ -313,8 +323,8 @@ test('phone-sized cinematic follow, controls and asset fallbacks', {timeout: 600
     });
   }
   await js('reset.click()');
-  await js(`seek.value=0;seek.dispatchEvent(new Event('input'));speed.value = '4'; play.click();
-    demo.events.render(); demo.events.render()`);
+  await js(`seek.value=0;seek.dispatchEvent(new Event('input'));speed.value = '4';
+    demo.events.render(); demo.events.render(); play.click()`);
   await until(() => js(`Number(seek.value) > 40`));
   assert.ok(await js('demo.camera.position.altitude>demo.height()+900'),'wider opening shot');
   const firstFrame = await box(); assert.notEqual(firstFrame,overview);
@@ -333,8 +343,9 @@ test('phone-sized cinematic follow, controls and asset fallbacks', {timeout: 600
   assert.equal(await js('mode.textContent'),'Summit');
   assert.match(await js('stats.textContent'),/1746 m elevation · 0\.0 km remaining/);
   assert.deepEqual(await js('demo.camera.target'),await js('demo.ascent.data.coordinates.at(-1)'));
+  await js('demo.events.render(); demo.events.render()');
   assert.ok(await js(`play.click(); JSON.stringify(demo.camera.target) === JSON.stringify(demo.ascent.data.coordinates[0])
-    && mode.textContent === 'Buffering' && +seek.value === 0`));
+    && mode.textContent === 'Buffering · paused' && +seek.value === 0`),'replay starts at zero and pauses for unready destination');
   await js('reset.click()');
   assert.ok(await js('demo.camera.pitch>45 && demo.rider===null'));
   // Tap the native range layered directly on the elevation profile.
@@ -346,9 +357,11 @@ test('phone-sized cinematic follow, controls and asset fallbacks', {timeout: 600
   await js(`demo.events.render(); demo.queryTerrainElevation=()=>demo.height()+600;
     demo.events.sourcedata({sourceId:'dem'}); demo.events.render()`);
   const recovered=await js('+seek.value');
-  assert.ok(await js(`demo.terrain===null && !play.disabled && +seek.value>5000 && map.getAttribute('aria-busy')==='true'`));
+  assert.ok(await js(`demo.terrain===null && play.disabled && +seek.value>5000 && map.getAttribute('aria-busy')==='true'`),
+    'terrain fallback retains selected position and disables Play until flat imagery is ready');
   await js(`demo.events.render()`);
-  assert.ok(await js(`map.getAttribute('aria-busy')==='false' && message.textContent.includes('Flat satellite ride') && +seek.value===${recovered}`));
+  assert.ok(await js(`map.getAttribute('aria-busy')==='false' && !play.disabled && message.textContent.includes('Flat satellite ride') && +seek.value===${recovered}`),
+    'flat readiness enables explicit Play without advancing distance');
   const distance = await js('seek.value');
   await js(`demo.events.error({error:{status:403}})`);
   assert.ok(await js(`demo.removed && message.textContent.includes('unavailable')`));

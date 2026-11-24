@@ -383,12 +383,12 @@ test('Semonzo existing 70/80 clock, stop boundary and invalid FTP never become p
   assert.deepEqual(clock.atMinute(arrival + 2.5), createRideClock(scenario, 'faster', 5).atMinute(arrival + 2.5));
 });
 
-test('adapter commands agree with executing the unchanged legacy flyover operations', async () => {
+test('integrated legacy flyover uses the sole session clock for seek, reset, replay and hidden tabs', async () => {
   const ex = await example(), elements = new Map(), events = new Map(), frames = new Map();
   let frame = 0, pose;
   const element = id => {
     if (!elements.has(id)) elements.set(id, {
-      value: id === 'speed' ? '1' : '0', hidden: true, dataset: {},
+      value: id === 'speed' ? '1' : '0', hidden: id !== 'climb', dataset: {},
       classList: {remove() {}, toggle() {}},
       parentElement: {classList: {remove() {}, toggle() {}}, hidden: false},
       setAttribute() {}, addEventListener(name, fn) { this[name] = fn; },
@@ -399,13 +399,15 @@ test('adapter commands agree with executing the unchanged legacy flyover operati
     addEventListener: (name, fn) => events.set(name, fn),
     dispatchEvent() {},
   };
-  // Only the asynchronous file-loading seam is substituted IN MEMORY. Execute
-  // the actual old seek/reset/tick/camera/visibility functions, never edit it.
+  // Execute the real session scheduler and flyover, substituting module loading
+  // in memory. Compare rendered camera input to an independent pure controller.
   const source = await readFile(new URL('../assets/flyover.js', import.meta.url), 'utf8');
   const seam = "import('../js/semonzo-profile.mjs')";
   assert.equal(source.split(seam).length, 2);
-  vm.runInNewContext(source.replace(seam, 'Promise.resolve(exampleModule)'), {
+  const context = vm.createContext({
     document, exampleModule: {loadExampleTrack: async () => ex.points},
+    createRoutePlayback, adaptersModule:{createLegacyFlyoverAdapter},
+    matchMedia:()=>({matches:false,addEventListener(){}}),
     requestAnimationFrame: fn => { frames.set(++frame, fn); return frame; },
     cancelAnimationFrame: id => frames.delete(id),
     CustomEvent: class { constructor(type, data) { this.type = type; this.detail = data.detail; } },
@@ -416,6 +418,14 @@ test('adapter commands agree with executing the unchanged legacy flyover operati
       });
     }},
   });
+  const sessionSource=await readFile(new URL('../js/route-session.mjs',import.meta.url),'utf8');
+  vm.runInContext(sessionSource.replace("import { createRoutePlayback } from './route-playback.mjs';",'')
+    .replaceAll('export ','')+'\nglobalThis.sessionModule={routePlayback,registerPlaybackRoute,subscribePlayback};',context);
+  context.sessionModule.registerPlaybackRoute(ex.route);
+  await context.sessionModule.routePlayback.selectRoute(ex.route.identity);
+  vm.runInContext(source.replace(seam,'Promise.resolve(exampleModule)')
+    .replace("import('../js/route-session.mjs')",'Promise.resolve(sessionModule)')
+    .replace("import('../js/route-playback-adapters.mjs')",'Promise.resolve(adaptersModule)'),context);
   await new Promise(resolve => setImmediate(resolve));
   assert.ok(pose, 'legacy loader completed');
   const c = createRoutePlayback({loadRoute: async () => ex.route});
