@@ -25,11 +25,11 @@ export async function startupPageTarget(cmd) {
   });
 }
 
-export async function browser(t, onEvent = () => {}) {
+export async function browser(t, onEvent = () => {}, {headless = true} = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'kotr27-test-'));
   const chrome = spawn(process.env.CHROME || (process.platform === 'darwin'
     ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' : 'google-chrome'),
-  ['--headless','--disable-background-networking','--disable-extensions','--disable-sync',
+  [...(headless ? ['--headless'] : []),'--disable-background-networking','--disable-extensions','--disable-sync',
     `--user-data-dir=${dir}`, '--remote-debugging-pipe', 'about:blank'], {stdio:['ignore','ignore','pipe','pipe','pipe']});
   chrome.stderr.on('data', data => { if (process.env.DEBUG_CHROME) process.stderr.write(data); });
   // 'close' also waits for every inherited pipe, which need not coincide

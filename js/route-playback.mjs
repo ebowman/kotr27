@@ -184,14 +184,16 @@ export function createRoutePlayback({loadRoute, animationDurationSeconds = 150,
     nextChapter: () => selectChapter(state.nextChapterId),
     previousChapter: () => selectChapter(state.previousChapterId),
     pause: () => { pause(); return publish(); },
-    play() {
+    play({preserveCamera = false} = {}) {
       if (!usable() || state.hidden || state.renderer.enabled &&
           !['ready', 'flat'].includes(state.renderer.status)) return snapshot;
       if (state.phase === 'playing') return snapshot;
       try {
         if (route.recordedReplay ? state.recordedClock.elapsedSeconds===route.recordedReplay.durationSeconds :
           state.distanceM === state.totalDistanceM) position(0,route.recordedReplay ? 0 : null);
-        state.phase = 'playing'; state.cameraMode = 'follow'; rebase();
+        state.phase = 'playing';
+        if (!preserveCamera) state.cameraMode = 'follow';
+        rebase();
         return publish();
       } catch { return fail('route-projection'); }
     },

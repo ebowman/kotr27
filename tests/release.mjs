@@ -102,7 +102,7 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
       'rider-controls','rider-scenario','rider-preferences','preference-storage','preferences-view',
       'semonzo-profile','route-analysis','route-analysis-loader','route-pack-contract','route-catalog','example-catalog','route-state','site-shell',
       'itinerary','trip-planner','trip-planner-view','route-time','route-playback','route-playback-adapters',
-      'route-session','route-briefing','route-briefing-view','route-comparison','route-comparison-view',
+      'route-session','route-briefing','route-briefing-view','route-flyover','route-flyover-view','route-terrain-view','route-comparison','route-comparison-view',
       'route-pace','route-pace-view','local-route-parser','local-route-worker','local-route-import',
       'local-route-storage','local-routes-view','recorded-replay','recorded-replay-view',
       'event-guide','event-guide-view','route-weather','route-weather-view'].map(n=>`js/${n}.mjs`)];
@@ -121,7 +121,7 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   for (const name of names.filter(n=>/\.(mjs|js)$/.test(n))) {
     const text = await readFile(join(a,name),'utf8');
     for (const [,spec] of text.matchAll(/(?:from\s*|import\s*\()\s*['"](\.[^'"]+)['"]/g)) {
-      assert.match(spec, /\.[0-9a-f]{24}\.mjs$/);
+      assert.match(spec, /\.[0-9a-f]{24}\.(?:mjs|js)$/);
       assert.ok(names.includes(join(dirname(name),spec)), `${name} → ${spec}`);
     }
     for(const [,spec] of text.matchAll(/new URL\(\s*['"](\.[^'"]+\.mjs)['"]/g)) {
@@ -131,7 +131,7 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   }
   const bNames = new Set(await files(b));
   assert.deepEqual(names.filter(n => !bNames.has(n)).sort(), names.filter(n =>
-    /(?:flyover|semonzo|semonzo-profile|example-catalog|route-playback-adapters|rider-controls|site-shell)\./.test(n)).sort());
+    /\/(?:flyover|semonzo|semonzo-profile|example-catalog|route-playback-adapters|rider-controls|site-shell)\./.test(n)).sort());
   // The shared route clock now reaches BOTH document shells, but still does
   // not change the independent camera script or geometry bytes.
   const c = join(tmp, 'clock-only');
@@ -180,9 +180,15 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   let shellPrevious = validatorRelease;
   for (const [file, before, after, affected] of [
     ['js/route-analysis.mjs', 'export function analyzeRoute', '/* release fixture */ export function analyzeRoute',
-      /\/(?:route-analysis|route-analysis-loader|trip-planner|trip-planner-view|semonzo-profile|route-time|route-pace|route-pace-view|route-playback-adapters|route-briefing|route-briefing-view|event-guide|event-guide-view|route-weather|route-weather-view|route-comparison-view|local-route-worker|local-route-import|local-routes-view|recorded-replay|recorded-replay-view|site-shell|rider-controls|flyover)\./],
+      /\/(?:route-analysis|route-analysis-loader|trip-planner|trip-planner-view|semonzo-profile|route-time|route-pace|route-pace-view|route-playback-adapters|route-briefing|route-briefing-view|route-flyover|route-flyover-view|route-terrain-view|event-guide|event-guide-view|route-weather|route-weather-view|route-comparison-view|local-route-worker|local-route-import|local-routes-view|recorded-replay|recorded-replay-view|site-shell|rider-controls|flyover)\./],
     ['js/route-playback.mjs', 'export function createRoutePlayback', '/* release fixture */ export function createRoutePlayback',
-      /\/(?:route-playback|route-session|route-pace-view|route-briefing-view|event-guide-view|route-comparison-view|recorded-replay-view|site-shell|rider-controls|flyover)\./],
+      /\/(?:route-playback|route-session|route-pace-view|route-briefing-view|route-flyover-view|event-guide-view|route-comparison-view|recorded-replay-view|site-shell|rider-controls|flyover)\./],
+    ['js/route-flyover.mjs', 'export function cameraPose', '/* release fixture */ export function cameraPose',
+      /\/(?:route-flyover|route-terrain-view|route-flyover-view|site-shell|rider-controls)\./],
+    ['js/route-terrain-view.mjs', 'export async function mountRouteTerrain', '/* release fixture */ export async function mountRouteTerrain',
+      /\/(?:route-terrain-view|route-flyover-view|site-shell|rider-controls)\./],
+    ['js/route-flyover-view.mjs', 'export function installRouteFlyover', '/* release fixture */ export function installRouteFlyover',
+      /\/(?:route-flyover-view|site-shell|rider-controls)\./],
     ['js/route-pace.mjs', 'export function createRoutePace', '/* release fixture */ export function createRoutePace',
       /\/(?:route-pace|route-pace-view|trip-planner-view|recorded-replay-view|site-shell|rider-controls)\./],
     ['js/route-pace-view.mjs', 'export function installRoutePace', '/* release fixture */ export function installRoutePace',

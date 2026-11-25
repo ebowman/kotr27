@@ -201,6 +201,7 @@
     if (selectedDistance > 0) scrub(selectedDistance);
     document.addEventListener('kotr-selection', event => {
       // Shell owns resolved selections; do not start a second async selection.
+      if (event.detail?.bundle?.route.id !== 'semonzo-example') window.kotrDisposeTerrain?.();
       render();
       if (!el('preview-motion').hidden && el('preview-motion').textContent.startsWith('Pause'))
         el('preview-motion').click();

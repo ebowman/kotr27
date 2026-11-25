@@ -8,6 +8,7 @@ import { installTripPlanner } from './trip-planner-view.mjs';
 import { createAnalysisPlaybackRoute, createSemonzoPlaybackRoute } from './route-playback-adapters.mjs';
 import { routePlayback, registerPlaybackRoute, unregisterPlaybackRoute, subscribePlayback } from './route-session.mjs';
 import { installRouteBriefing } from './route-briefing-view.mjs';
+import { installRouteFlyover } from './route-flyover-view.mjs';
 import { routePace } from './route-pace.mjs';
 import { installRoutePace } from './route-pace-view.mjs';
 import { installRouteComparison } from './route-comparison-view.mjs';
@@ -137,6 +138,7 @@ function reflectPosition(snapshot, chapterId = null) {
   }
 }
 const linkedBriefing = installRouteBriefing(shell, reflectPosition);
+const linkedFlyover = installRouteFlyover(shell, reflectPosition);
 const eventGuide = installEventGuide(shell,{navigate:navigateSelection,link});
 const weather = installRouteWeather(shell);
 const linkedPace = installRoutePace(shell, riderState, reflectPosition);
@@ -336,7 +338,7 @@ function render(focus = false, notify = true, {preserveRecording = true} = {}) {
       [['briefing','Recorded replay / planned comparison']] : bundle.route.kind==='local' ?
       [['briefing','Local route briefing'],['clock','Modeled pace (not recorded replay)']] : bundle.route.id === exampleRouteId ?
       [['briefing','Route briefing'],['clock','Example ride clock'],['sensitivity','FTP / weight sensitivity'],['flyover','Optional 3D flyover']] :
-      [['briefing','Route briefing'],['clock','Pace / ride clock'],['sensitivity','FTP / weight sensitivity'],
+      [['briefing','Route briefing'],['clock','Pace / ride clock'],['sensitivity','FTP / weight sensitivity'],['flyover','Optional 3D flyover'],
         ['compare','Compare variants'],['skyline','Skyline'],['radial','Radial']])) {
       const a = link(actions,label,{view});
       if (s.view === view) a.setAttribute('aria-current','page');
@@ -356,7 +358,7 @@ function render(focus = false, notify = true, {preserveRecording = true} = {}) {
     };
   }
   const exampleEngine = bundle?.route.id === exampleRouteId && bundle.revision.id === catalog.resolve(exampleRouteId).revision.id;
-  if (bundle && s.area === 'explore' && s.view === 'flyover' && !exampleEngine)
+  if (bundle && s.area === 'explore' && s.view === 'flyover' && !exampleEngine && bundle.route.kind!=='organizer')
     node('p', 'This interactive view is unavailable for the selected revision. Its route briefing remains available; no example has been substituted.', content);
   if (explorer) explorer.hidden = !exampleEngine || s.area !== 'explore' || !['clock','sensitivity'].includes(s.view);
   if (flyover) flyover.hidden = !exampleEngine || s.area !== 'explore' || s.view !== 'flyover';
@@ -368,6 +370,7 @@ function render(focus = false, notify = true, {preserveRecording = true} = {}) {
   const recording=recordings.get(s.revisionId);
   const geometryView=recording?.status==='available' ? {...current,profile:null} : current;
   linkedBriefing.show(geometryView);
+  linkedFlyover.show(geometryView);
   linkedPace.show(geometryView,bundle?.route.id===exampleRouteId ? exampleAnalysis : null);
   linkedReplay.show(localLibrary.get(s.routeId),recording,s.area==='explore');
   eventGuide.show(current,catalog.data.events.find(e=>e.id==='kotr-2027'));

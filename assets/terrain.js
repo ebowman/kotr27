@@ -13,8 +13,12 @@ const terrainSDK = (() => {
       document.head.append(tag);
     });
   }
-  let ready;
-  return () => ready ??= Promise.all([resource(false), resource(true)]).then(() => true, () => false);
+  let ready, failed=false;
+  return (explicitRetry=false) => {
+    if (explicitRetry && failed) ready=null;
+    return ready ??= Promise.all([resource(false), resource(true)]).then(
+      () => {failed=false;return true;}, () => {failed=true;return false;});
+  };
 })();
 window.prepareTerrain = () => {
   if (window.KOTR_CONFIG && !savingTerrainData()) terrainSDK();
@@ -177,7 +181,12 @@ function visibleSeamCheck() {
   };
 }
 
+// Shared pinned-SDK paint checks for the revision-bound official-route adapter.
+// Importing this local file does not request the SDK or any provider tiles.
+window.kotrTerrainTools = {loadSDK:()=>terrainSDK(true), rasterCoverage};
+
 window.startTerrain = function (points, connect, upcoming, setAvailability) {
+  window.kotrDisposeTerrain?.();
   const container = document.getElementById('map');
   const message = document.getElementById('message');
   let map, stopped = false, recoverRide, retryTimer;
@@ -198,6 +207,7 @@ window.startTerrain = function (points, connect, upcoming, setAvailability) {
     container.parentElement.hidden = true;
     map?.remove();
   }
+  window.kotrDisposeTerrain = () => fallback('3D stopped. Use the linked profile, or explicitly retry the example.');
   if (!window.KOTR_CONFIG) { fallback(); return; }
   terrainSDK().then(ready => {
     if (!ready) { fallback(); return; }
