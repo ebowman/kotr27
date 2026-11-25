@@ -6,9 +6,13 @@ results later in this file are not full-site qualification. Chrome-only scope,
 deferred browsers/fullscreen and outstanding review/performance disposition
 are explicit in that report. No publication is authorized by these instructions.
 
-The local project is **not** the Pages tree. Do not publish this checkout,
-its Git history, or a recursive copy of it: it includes private project and
-issue tooling. For development, serve the unbuilt checkout on loopback
+The source and full Git history live in `ebowman/kotr27`, as requested by the
+project owner on 2026-11-25. Pushes to `main` run
+`.github/workflows/pages.yml`, which builds and deploys the website to GitHub
+Pages. This replaces the earlier separate, artifact-only repository workflow.
+Ignored private route originals and local issue data remain local; do not add
+them to Git. Pages serves the generated site, not a recursive copy of the
+source checkout. For development, serve the unbuilt checkout on loopback
 (`python3 -m http.server --bind 127.0.0.1 8000`) and open `/`. No build or
 release check is needed while editing.
 
@@ -67,27 +71,21 @@ node tools/qualification-preview.mjs /tmp/kotr27-new-review-artifact 48129
 Use a new external destination. The command prints the actual release and URL;
 it refuses to replace an existing output and never takes over another listener.
 
-## After authorization only: publish the artifact, not the source
+## After authorization only: push main and deploy
 
-In the **separate public Pages repository** (`ebowman/kotr27`), use Settings →
-Pages → Deploy from a branch, and select the public publication branch and
-`/ (root)`. Use a clean, separate clone of that branch. Copy the **contents**
-of `"$stage/kotr27"` (including `.nojekyll`), not its enclosing directory,
-to the root of that clone. For a branch dedicated exclusively to generated
-site files:
+The Git remote is `https://github.com/ebowman/kotr27.git`. GitHub Pages uses
+GitHub Actions as its build source. After merging reviewed work into `main`:
 
 ```sh
-public=/absolute/path/to/separate-public-pages-clone
-rsync -ani --delete --exclude='/.git' "$stage/kotr27/" "$public/"
-# Inspect the dry run and destination before applying:
-rsync -ai --delete --exclude='/.git' "$stage/kotr27/" "$public/"
-git -C "$public" status --short
+git push origin main
+gh run list --repo ebowman/kotr27 --workflow pages.yml --limit 5
 ```
 
-Review the changed path list, then commit and push that **public artifact**
-as one release on the selected branch. Never point `public` at the local
-project; do not copy private files even temporarily into the public repo.
-After Pages finishes deploying, revisit the ordinary `/kotr27/` URL.
+The workflow uses Node 22 and `tools/build-release.mjs`, including the
+fingerprinted assets and offline manifest/worker. Only that generated output
+is uploaded as the Pages artifact; source history stays in the Git repository.
+After the workflow succeeds, revisit `https://ebowman.github.io/kotr27/`.
+Future pushes to `main` automatically repeat this build and deployment.
 
 ## What returning visitors see
 
