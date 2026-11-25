@@ -101,6 +101,7 @@ a { color:inherit; text-underline-offset:.2em }
 #event-guide > section { margin:1.5rem 0; padding:1rem; border:1px solid var(--line); min-width:0 }
 #event-guide dt { font-weight:700 }
 #event-guide dd { margin:0 0 .75rem }
+#route-weather { margin:1.5rem 0; padding:1rem; border:1px solid var(--line); min-width:0; overflow-wrap:anywhere }
 #preparation-guide label { min-height:44px; margin:.6rem 0 }
 #preparation-guide select { display:block; width:100% }
 #preparation-guide input { min-width:1.2rem; min-height:1.2rem; margin:.5rem }

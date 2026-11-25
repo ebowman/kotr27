@@ -11,6 +11,7 @@ import { build } from '../tools/build-release.mjs';
 import { readRoutePack } from '../tools/route-pack.mjs';
 import { browser, until } from './browser.mjs';
 import { syntheticGPX } from './local-route-fixtures.mjs';
+import { forecastFixture } from './route-weather-fixtures.mjs';
 
 async function fixture(t,{fault=null,denyStorage=false}={}) {
   const tmp=await mkdtemp(join(tmpdir(),'kotr-guide-')),out=join(tmp,'public');
@@ -92,6 +93,130 @@ async function fixture(t,{fault=null,denyStorage=false}={}) {
   }
   return {...b,evaluate,navigate,base,pack,files,network,select,snapshot,key,printText,session,upload};
 }
+
+test('packaged weather gate: real keyboard button, injected Rome clock, offline and private isolation',async t=>{
+  const f=await fixture(t,{denyStorage:true}),route=f.pack.catalog.routes[0];
+  await f.cmd('Page.addScriptToEvaluateOnNewDocument',{source:`
+    { const RealDate=Date; window.weatherTestTime='2026-11-25T02:17:45.066Z';
+      window.Date=class extends RealDate {
+        constructor(...args){super(...(args.length?args:[window.weatherTestTime]));}
+        static now(){return new RealDate(window.weatherTestTime).getTime();}
+      };
+    }`});
+  await f.cmd('Emulation.setTimezoneOverride',{timezoneId:'America/Los_Angeles'});
+  await f.navigate(`${f.base}index.html?area=ride-week&route=${route.id}&rev=${route.currentRevisionId}`);
+  const text=()=>f.js(`document.getElementById('weather-status').textContent`);
+  assert.match(await text(),/2026-11-25T02:17:45.066Z/);
+  assert.match(await text(),/Bassano del Grappa/);
+  assert.equal(await f.js(`document.querySelectorAll('#weather-status li').length`),5);
+  assert.equal(await f.js(`[...document.querySelectorAll('#weather-status li')].every(e=>e.textContent.includes('Outside'))`),true);
+  await f.js(`window.weatherTestTime='2027-05-10T21:59:59Z';document.getElementById('weather-check').focus()`);
+  const requests=f.network.length;
+  for(let i=0;i<5;i++)await f.key('Enter','Enter',13);
+  assert.match(await text(),/2027-05-10 in Europe\/Rome/);
+  assert.match(await text(),/Outside.*request window/);
+  assert.equal(await f.js('document.activeElement.id'),'weather-check');
+  assert.equal(f.network.length,requests);
+  await f.js(`Object.defineProperty(navigator,'onLine',{configurable:true,value:false})`);
+  await f.key(' ','Space',32);
+  assert.match(await text(),/Offline/);
+  assert.match(await text(),/No saved weather snapshot/);
+  await f.select({area:'explore',view:'briefing'});
+  await until(()=>f.js(`!!document.getElementById('briefing-hardest-jump')`));
+  await f.js(`document.getElementById('briefing-hardest-jump').click()`);
+  assert.ok((await f.snapshot()).position);
+  await f.upload();
+  assert.match(await text(),/private local routes and recordings/);
+  assert.doesNotMatch(await text(),/Bassano|private-print-sentinel|Selected public route/);
+  await f.js(`document.getElementById('weather-check').focus()`);
+  await f.key('Enter','Enter',13);
+  assert.match(await text(),/No nearest public location/);
+  assert.ok(await f.js('document.documentElement.scrollWidth<=innerWidth'));
+  assert.deepEqual(f.network.filter(u=>!u.startsWith(f.base)),[]);
+  assert.deepEqual(f.exceptions,[]);
+});
+
+async function mockWeather(f) {
+  await f.cmd('Page.addScriptToEvaluateOnNewDocument',{source:`
+    { const RealDate=Date, realFetch=fetch;
+      window.weatherTestTime='2027-05-19T21:00:00Z';window.weatherMode='success';window.weatherCalls=[];
+      window.Date=class extends RealDate {
+        constructor(...a){super(...(a.length?a:[window.weatherTestTime]));}
+        static now(){return new RealDate(window.weatherTestTime).getTime();}
+      };
+      window.fetch=async(url,opts)=>{
+        if(!String(url).startsWith('https://api.met.no/'))return realFetch(url,opts);
+        weatherCalls.push({url:String(url),method:opts.method,credentials:opts.credentials,headers:opts.headers??null});
+        const data=${JSON.stringify(forecastFixture())};
+        data.properties.meta.updated_at=weatherTestTime;
+        const status=weatherMode==='429'?429:weatherMode==='503'?503:200;
+        if(weatherMode==='hold')await new Promise(resolve=>window.releaseWeather=resolve);
+        return new Response(JSON.stringify(data),{status,headers:{Expires:new RealDate(Date.now()+3600000).toUTCString()}});
+      };
+    }`});
+}
+test('packaged MET opt-in, forecast samples, cache, stale/429, core independence and Forget',async t=>{
+  const f=await fixture(t),route=f.pack.catalog.routes[0];await mockWeather(f);
+  await f.cmd('Emulation.setTimezoneOverride',{timezoneId:'America/Los_Angeles'});
+  await f.navigate(`${f.base}index.html?area=ride-week&route=${route.id}&rev=${route.currentRevisionId}`);
+  const text=()=>f.js(`document.getElementById('weather-status').textContent`);
+  assert.equal(await f.js('weatherCalls.length'),0);
+  await f.js(`document.getElementById('weather-check').focus()`);await f.key('Enter','Enter',13);
+  await until(()=>f.js(`document.getElementById('weather-status').textContent.startsWith('Forecast')`));
+  assert.match(await text(),/MET Norway Locationforecast 2.0/);
+  assert.match(await text(),/Provider\/model elevation: 110 m/);
+  assert.match(await text(),/2027-05-20T06:00:00Z/);
+  assert.match(await text(),/2027-05-22 · unavailable/);
+  assert.match(await text(),/precipitation 0 mm/);
+  assert.match(await text(),/Europe\/Rome/);
+  await f.js(`document.querySelector('#weather-status summary').focus()`);await f.key('Enter','Enter',13);
+  assert.equal(await f.js(`document.querySelector('#weather-status details').open`),true);
+  for(let i=0;i<3;i++) {
+    await f.js(`document.getElementById('weather-check').focus()`);await f.key('Enter','Enter',13);
+    await until(()=>f.js(`!document.getElementById('weather-check').disabled`));
+  }
+  assert.equal(await f.js('weatherCalls.length'),1);
+  await f.js(`window.weatherTestTime='2027-05-20T01:00:00Z';document.dispatchEvent(new Event('visibilitychange'))`);
+  assert.match(await text(),/Stale forecast/);
+  assert.equal(await f.js('weatherCalls.length'),1);
+  await f.js(`window.weatherMode='429';document.getElementById('weather-check').click()`);
+  await until(()=>f.js(`document.getElementById('weather-status').textContent.includes('Rate limited (429)')`));
+  assert.match(await text(),/Stale forecast/);
+  await f.select({area:'explore',view:'briefing'});
+  await until(()=>f.js(`!!document.getElementById('briefing-hardest-jump')`));
+  await f.js(`document.getElementById('briefing-hardest-jump').click()`);
+  assert.ok((await f.snapshot()).position);
+  await f.js(`window.weatherTestTime='2027-05-20T05:00:00Z';document.getElementById('weather-check').click()`);
+  await until(()=>f.js(`!document.getElementById('weather-check').disabled`));
+  assert.equal(await f.js('weatherCalls.length'),2);
+  await f.js(`document.getElementById('site-preferences').open=true;document.getElementById('preference-forget').click()`);
+  await until(()=>f.js(`document.getElementById('preference-forget-status').textContent.startsWith('All app-owned local data removed')`));
+  assert.match(await text(),/Received by this tab: none/);
+  assert.match(await text(),/Rate limited/);
+  await f.upload();assert.doesNotMatch(await text(),/45\\.7508|MET Norway Locationforecast 2.0|private-print-sentinel/);
+  assert.match(await text(),/private local routes/);
+  const calls=await f.js('weatherCalls');
+  assert.ok(calls.every(c=>c.headers===null && c.method==='GET' && c.credentials==='omit'));
+  assert.ok(calls.every(c=>c.url==='https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=45.7508&lon=11.7489'));
+  assert.deepEqual(f.network.filter(u=>!u.startsWith(f.base)),[]);
+  assert.deepEqual(f.exceptions,[]);
+});
+test('packaged MET error and late response cannot replace private/new selection or block core',async t=>{
+  const f=await fixture(t),route=f.pack.catalog.routes[0];await mockWeather(f);
+  await f.navigate(`${f.base}index.html?area=explore&route=${route.id}&rev=${route.currentRevisionId}`);
+  await f.js(`window.weatherMode='503';document.getElementById('weather-check').click()`);
+  await until(()=>f.js(`document.getElementById('weather-status').textContent.includes('Provider error (503)')`));
+  assert.equal(await f.js('weatherCalls.length'),1);
+  await f.js(`window.weatherTestTime='2027-05-20T01:00:00Z';window.weatherMode='hold';document.getElementById('weather-check').click()`);
+  await until(()=>f.js(`typeof window.releaseWeather==='function'`));
+  await f.upload();
+  await f.js('window.releaseWeather()');
+  await until(()=>f.js(`!document.getElementById('weather-check').disabled`));
+  const text=await f.js(`document.getElementById('weather-status').textContent`);
+  assert.match(text,/private local routes/);assert.doesNotMatch(text,/Provider\/model elevation: 110|Selected public route/);
+  assert.ok(await f.js('document.documentElement.scrollWidth<=innerWidth'));
+  assert.deepEqual(f.exceptions,[]);
+});
 
 test('packaged Prepare 375px: all choices, keyboard, history, checklist memory and global Forget',async t=>{
   const f=await fixture(t),route=f.pack.catalog.routes.find(r=>r.name.startsWith('D3L'));

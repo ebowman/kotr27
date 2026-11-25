@@ -18,6 +18,7 @@ import { createRecordedReplay } from './recorded-replay.mjs';
 import { installRecordedReplay } from './recorded-replay-view.mjs';
 import { installEventGuide } from './event-guide-view.mjs';
 import { practiceWeek } from './event-guide.mjs';
+import { installRouteWeather } from './route-weather-view.mjs';
 
 const el = id => document.getElementById(id);
 // Common Plan/Explore/pace views run in either shell. Do not lose memory-only
@@ -137,6 +138,7 @@ function reflectPosition(snapshot, chapterId = null) {
 }
 const linkedBriefing = installRouteBriefing(shell, reflectPosition);
 const eventGuide = installEventGuide(shell,{navigate:navigateSelection,link});
+const weather = installRouteWeather(shell);
 const linkedPace = installRoutePace(shell, riderState, reflectPosition);
 const linkedReplay = installRecordedReplay(shell,{onSeek:reflectPosition,
   plans:()=>catalog.data.routes.filter(r=>r.kind==='organizer').flatMap(r=>r.revisions.map(revision=>({
@@ -182,7 +184,7 @@ subscribePlayback(snapshot=>{
   }
 });
 installPreferences(shell.querySelector('.site-header'), {
-  forgetLocalFiles:()=>{eventGuide.forget();return localLibrary.forget();},
+  forgetLocalFiles:()=>{eventGuide.forget();weather.forget();return localLibrary.forget();},
   edit:() => {
     if (el('personal') && !el('legacy-explorer').hidden) {
       el('personal').open = true;
@@ -322,7 +324,7 @@ function render(focus = false, notify = true, {preserveRecording = true} = {}) {
     const ride = card(grid, 'Briefing · selected route, not a calendar assignment', 'Read the sourced event snapshot and revisioned route card below. Calendar mapping, departures, contacts, logistics and sourced stops remain pending. This is not live tracking or turn-by-turn navigation.');
     const actions = node('div','',ride); actions.className = 'site-actions';
     if (bundle) link(actions, 'Read selected route / section', {area:'explore', view:'briefing'});
-    const downloads = card(grid, 'Downloads and print; offline & weather pending', 'Choose verified route downloads in Plan or print the cleared organizer card below. No saved offline pack or weather service is installed. Do not rely on cached pages or printed cards for navigation or current event information.');
+    const downloads = card(grid, 'Downloads, print and optional weather', 'Choose verified route downloads in Plan or print the cleared organizer card below. Optional public start-area weather is below; no saved offline pack is installed. Do not rely on cached pages or printed cards for navigation or current event information.');
     link(downloads, 'Open trip planner', {area:'plan', view:'briefing'});
   }
   if (bundle && s.area === 'explore') {
@@ -369,6 +371,7 @@ function render(focus = false, notify = true, {preserveRecording = true} = {}) {
   linkedPace.show(geometryView,bundle?.route.id===exampleRouteId ? exampleAnalysis : null);
   linkedReplay.show(localLibrary.get(s.routeId),recording,s.area==='explore');
   eventGuide.show(current,catalog.data.events.find(e=>e.id==='kotr-2027'));
+  weather.show(current,catalog.data.events.find(e=>e.id==='kotr-2027'));
   localLibrary.show(s,recording);
   // The official comparison workspace never retains private analyses/names.
   // Local comparison/replay is a separate capability, not a catalog insertion.

@@ -45,7 +45,7 @@ export const pendingBriefing = Object.freeze([
   ['Travel / accommodation / luggage', 'Pending cleared 2027 arrival, transfer, accommodation and luggage arrangements. No hotel is assumed.'],
   ['Support / communications', 'Pending cleared public organizer contact and support instructions. Private contacts, chat invites and emergency membership details are not published.'],
   ['Public safety / facilities', 'Pending sourced event-specific safety guidance, closures and emergency arrangements. Water, food, toilets and emergency exits are unknown; navigation cues are not facility POIs.'],
-  ['Organizer updates / weather / offline', 'No live update or weather service here. Confirm current conditions and instructions with the organizer. No offline pack installed; cached pages and printed copies cannot verify changes.'],
+  ['Organizer updates / weather / offline', 'No live organizer update service. Optional public start-area forecasts are available in the separate weather panel only when dates are in range and you request them; no summit or route-wide forecast. Confirm conditions and instructions with the organizer. No offline pack installed; cached pages and printed copies cannot verify changes.'],
 ]);
 
 export const practiceWeeks = Object.freeze([
