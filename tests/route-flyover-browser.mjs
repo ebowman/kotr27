@@ -78,7 +78,8 @@ async function fixture(t,{real=false,headless=true}={}) {
   async function serve(req,res) {
     const path=new URL(req.url,'http://localhost').pathname.slice('/kotr27/'.length)||'index.html';
     if(path.startsWith('fixture/')) {
-      if(path.startsWith('fixture/missing-dem/'))return res.writeHead(404).end();
+      if(path.startsWith('fixture/missing-dem/') || path.startsWith('fixture/missing-imagery/'))
+        return res.writeHead(404).end();
       const h=Number(path.split('/')[2]),v=Math.round((h+10000)*10);
       let tile;
       if(path.startsWith('fixture/dem/') && ridge){
@@ -509,6 +510,32 @@ test('native Chrome real WebGL: cold steep/bendy/long route frames, manual, cont
   assert.deepEqual(f.exceptions,[]);
 });
 
+test('native manual and follow missing DEM and imagery HTTP failures remain terminal',async t=>{
+  for(const mode of ['follow','manual']) for(const resource of ['dem','imagery']) {
+    await t.test(`${mode} ${resource}`,async t=>{
+      const f=await fixture(t,{real:true});
+      await f.cmd('Emulation.setDeviceMetricsOverride',{width:800,height:900,deviceScaleFactor:1,mobile:false});
+      await f.navigate(f.pack.catalog.routes.find(r=>r.id==='rwgps-57873019'));
+      await f.js(`window.fixtureHeight=${(await f.snapshot()).position.rawElevationM};
+        document.getElementById('flyover-enable').click()`);
+      await until(()=>f.js(`document.getElementById('route-flyover').dataset.status==='ready'`));
+      if(mode==='manual')await nativeDrag(f,t);
+      await until(()=>f.js(`JSON.parse(document.getElementById('official-terrain').dataset.frame||'{}').mode==='${mode}'`));
+      await f.js(resource==='dem' ?
+        `nativeMap.getSource('dem').setTiles([location.origin+'/kotr27/fixture/missing-dem/{z}/{x}/{y}']);void 0` :
+        `for(const source of ['satellite','sat-cover']) nativeMap.getSource(source).setTiles(
+          [location.origin+'/kotr27/fixture/missing-imagery/{z}/{x}/{y}']);void 0`);
+      await until(()=>f.js(`document.getElementById('route-flyover').dataset.status==='unavailable'`));
+      assert.equal(await f.js(`document.querySelectorAll('#route-flyover canvas').length`),0);
+      assert.ok(f.network.some(url=>url.includes(`/fixture/missing-${resource}/`)));
+      const count=f.network.length;
+      await new Promise(resolve=>setTimeout(resolve,3000));
+      assert.equal(f.network.length,count,'Terminal resource failure never automatically retries');
+      assert.deepEqual(f.exceptions,[]);
+    });
+  }
+});
+
 test('native rendered terrain depth rejects an actual foreground DEM ridge at oblique pitch',async t=>{
   const f=await fixture(t,{real:true});
   await f.cmd('Emulation.setDeviceMetricsOverride',{width:800,height:900,deviceScaleFactor:1,mobile:false});
@@ -537,6 +564,36 @@ test('native rendered terrain depth rejects an actual foreground DEM ridge at ob
   while(Date.now()<deadline && await f.js(`document.getElementById('route-flyover').dataset.status!=='unavailable'`))
     await new Promise(resolve=>setTimeout(resolve,200));
   assert.equal(await f.js(`document.getElementById('route-flyover').dataset.status`),'unavailable');
+  assert.equal(await f.js(`document.querySelectorAll('#route-flyover canvas').length`),0);
+  assert.deepEqual((await f.snapshot()).position,before.position);
+  assert.deepEqual(f.exceptions,[]);
+});
+
+test('native ridge may occlude the rider in manual mode but return restores strict follow rejection',async t=>{
+  const f=await fixture(t,{real:true});
+  await f.cmd('Emulation.setDeviceMetricsOverride',{width:800,height:900,deviceScaleFactor:1,mobile:false});
+  await f.navigate(f.pack.catalog.routes.find(r=>r.id==='rwgps-57873019'));
+  await f.command('setCameraMode','follow');
+  const before=await f.snapshot();
+  f.setRidge(before.position);
+  await f.js(`window.fixtureHeight=${before.position.rawElevationM};
+    document.getElementById('flyover-enable').click()`);
+  await until(()=>f.js(`Number.isFinite(JSON.parse(document.getElementById('official-terrain').dataset.frame||'{}').depthGap)`));
+  assert.equal(await f.js(`JSON.parse(document.getElementById('official-terrain').dataset.frame).clear`),false);
+  // Mode-boundary injection on the actual GPU map, not a visibility override
+  // or simulated depth result. The initial hidden canvas cannot take a trusted
+  // click; ordinary trusted manual input is independently exercised above.
+  await f.js(`nativeMap.fire('movestart',{originalEvent:new MouseEvent('mousedown')});
+    nativeMap.triggerRepaint();void 0`);
+  await until(()=>f.js(`JSON.parse(document.getElementById('official-terrain').dataset.frame||'{}').mode==='manual' &&
+    document.getElementById('route-flyover').dataset.status==='ready'`));
+  await new Promise(resolve=>setTimeout(resolve,3500));
+  const manual=await f.js(`JSON.parse(document.getElementById('official-terrain').dataset.frame)`);
+  assert.deepEqual(manual,{mode:'manual',imagery:true,elevation:true,depth:true,ok:true});
+  await f.js(`document.getElementById('flyover-return').click()`);
+  await until(()=>f.js(`JSON.parse(document.getElementById('official-terrain').dataset.frame||'{}').mode==='follow'`));
+  assert.equal(await f.js(`JSON.parse(document.getElementById('official-terrain').dataset.frame).clear`),false);
+  await until(()=>f.js(`document.getElementById('route-flyover').dataset.status==='unavailable'`));
   assert.equal(await f.js(`document.querySelectorAll('#route-flyover canvas').length`),0);
   assert.deepEqual((await f.snapshot()).position,before.position);
   assert.deepEqual(f.exceptions,[]);

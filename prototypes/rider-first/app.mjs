@@ -22,6 +22,15 @@ const reduced = matchMedia('(prefers-reduced-motion: reduce)');
 let pack, selected, analysis, inPlayer = false, playing = false, distance = 0;
 let generation = 0, terrainController, terrainHandle, lastTime, frame, projection;
 let terrainReady = false;
+let manual = false;
+const returnRider = document.createElement('button');
+returnRider.id = 'return-rider';returnRider.textContent = 'Return to rider';returnRider.hidden = true;
+$('terrain-status').parentElement.append(returnRider);
+function followRider() {
+  manual = false;returnRider.hidden = true;
+  camera = 'follow';$('camera').value = camera;updatePosition(true);
+}
+returnRider.addEventListener('click',()=>{pause();followRider();});
 let camera = 'follow';
 const cache = new Map();
 const format = n => new Intl.NumberFormat('en-GB').format(Math.round(n));
@@ -85,6 +94,7 @@ function snapshot() {
     phase:playing?'playing':'paused',cameraMode:camera};
 }
 function updatePosition(force = false) {
+  if (force) {manual = false;returnRider.hidden = true;}
   const p = positionAt(analysis,distance), xy = projection(p);
   $('outline-rider')?.setAttribute('cx',xy[0]);
   $('outline-rider')?.setAttribute('cy',xy[1]);
@@ -101,7 +111,10 @@ function pause() {
   playing = false;cancelAnimationFrame(frame);lastTime = undefined;
   $('play').innerHTML = '▶ <span>Play</span>';
   $('play').setAttribute('aria-label','Play route preview');
-  if (terrainReady) $('terrain-status').textContent = 'Satellite terrain · paused';
+  // Flush the last throttled playing snapshot without recentering a manual map.
+  if (analysis && inPlayer) terrainHandle?.update(snapshot());
+  if (terrainReady) $('terrain-status').textContent = manual ?
+    'Manual exploration · paused' : 'Satellite terrain · paused';
 }
 function tick(time) {
   if (!playing || !inPlayer) return;
@@ -113,10 +126,12 @@ function tick(time) {
 }
 function stopTerrain() {
   terrainReady = false;
+  manual = false;returnRider.hidden = true;
   $('player').classList.remove('online');
   terrainController?.abort();terrainController = undefined;
   terrainHandle?.dispose();terrainHandle = undefined;
   $('terrain').replaceChildren();$('terrain').style.visibility = 'hidden';
+  for (const key of ['frame','distance','requests','camera']) delete $('terrain').dataset[key];
 }
 async function terrain() {
   stopTerrain();
@@ -141,21 +156,26 @@ async function terrain() {
     if (controller.signal.aborted) return;
     const handle = await mountRouteTerrain({
       container:$('terrain'),analysis,snapshot:snapshot(),signal:controller.signal,
-      onManual:()=>pause(),
-      onStatus:(state) => {
+      onManual:()=>{
+        if (controller.signal.aborted) return;
+        manual = true;returnRider.hidden = false;pause();
+      },
+      onStatus:(state,reason) => {
         if (controller.signal.aborted) return;
         if (state === 'ready') {
           clearTimeout(deadline);terrainReady = true;$('player').classList.add('online');
-          status(playing ? 'Satellite terrain · preview playback' : 'Satellite terrain · paused');
+          status(manual ? 'Manual exploration · paused' :
+            playing ? 'Satellite terrain · preview playback' : 'Satellite terrain · paused');
         }
         if (state === 'verifying') {
           terrainReady = false;
-          status('Satellite terrain · verifying view');
+          status(reason);
         }
         if (state === 'unavailable') {
           clearTimeout(deadline);
           terrainReady = false;$('player').classList.remove('online');
-          status('Terrain unavailable · 2D route preview');
+          manual = false;returnRider.hidden = true;
+          status(`Terrain unavailable · ${reason} · 2D route preview`);
         }
       },
     });
@@ -240,6 +260,7 @@ $('player-route').addEventListener('change',e=>choose(e.target.value));
 $('play').addEventListener('click',()=>{
   if (playing) {pause();return;}
   if (distance >= analysis.distanceM) distance = 0;
+  if (manual) followRider();
   playing = true;$('play').innerHTML = 'Ⅱ <span>Pause</span>';
   if (terrainReady) $('terrain-status').textContent = 'Satellite terrain · preview playback';
   $('play').setAttribute('aria-label','Pause route preview');

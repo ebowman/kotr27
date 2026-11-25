@@ -347,3 +347,107 @@ Unset `RIDER_FIRST_EVIDENCE_DIR` for independent read-only review.
 Review images as well as assertions. Screenshots are evidence, never runtime
 backgrounds. Fresh independent review and human pixel approval remain outstanding;
 production changes stay blocked by kotr27-n00.2.
+
+## Manual exploration correction — kotr27-1gp
+
+Bounded correction, not overall design approval. User report:
+“I finished Grappa L, then did the D2 short and was scrolling around a bit and
+it switched to outline mode.” The original user tab had already returned to
+landing; its incident reason was **not captured**. Shared Chrome tabs and the
+existing port-4177 preview were not touched. Tests below used isolated profiles
+in installed native Chrome 158.0.8127.88 (headless CDP, real WebGL); phone means
+375×812 emulation, not physical-device/Safari qualification.
+
+### Reproduction and correction
+
+Before changing runtime bytes at `89a09d1`, the new same-page regression played
+Grappa (`rwgps-57873019`) completely, then selected and played D2 Asolo Standard
+(`rwgps-57873112`) completely. At 1440×900:
+
+| Observation | Before | Final corrected run |
+|---|---|---|
+| Grappa normal-speed finish | 90.054 s; 63,157.792 m; 49 tile requests | 90.233 s; same endpoint; 49 requests |
+| D2 Standard normal-speed finish | 90.040 s; 57,495.556 m; 43 requests | 90.082 s; same endpoint; 44 requests |
+| Hidden / terminal-fallback samples during either route | 0 / 0 | 0 / 0 |
+| Follow pitch throughout both routes | 45° | 45° |
+| Off-rider pan, then 3.5 s wait | hidden; online false; 48 requests | visible; online true; 48 requests |
+
+Pan input was mousedown on the canvas, then sixteen document mousemoves of
+60 CSS px at 40 ms intervals (960 px total), then document mouseup. This
+reproduces the parent's input class using DOM input events on the isolated
+actual SDK map, not a mocked camera or proof. Before: `framed:false`,
+`clear:false`, `road:false`, `depthGap:null`, **imagery/elevation/alignment true**.
+The regression failed at “Healthy off-rider exploration survives coverage
+deadline.” This establishes the fallback class, not the original tab's cause.
+
+The shared paint gate now explicitly distinguishes `mode:manual` from
+`mode:follow`. Manual proof requires existing whole-viewport bound raster
+coverage, DEM bindings for every current terrain proxy, a valid current-size
+depth framebuffer, and numeric DEM/nonempty rendered depth on a 3×3 viewport
+grid (5%, 50%, 95% along each axis). It does not assert rider framing,
+alignment, route pixels or rider occlusion. The grid supplements whole-view
+resource bindings; it is not an exhaustive per-pixel proof. Follow retains
+all previous rider checks and the exact SDK depth bias and DPR rounding.
+No limits, deadlines, yaw filter, pitch, route geometry or identities changed.
+
+Both desktop and phone retained valid manual viewport proof after the pan
+(rider independently confirmed outside the viewport), then actual CDP wheel
+zoom and another 3.5 s wait. Return to rider restored **all six strict follow
+flags**, the same exact selected distance and paused state; a further 3 s
+wait found no stale deadline. Phone switched routes after short playback of
+each, then panned while playing: playback paused at **2,363.578 m**, terrain
+remained online with **18 requests**, and return preserved that distance.
+The prototype exposes a visible Return to rider button during exploration,
+manual/paused status, and the adapter's actual failure reason. Pause flushes
+the last throttled terrain snapshot without rewriting an in-flight seek input.
+Play from manual explicitly resumes follow.
+
+### Final validation and limits
+
+```sh
+env -u RIDER_FIRST_EVIDENCE_DIR node --test prototypes/rider-first/terrain-check.mjs
+env -u RIDER_FIRST_EVIDENCE_DIR node --test tests/route-flyover.mjs tests/route-flyover-browser.mjs prototypes/rider-first/check.mjs
+```
+
+Final results: **5 passed / 0 failed** live checks; **24 passed / 0 failed /
+1 existing fullscreen deferral** focused/control checks (including subtests).
+Seven changed-module `node --check` commands and `git diff --check` pass.
+
+- Additional complete Grappa runs at desktop and phone: **90.080 / 90.140 s**,
+  exact 63,157.792 m endpoint, **64 verified kilometre buckets each**, zero
+  hidden/fallback samples, 45° throughout, **49 / 22** tile requests, maximum
+  observed yaw steps **2.610° / 2.728°**. Transient invalid proofs remained
+  invalid (18 / 8 sampled frames), without hiding the already-presented map.
+  Final settled proofs passed; provider responses were 200/204, with no
+  loading failures. Fractional-DPR resize/playback checks also passed.
+- Both modes: actual DEM and imagery HTTP 404s on native WebGL fixtures,
+  live-provider offline failures, actual `WEBGL_lose_context`, and unchanged
+  240-request boundary injection all terminate honestly, dispose the canvas
+  and remain stopped. Budget testing injects calls into the real request hook;
+  it does not claim natural exhaustion or send 240 wasteful requests.
+- Actual GPU-rendered synthetic 3 km foreground ridge: follow rejects rider
+  occlusion; manual verifies the viewport without calling the rider visible;
+  Return to rider restores strict rejection and bounded fallback. The hidden
+  initial ridge canvas uses an explicitly labelled manual-mode event injection;
+  separate native pointer tests exercise ordinary trusted drag.
+- Deterministic tests cover manual DEM holes, empty/stale depth, readback
+  failure, fixed outage/load deadlines, old-map events/timers, fresh route
+  request budgets and late failures. Real-map route replacement leaves one
+  canvas and removes the old map. Existing D0–D3 labels, variants, controls,
+  source geometry, reduced motion and denied-provider checks pass.
+
+Intermediate checks caught a pause-flush seek-input regression and a
+final-render sampling race; both were corrected before the final commands
+above. The new ridge fixture was corrected to explicitly select Follow, and
+the existing exact status assertion now expects the truthful SDK failure
+reason. Earlier failed runs are not counted as passing. Nonprogress recovery
+allowance remains **0/2 used**; corrections addressed distinct observed gaps.
+
+All 22 existing evidence files are unchanged; capture output was unset.
+No new dependency, persistent service, Beads write, staging, commit, closure,
+push or deployment. The 289-file execution baseline differs only at the eight
+assigned paths; unrelated diff and index hashes match exactly. Unrelated
+installer/instruction edits, local exports and private inputs remain outside
+this diff. **Fresh independent review is pending**;
+there is no reviewer PASS or human overall-design approval in this handoff.
+Safari and native fullscreen remain unverified/deferred.

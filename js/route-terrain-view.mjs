@@ -40,9 +40,12 @@ export async function mountRouteTerrain({container,analysis,snapshot,onStatus,on
     // Keep an already presented map during the bounded verification interval;
     // this is NOT a valid-frame claim. Terminal failure still removes it.
     if (!presented) container.style.visibility='hidden';
-    else onStatus('verifying','Satellite terrain · verifying the current view.');
+    else onStatus('verifying',manual ? 'Manual exploration · verifying viewport terrain.' :
+      'Satellite terrain · verifying the current rider view.');
     // One deadline per coverage outage. Motion/tile traffic cannot extend it.
-    timer ??= setTimeout(()=>fail('Imagery, elevation or an unobstructed rider view could not be verified.'),limits.coverageMs);
+    timer ??= setTimeout(()=>fail(manual ?
+      'Manual viewport imagery, elevation or rendered depth could not be verified.' :
+      'Imagery, elevation or an unobstructed rider view could not be verified.'),limits.coverageMs);
   }
   const withinPixels=()=>container.clientWidth*container.clientHeight*devicePixelRatio**2<=limits.maxPixels;
   if (!withinPixels()) {
@@ -72,8 +75,10 @@ export async function mountRouteTerrain({container,analysis,snapshot,onStatus,on
     map.on('error',()=>fail('Online imagery or elevation failed.'));
     map.on('webglcontextlost',()=>fail('WebGL context lost.'));
     map.on('movestart',e=>{
-      if (!e.originalEvent || updating) return;
+      if (stopped || !e.originalEvent || updating) return;
       manual=true; onManual();
+      delete container.dataset.frame;
+      waiting();
     });
     map.on('moveend',()=>{
       if (manual && !stopped) map.triggerRepaint();
@@ -111,7 +116,7 @@ export async function mountRouteTerrain({container,analysis,snapshot,onStatus,on
           if (stopped || !ready || document.hidden) return;
           try {
             if (!withinPixels()) { fail('This display exceeds the bounded 3D frame size.');return; }
-            const proof=frameEvidence(map,current.position,beacon,container,imageryReady);
+            const proof=frameEvidence(map,current.position,beacon,container,imageryReady,manual?'manual':'follow');
             container.dataset.frame=JSON.stringify(proof);
             container.dataset.distance=String(current.distanceM);
             container.dataset.requests=String(requests);

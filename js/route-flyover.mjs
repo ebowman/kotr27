@@ -55,22 +55,18 @@ export function cameraPose(a, snapshot, refinements={}) {
 // simplified DEM-tree triangles: it is not the inverse of DEM-sampled project.
 // A transparent circle layer requests the SDK's normal depth pass. Read only
 // the rider pixel after that draw; never manufacture a second terrain mesh.
-export function terrainDepthEvidence(map,p,xy,z) {
+function depthState(map) {
   const terrain=map.painter?.terrain, t=map.transform;
   const covered=!!terrain?.proxyCoords?.length &&
     terrain.proxyCoords.every(id=>terrain.terrainTileForTile[id.key]?.dem);
   const fbo=terrain?._depthFBO, gl=map.painter?.context?.gl;
-  const unknown={covered,visible:false,gap:null};
   // SDK 2.15 drawDepth allocates ceil(painter dimensions) at fractional DPR.
-  if (!covered || !Number.isFinite(z) || !fbo || !gl || gl.isContextLost() ||
-      t.projection?.name!=='mercator' || fbo.width!==Math.ceil(map.painter.width) ||
-      fbo.height!==Math.ceil(map.painter.height) || !Number.isFinite(xy.x+xy.y) ||
-      xy.x<0 || xy.y<0 || xy.x>=t.width || xy.y>=t.height) return unknown;
-  const c=t.locationCoordinate({lng:p.lon,lat:p.lat});
-  const x=c.x*t.worldSize,y=c.y*t.worldSize,m=t.projMatrix;
-  const w=m[3]*x+m[7]*y+m[11]*z+m[15];
-  const depth=(m[2]*x+m[6]*y+m[10]*z+m[14])/w;
-  if (!(w>0) || !Number.isFinite(depth) || depth < -1 || depth > 1) return unknown;
+  const ready=covered && !!fbo && !!gl && !gl.isContextLost() &&
+    t.projection?.name==='mercator' && fbo.width===Math.ceil(map.painter.width) &&
+    fbo.height===Math.ceil(map.painter.height);
+  return {covered,ready,fbo,gl,t};
+}
+function surfaceDepth({gl,fbo,t},xy) {
   const rgba=new Uint8Array(4), previous=gl.getParameter(gl.FRAMEBUFFER_BINDING);
   try {
     gl.bindFramebuffer(gl.FRAMEBUFFER,fbo.framebuffer);
@@ -79,13 +75,42 @@ export function terrainDepthEvidence(map,p,xy,z) {
       1,1,gl.RGBA,gl.UNSIGNED_BYTE,rgba);
   } finally {gl.bindFramebuffer(gl.FRAMEBUFFER,previous);}
   // SDK pack_depth/unpack_depth stores clip depth in RGBA, not metres.
-  const surface=2*(rgba[0]/255**4+rgba[1]/255**3+rgba[2]/255**2+rgba[3]/255)-1;
+  return 2*(rgba[0]/255**4+rgba[1]/255**3+rgba[2]/255**2+rgba[3]/255)-1;
+}
+export function terrainDepthEvidence(map,p,xy,z) {
+  const state=depthState(map), {covered,ready,t}=state;
+  const unknown={covered,visible:false,gap:null};
+  if (!ready || !Number.isFinite(z) || !Number.isFinite(xy.x+xy.y) ||
+      xy.x<0 || xy.y<0 || xy.x>=t.width || xy.y>=t.height) return unknown;
+  const c=t.locationCoordinate({lng:p.lon,lat:p.lat});
+  const x=c.x*t.worldSize,y=c.y*t.worldSize,m=t.projMatrix;
+  const w=m[3]*x+m[7]*y+m[11]*z+m[15];
+  const depth=(m[2]*x+m[6]*y+m[10]*z+m[14])/w;
+  if (!(w>0) || !Number.isFinite(depth) || depth < -1 || depth > 1) return unknown;
+  const surface=surfaceDepth(state,xy);
   const gap=depth-surface;
   return {covered,visible:gap<=.0005,gap};
 }
 // HTTP success/queued tiles and the marker's delayed opacity alone are not
 // paint evidence. Require current DEM bindings and actual rendered depth too.
-export function frameEvidence(map, p, marker, container, imageryReady) {
+export function frameEvidence(map, p, marker, container, imageryReady, mode='follow') {
+  if (mode==='manual') {
+    // Manual exploration proves the visible terrain, NOT an off-screen rider.
+    // Require every current proxy's DEM binding and the existing whole-view
+    // raster coverage gate, plus actual depth/DEM at a viewport sampling grid.
+    // Unproject is only a ground sample here, never an inverse-rider/occlusion
+    // test. No raw route elevation or route pixel is expected in this view.
+    const state=depthState(map), imagery=imageryReady();
+    let elevation=state.covered, depth=state.ready;
+    if (state.ready) for(const x of [.05,.5,.95]) for(const y of [.05,.5,.95]) {
+      const xy={x:x*state.t.width,y:y*state.t.height};
+      const ground=map.unproject(xy), z=map.queryTerrainElevation(ground);
+      elevation &&= Number.isFinite(z);
+      const surface=surfaceDepth(state,xy);
+      depth &&= Number.isFinite(surface) && surface>-1 && surface<1;
+    }
+    return {mode,imagery,elevation,depth,ok:imagery && elevation && depth};
+  }
   const gps=[p.lon,p.lat], xy=map.project(gps), z=map.queryTerrainElevation(gps);
   const box=container.getBoundingClientRect(), dot=marker.getBoundingClientRect();
   const framed=Number.isFinite(xy.x+xy.y) &&
@@ -96,6 +121,6 @@ export function frameEvidence(map, p, marker, container, imageryReady) {
   const elevation=depth.covered && Number.isFinite(z) && Math.abs(z-p.rawElevationM)<=300;
   const clear=depth.visible && Number(getComputedStyle(marker).opacity)===1;
   const road=map.queryRenderedFeatures([[xy.x-8,xy.y-8],[xy.x+8,xy.y+8]],{layers:['route']}).length>0;
-  return {framed,aligned,elevation,clear,road,depthGap:depth.gap,imagery:imageryReady(),
+  return {mode,framed,aligned,elevation,clear,road,depthGap:depth.gap,imagery:imageryReady(),
     ok:framed && aligned && elevation && clear && road && imageryReady()};
 }

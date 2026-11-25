@@ -135,6 +135,29 @@ test('fractional-DPR depth allocation accepts SDK ceiling sizes but rejects genu
   }
 });
 
+test('manual proof verifies viewport resources without asserting rider framing, road or occlusion',()=>{
+  const map=depthFixture({unproject:xy=>({lng:xy.x,lat:xy.y}),queryTerrainElevation:()=>100});
+  const check=()=>frameEvidence(map,null,null,null,()=>true,'manual');
+  assert.deepEqual(check(),{mode:'manual',imagery:true,elevation:true,depth:true,ok:true});
+  assert.equal(frameEvidence(map,null,null,null,()=>false,'manual').ok,false);
+  map.queryTerrainElevation=p=>p.lng===10?null:100;
+  assert.equal(check().elevation,false,'One missing viewport DEM sample fails');
+  map.queryTerrainElevation=()=>100;
+  delete map.painter.terrain.terrainTileForTile.current.dem;
+  assert.equal(check().ok,false,'All current viewport proxy regions need DEM');
+  map.painter.terrain.terrainTileForTile.current.dem={};
+  map.painter.terrain._depthFBO.width--;
+  assert.equal(check().depth,false,'Stale depth fails in manual too');
+  map.painter.terrain._depthFBO.width++;
+  map.painter.context.gl.isContextLost=()=>true;
+  assert.equal(check().depth,false);
+  map.painter.context.gl.isContextLost=()=>false;
+  map.painter.context.gl.readPixels=(_x,_y,_w,_h,_f,_t,pixels)=>pixels.fill(255);
+  assert.equal(check().depth,false,'Clear/empty depth is not terrain');
+  map.painter.context.gl.readPixels=()=>{throw Error('GPU readback failure');};
+  assert.throws(check,/GPU readback/);
+});
+
 test('follow yaw uses broad actual Grappa context and bounded shortest-angle turns',async()=>{
   assert.equal(shortestAngle(179,-179),2);
   assert.equal(shortestAngle(-179,179),-2);
@@ -174,7 +197,7 @@ async function terrainFixture() {
     .replace(/^import .*;\n/,'')
     .replace(/await import\('[^']+'\);/g,'')
     .replace('export async function mountRouteTerrain','async function mountRouteTerrain');
-  let now=0, map, visibility='hidden';
+  let now=0, map, visibility='hidden', manualCalls=0;
   const timers=new Map(), transitions=[], statuses=[];
   const box={left:0,top:0,right:200,bottom:200,width:200,height:200};
   const container={clientWidth:200,clientHeight:200,dataset:{},
@@ -201,7 +224,7 @@ async function terrainFixture() {
   class Marker {setLngLat(){return this;} addTo(){return this;}}
   const gl={Map:FixtureMap,Marker,NavigationControl:class {},supported:()=>true,maxParallelImageRequests:16};
   const window={mapboxgl:gl,KOTR_CONFIG:{MAPBOX_TOKEN:'fixture'},
-    kotrTerrainTools:{loadSDK:async()=>true,rasterCoverage:()=>()=>map.imagery}};
+    kotrTerrainTools:{loadSDK:async()=>true,rasterCoverage:m=>()=>m.imagery}};
   const document={hidden:false,createElement:()=>({setAttribute(){},
     getBoundingClientRect:()=>({left:90,top:90,right:110,bottom:110,width:20,height:20})})};
   const proof=(...args)=>{
@@ -220,9 +243,15 @@ async function terrainFixture() {
   const snapshot={identity,position,distanceM:0,phase:'playing',cameraMode:'follow'};
   const controller=new AbortController();
   const handle=await mount({container,analysis,snapshot,signal:controller.signal,
-    onStatus:(state,message)=>statuses.push({state,message}),onManual(){}});
+    onStatus:(state,message)=>statuses.push({state,message}),onManual(){manualCalls++;}});
   map.emit('load');
   return {map,handle,container,statuses,transitions,controller,gl,snapshot,timers,
+    manualCalls:()=>manualCalls,
+    async replace(){
+      const handle=await mount({container,analysis,snapshot,signal:new AbortController().signal,
+        onStatus:(state,message)=>statuses.push({state,message}),onManual(){manualCalls++;}});
+      map.emit('load');return {map,handle};
+    },
     advance(ms){now+=ms;for(const [id,t] of timers)if(t.at<=now){timers.delete(id);t.fn();}}};
 }
 
@@ -257,6 +286,88 @@ test('terrain presentation stays continuous through successful motion and transi
   assert.equal(f.map.removed,1);
   assert.equal(f.gl.maxParallelImageRequests,16);
   assert.equal(f.timers.size,0);
+});
+
+test('manual off-rider pan and return use distinct proof; old route timers and events are isolated',async()=>{
+  const f=await terrainFixture();
+  f.map.emit('render');
+  f.map.imagery=false;f.map.emit('render');
+  const oldDeadline=[...f.timers.values()][0].fn;
+  const next=await f.replace();
+  next.map.emit('render');
+  assert.equal(f.map.removed,1);
+  assert.equal(f.timers.size,0,'New proved map clears only its own load deadline');
+  next.map.emit('movestart',{originalEvent:{}});
+  next.map.project=()=>({x:-900,y:100});
+  next.map.road=false;next.map.clear=false;
+  next.map.emit('render');
+  assert.equal(JSON.parse(f.container.dataset.frame).mode,'manual');
+  assert.equal(JSON.parse(f.container.dataset.frame).ok,true);
+  f.advance(3500);
+  assert.equal(next.map.removed,0);
+  const count=f.statuses.length, calls=f.manualCalls();
+  oldDeadline();f.map.emit('movestart',{originalEvent:{}});
+  f.map.emit('render');f.map.emit('error');f.map.emit('moveend');
+  f.handle.update(f.snapshot,true);
+  assert.equal(f.statuses.length,count);
+  assert.equal(f.manualCalls(),calls,'Disposed map cannot pause the new route');
+  assert.equal(f.container.style.visibility,'visible');
+  next.map.project=()=>({x:100,y:100});next.map.road=true;
+  next.handle.update(f.snapshot,true);next.map.emit('render');
+  assert.equal(JSON.parse(f.container.dataset.frame).mode,'follow');
+  assert.equal(JSON.parse(f.container.dataset.frame).clear,false,'Return restores strict occlusion immediately');
+  next.map.clear=true;next.map.emit('render');
+  assert.equal(JSON.parse(f.container.dataset.frame).ok,true);
+  f.advance(3500);
+  assert.equal(next.map.removed,0,'Recovered proof cancels the existing outage timer');
+  next.handle.dispose();
+});
+
+test('manual missing viewport imagery DEM depth provider GPU and budgets remain bounded terminal failures',async()=>{
+  for(const failure of ['imagery','dem','depth','error','webglcontextlost','budget']) {
+    const f=await terrainFixture();f.map.emit('render');
+    f.map.emit('movestart',{originalEvent:{}});f.map.emit('render');
+    if(failure==='imagery')f.map.imagery=false;
+    if(failure==='dem')delete f.map.painter.terrain.terrainTileForTile.current.dem;
+    if(failure==='depth')f.map.painter.terrain._depthFBO.width--;
+    if(['imagery','dem','depth'].includes(failure)){
+      f.map.emit('render');
+      assert.equal(JSON.parse(f.container.dataset.frame).ok,false);
+      for(let i=0;i<5;i++){
+        f.advance(500);
+        f.map.emit('movestart',{originalEvent:{}});f.map.emit('render');
+      }
+    } else if(failure==='budget'){
+      for(let i=0;i<=flyoverLimits.tileRequests;i++)f.map.options.transformRequest('https://fixture/tile','Tile');
+      await Promise.resolve();
+    } else f.map.emit(failure);
+    assert.equal(f.statuses.at(-1).state,'unavailable',failure);
+    assert.equal(f.map.removed,1);
+    assert.equal(f.timers.size,0);
+    const count=f.statuses.length;
+    f.advance(12000);f.map.emit('render');
+    assert.equal(f.statuses.length,count);
+  }
+});
+
+test('route replacement resets tile budget and isolates already queued old-map failures',async()=>{
+  const f=await terrainFixture();f.map.emit('render');
+  for(let i=0;i<flyoverLimits.tileRequests;i++)f.map.options.transformRequest('https://fixture/old','Tile');
+  // Queue the old failure, then replace before its microtask executes.
+  f.map.options.transformRequest('https://fixture/old-over-budget','Tile');
+  const next=await f.replace();next.map.emit('render');
+  await Promise.resolve();
+  assert.equal(next.map.removed,0);
+  assert.equal(f.container.style.visibility,'visible');
+  next.map.emit('movestart',{originalEvent:{}});
+  for(let i=0;i<flyoverLimits.tileRequests;i++)next.map.options.transformRequest('https://fixture/new','Tile');
+  await Promise.resolve();next.map.emit('render');
+  assert.equal(next.map.removed,0,'New route gets exactly its own existing 240-request budget');
+  assert.equal(Number(f.container.dataset.requests),240);
+  next.map.options.transformRequest('https://fixture/new-over-budget','Tile');
+  await Promise.resolve();
+  assert.equal(next.map.removed,1);
+  assert.match(f.statuses.at(-1).message,/tile budget/);
 });
 
 test('terrain outages keep a fixed deadline; terminal failures dispose once without resurrection',async()=>{

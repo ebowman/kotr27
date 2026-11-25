@@ -8,6 +8,145 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { browser, until } from '../../tests/browser.mjs';
 import { previewServer } from './serve.mjs';
 
+// Real input events on the isolated page; no map/proof overrides.
+async function offRiderPan(b,width,height) {
+  const x=width/2,y=height/2;
+  await b.js(`(()=>{
+    const canvas=observedTerrain.getCanvas();
+    canvas.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,clientX:${x},clientY:${y},button:0,buttons:1}));
+  })()`);
+  for(let i=1;i<=16;i++) {
+    await b.js(`document.dispatchEvent(new MouseEvent('mousemove',{
+      bubbles:true,clientX:${x}+${i}*60,clientY:${y},button:0,buttons:1}))`);
+    await sleep(40);
+  }
+  await b.js(`document.dispatchEvent(new MouseEvent('mouseup',{
+    bubbles:true,clientX:${x}+960,clientY:${y},button:0}))`);
+}
+
+test('Grappa finish then D2 Standard finish then off-rider manual pan zoom and return; phone route switch',async t=>{
+  const server=await previewServer(0);
+  t.after(()=>{server.closeAllConnections();server.close();});
+  for(const [label,width,height] of [['desktop',1440,900],['phone',375,812]]) {
+    const cleanup=[];
+    const b=await browser({after:fn=>cleanup.push(fn)});
+    try {
+      await b.cmd('Page.enable');
+      await b.cmd('Page.addScriptToEvaluateOnNewDocument',{source:`
+        window.maps=[];
+        Object.defineProperty(window,'mapboxgl',{configurable:true,set(gl){
+          Object.defineProperty(window,'mapboxgl',{value:gl,configurable:true});
+          gl.Map=new Proxy(gl.Map,{construct(T,args){
+            const m=new T(...args);maps.push(m);return window.observedTerrain=m;
+          }});
+        }});`});
+      await b.cmd('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
+      await b.cmd('Page.navigate',{url:`http://127.0.0.1:${server.address().port}/prototypes/rider-first/`});
+      await until(()=>b.js(`!document.getElementById('fly').disabled`));
+      await b.js(`document.getElementById('fly').click()`);
+      const state=()=>b.js(`({
+        proof:JSON.parse(document.getElementById('terrain').dataset.frame||'{}'),
+        visible:getComputedStyle(document.getElementById('terrain')).visibility,
+        online:document.getElementById('player').classList.contains('online'),
+        status:document.getElementById('terrain-status').textContent,
+        requests:Number(document.getElementById('terrain').dataset.requests),
+        distance:Number(document.getElementById('terrain').dataset.distance),
+        progress:document.getElementById('seek').value,
+        playing:document.getElementById('play').getAttribute('aria-label')==='Pause route preview'
+      })`);
+      const ready=async()=>{
+        for(let i=0;i<34;i++) {
+          const s=await state();
+          if(s.proof.ok && s.online)return;
+          assert.ok(!s.status.includes('unavailable'),JSON.stringify(s));
+          await sleep(500);
+        }
+        assert.fail('Live terrain did not verify');
+      };
+      await ready();
+      for(const route of ['rwgps-57873019','rwgps-57873112']) {
+        if(route==='rwgps-57873112') {
+          await b.js(`document.getElementById('player-route').value='${route}';
+            document.getElementById('player-route').dispatchEvent(new Event('change'))`);
+          await until(()=>b.js(`!document.getElementById('play').disabled && maps.length===2`));
+          await ready();
+          assert.equal(await b.js(`maps[0]._removed`),true,'Route switch disposes the old map');
+        }
+        await b.js(`(()=>{
+          window.sequenceProbe={hidden:0,fallback:0,valid:0,invalid:0,maxRequests:0,minPitch:90,maxPitch:0};
+          const tick=()=>{
+            const p=sequenceProbe,t=document.getElementById('terrain'),proof=JSON.parse(t.dataset.frame||'{}');
+            if(getComputedStyle(t).visibility!=='visible')p.hidden++;
+            if(!document.getElementById('player').classList.contains('online'))p.fallback++;
+            if(proof.ok)p.valid++;else p.invalid++;
+            p.maxRequests=Math.max(p.maxRequests,Number(t.dataset.requests||0));
+            p.minPitch=Math.min(p.minPitch,observedTerrain.getPitch());
+            p.maxPitch=Math.max(p.maxPitch,observedTerrain.getPitch());
+            p.raf=requestAnimationFrame(tick);
+          };tick();document.getElementById('play').click();
+        })()`);
+        const start=Date.now();
+        if(label==='desktop') {
+          while(Date.now()-start<115000) {
+            await sleep(250);
+            const s=await state();
+            assert.equal(s.online,true,JSON.stringify(s));
+            if(!s.playing && s.progress==='1000')break;
+          }
+          assert.equal((await state()).progress,'1000','Full normal-speed route, not a seek');
+        } else {
+          await sleep(3200);
+          await b.js(`document.getElementById('play').click()`);
+        }
+        await ready();
+        const result=await b.js(`cancelAnimationFrame(sequenceProbe.raf);({...sequenceProbe,raf:undefined})`);
+        console.log('SEQUENCE ROUTE:',JSON.stringify({label,route,elapsedMs:Date.now()-start,...result,...await state()}));
+        assert.equal(result.hidden,0);assert.equal(result.fallback,0);
+        assert.equal(result.minPitch,45);assert.equal(result.maxPitch,45);
+      }
+      if(label==='phone') {
+        await b.js(`document.getElementById('play').click()`);
+        await sleep(500);
+      }
+      await offRiderPan(b,width,height);
+      await sleep(3500);
+      const manual=await state();
+      console.log('SEQUENCE OFF-RIDER:',JSON.stringify({label,...manual}));
+      assert.equal(manual.online,true,'Healthy off-rider exploration survives coverage deadline');
+      assert.equal(manual.proof.mode,'manual');
+      assert.equal(manual.proof.ok,true);
+      assert.equal(manual.playing,false);
+      assert.equal(await b.js(`(()=>{
+        const rider=observedTerrain._markers.find(m=>m.getElement().classList.contains('route-rider'));
+        const p=observedTerrain.project(rider.getLngLat());
+        return p.x<0 || p.y<0 || p.x>innerWidth || p.y>innerHeight;
+      })()`),true,'The rider really is off viewport, not just labelled manual');
+      // Real wheel input, followed by another entire coverage interval.
+      const zoom=await b.js(`observedTerrain.getZoom()`);
+      await b.cmd('Input.dispatchMouseEvent',{type:'mouseWheel',x:width/2,y:height/2,deltaX:0,deltaY:-100});
+      await sleep(3500);
+      assert.notEqual(await b.js(`observedTerrain.getZoom()`),zoom,'Wheel really changed the camera');
+      assert.equal((await state()).online,true);
+      assert.equal((await state()).distance,manual.distance,'Manual pan/zoom pauses playback');
+      assert.equal(await b.js(`document.getElementById('return-rider').hidden`),false);
+      await b.js(`document.getElementById('return-rider').click()`);
+      await ready();
+      const returned=await state();
+      assert.equal(returned.proof.mode,'follow');
+      for(const key of ['framed','aligned','clear','road','elevation','imagery'])assert.equal(returned.proof[key],true,key);
+      assert.equal(returned.distance,manual.distance,'Return frames the current rider, not route start');
+      assert.equal(returned.playing,false);
+      console.log('SEQUENCE RETURN:',JSON.stringify({label,...returned}));
+      await sleep(3000);
+      assert.equal((await state()).online,true,'No stale manual/old-map deadline');
+      assert.equal(await b.js(`document.querySelectorAll('#terrain canvas').length`),1);
+      assert.ok(await b.js(`document.documentElement.scrollWidth<=innerWidth`));
+      await b.js(`document.getElementById('back').click()`);
+      assert.deepEqual(b.exceptions,[]);
+    } finally {for(const fn of cleanup)await fn();}
+  }
+});
+
 test('live fractional-DPR terrain remains verified through resize and playback',async t=>{
   const server=await previewServer(0);
   t.after(()=>{server.closeAllConnections();server.close();});
@@ -171,6 +310,9 @@ test('complete normal-speed Grappa terrain playback at desktop and phone sizes',
         }
         if(!state.playing && state.progress==='1000'){completed=true;break;}
       }
+      // Pause flushes the last throttled snapshot. Wait for its actual render,
+      // not a stale proof or the interval between invalidation and repaint.
+      await until(()=>b.js(`JSON.parse(document.getElementById('terrain').dataset.frame||'{}').ok===true`));
       await b.js(`cancelAnimationFrame(fullProbe.raf)`);
       const observation=await b.js(`({...fullProbe,raf:undefined,
         progress:document.getElementById('progress').textContent,
@@ -207,7 +349,7 @@ test('complete normal-speed Grappa terrain playback at desktop and phone sizes',
 test('native live map retains terminal provider, GPU-context and request-budget fallback',async t=>{
   const server=await previewServer(0);
   t.after(()=>{server.closeAllConnections();server.close();});
-  for(const failure of ['provider','context','budget']) {
+  for(const mode of ['follow','manual']) for(const failure of ['provider','context','budget']) {
     const cleanup=[];
     let requests=0;
     const b=await browser({after:fn=>cleanup.push(fn)},m=>{
@@ -230,6 +372,12 @@ test('native live map retains terminal provider, GPU-context and request-budget 
         await sleep(500);
       }
       assert.equal(await b.js(`JSON.parse(document.getElementById('terrain').dataset.frame||'{}').ok`),true);
+      if(mode==='manual') {
+        await offRiderPan(b,800,600);
+        await sleep(3500);
+        assert.equal(await b.js(`JSON.parse(document.getElementById('terrain').dataset.frame||'{}').mode`),'manual');
+        assert.equal(await b.js(`JSON.parse(document.getElementById('terrain').dataset.frame||'{}').ok`),true);
+      }
       if(failure==='context') {
         assert.equal(await b.js(`(()=>{
           const extension=observedTerrain.getCanvas().getContext('webgl2')?.getExtension('WEBGL_lose_context') ||
@@ -241,7 +389,10 @@ test('native live map retains terminal provider, GPU-context and request-budget 
         // failure. Go offline and explicitly seek to an uncached route region.
         await b.cmd('Network.emulateNetworkConditions',
           {offline:true,latency:0,downloadThroughput:0,uploadThroughput:0});
-        await b.js(`document.getElementById('seek').value=500;
+        if(mode==='manual') {
+          // Keep manual semantics while moving into uncached geography.
+          await offRiderPan(b,800,600);
+        } else await b.js(`document.getElementById('seek').value=500;
           document.getElementById('seek').dispatchEvent(new Event('input'))`);
       } else {
         // Exercise the real map's configured request hook at its unchanged
@@ -260,7 +411,7 @@ test('native live map retains terminal provider, GPU-context and request-budget 
       await sleep(2800);
       assert.equal(requests,settledRequests,'Terminal failure never initiates retries');
       assert.equal(await b.js(`document.querySelectorAll('#terrain canvas').length`),0);
-      console.log('NATIVE TERMINAL FALLBACK:',JSON.stringify({failure,...state,requests}));
+      console.log('NATIVE TERMINAL FALLBACK:',JSON.stringify({mode,failure,...state,requests}));
       await b.js(`document.getElementById('back').click()`);
       assert.deepEqual(b.exceptions,[]);
     } finally {for(const fn of cleanup)await fn();}

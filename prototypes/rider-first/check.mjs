@@ -151,7 +151,8 @@ test('isolated rider-first preview: native Chrome desktop and phone', async t =>
     await shot(label+'-profile');
     const deniedRequests = outside.length;
     await sleep(2800);
-    assert.equal(await b.js(`document.getElementById('terrain-status').textContent`),'Terrain unavailable · 2D route preview');
+    assert.equal(await b.js(`document.getElementById('terrain-status').textContent`),
+      'Terrain unavailable · Map library unavailable. · 2D route preview');
     assert.equal(await b.js(`document.querySelectorAll('#terrain canvas').length`),0);
     assert.equal(await b.js(`document.getElementById('player').classList.contains('online')`),false);
     assert.equal(outside.length,deniedRequests,'Denied provider does not retry or oscillate');
