@@ -32,6 +32,26 @@ test('calendar uses event civil dates, inclusive end and no invented departure',
     assert.equal(calendarStatus(bad).phase,'pending');
   assert.equal(calendarStatus(dates,new Date(NaN)).phase,'pending');
 });
+test('calendar reuses only one timezone formatter, never a cached civil date or error',()=>{
+  const Original=Intl.DateTimeFormat,constructed=[];
+  Intl.DateTimeFormat=new Proxy(Original,{construct(target,args) {
+    constructed.push(args[1].timeZone);return Reflect.construct(target,args);
+  }});
+  try {
+    const utc={...dates,timezone:'UTC'};
+    for(let i=0;i<20;i++)assert.equal(calendarStatus(utc,new Date('2027-05-19T23:59:59Z')).phase,'before');
+    assert.deepEqual(constructed,['UTC'],'repeated renders do not reconstruct Intl formatters');
+    assert.equal(calendarStatus(utc,new Date('2027-05-20T00:00:00Z')).phase,'during');
+    assert.equal(calendarStatus(utc,new Date('2027-05-25T00:00:00Z')).phase,'after');
+    assert.deepEqual(constructed,['UTC'],'midnight changes date, not formatter');
+    assert.equal(calendarStatus(dates,new Date('2027-05-19T22:00:00Z')).phase,'during');
+    assert.equal(calendarStatus({...dates,timezone:'Not/AZone'}).phase,'pending');
+    assert.equal(calendarStatus(dates,new Date('2027-05-19T21:59:59Z')).phase,'before');
+    assert.deepEqual(constructed,['UTC','Europe/Rome','Not/AZone'],'invalid zone never poisons previous valid formatter');
+    calendarStatus(utc);
+    assert.deepEqual(constructed,['UTC','Europe/Rome','Not/AZone','UTC'],'single slot, not an unbounded per-zone cache');
+  } finally {Intl.DateTimeFormat=Original;}
+});
 test('absent/unapproved/withdrawn event fields cannot acquire values',async()=>{
   const {pack}=await readRoutePack(process.cwd()),event=pack.catalog.events[0];
   assert.deepEqual(eventFacts(event),{...dates,location:'Bassano del Grappa, Vicenza, Italy',organizer:'Eat Sleep Cycle'});

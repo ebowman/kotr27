@@ -2,6 +2,11 @@
 
 Architecture decision · `kotr27-800.3` · observed **2026-11-24**
 
+Final [qualification measurements and release boundary](final-qualification.md)
+record the actual Chrome runtime, cold/warm resources, sampled accessibility
+and differential long-task diagnosis/correction. Proposed device/FPS limits below must
+not be mistaken for physical-device certification.
+
 Implementation follow-up: [optional offline day packs](offline-packs.md)
 (`kotr27-800.20`) documents the release transaction, conservative coverage,
 test commands and Chrome MCP rehearsal. The owner has deferred Safari and

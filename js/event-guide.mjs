@@ -12,13 +12,19 @@ export function publicValue(field) {
 }
 const dateOnly = s => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s) &&
   Number.isFinite(Date.parse(s)) && new Date(s).toISOString().slice(0,10) === s;
+// Rendering the shared shell can ask for the same civil timezone repeatedly.
+// Keep one formatter, never a cached date/result or an unbounded zone map.
+let calendarFormatter;
 export function calendarStatus({startDate, endDate, timezone}, now = new Date()) {
   if (!dateOnly(startDate) || !dateOnly(endDate) || startDate > endDate || !timezone ||
       !Number.isFinite(now.getTime())) return {phase:'pending', text:'Calendar countdown pending verified dates and timezone.'};
   let today;
   try {
-    const parts = new Intl.DateTimeFormat('en', {timeZone:timezone, year:'numeric', month:'2-digit', day:'2-digit'})
-      .formatToParts(now);
+    if(calendarFormatter?.timezone!==timezone) {
+      const formatter=new Intl.DateTimeFormat('en', {timeZone:timezone, year:'numeric', month:'2-digit', day:'2-digit'});
+      calendarFormatter={timezone,formatter};
+    }
+    const parts = calendarFormatter.formatter.formatToParts(now);
     const part = type => parts.find(p=>p.type===type).value;
     today = `${part('year')}-${part('month')}-${part('day')}`;
   } catch { return {phase:'pending', text:'Calendar countdown unavailable: timezone unsupported.'}; }

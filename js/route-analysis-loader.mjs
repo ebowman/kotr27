@@ -17,6 +17,11 @@ export async function loadRouteAnalysis({pack,routeId,revisionId,readAsset,annot
   // graph/profile/summary validator as publication, reading only this route.
   const files = await validateRoutePack(pack,{read:readAsset,selectedRouteId:routeId});
   const summary = pack.routes.find(r=>r.routeId===routeId);
+  // Hash/profile verification can finish several route promises in one
+  // microtask checkpoint. Start each derivation in a new task so its analysis,
+  // model and view subscribers cannot extend that entire verification batch.
+  // This is only scheduling: callers still await the same fully verified pin.
+  await new Promise(resolve=>setTimeout(resolve,0));
   return analyzeRoute({routeId,revisionId,geometrySha256:revision.geometrySha256,
     points:readPackGeometry(files.get(revision.geometry.path)).map(([lat,lon,elevationM])=>({lat,lon,elevationM})),
     annotationSet,

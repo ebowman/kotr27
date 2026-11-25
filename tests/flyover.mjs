@@ -3,50 +3,51 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, extname } from 'node:path';
 import { once } from 'node:events';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { browser, until } from './browser.mjs';
+import { build } from '../tools/build-release.mjs';
 
 test('phone-sized cinematic follow, controls and asset fallbacks', {timeout: 60000}, async t => {
-  const files = {'index.html':'text/html','assets/flyover.js':'text/javascript',
-    'assets/terrain.js':'text/javascript', 'js/config.js':'text/javascript',
-    'js/semonzo-profile.mjs':'text/javascript', 'js/example-catalog.mjs':'text/javascript',
-    'js/route-catalog.mjs':'text/javascript', 'js/route-analysis.mjs':'text/javascript',
-    'js/ascent-estimator.mjs':'text/javascript', 'js/rider-scenario.mjs':'text/javascript',
-    'js/preference-storage.mjs':'text/javascript', 'js/rider-preferences.mjs':'text/javascript',
-    'js/preferences-view.mjs':'text/javascript',
-    'js/itinerary.mjs':'text/javascript', 'js/trip-planner.mjs':'text/javascript',
-    'js/trip-planner-view.mjs':'text/javascript', 'js/route-pack-contract.mjs':'text/javascript',
-    'js/route-analysis-loader.mjs':'text/javascript',
-    'js/route-playback.mjs':'text/javascript', 'js/route-playback-adapters.mjs':'text/javascript',
-    'js/route-session.mjs':'text/javascript', 'js/route-time.mjs':'text/javascript',
-    'js/route-pace.mjs':'text/javascript', 'js/route-pace-view.mjs':'text/javascript',
-    'js/ride-clock.mjs':'text/javascript',
-    'js/route-briefing.mjs':'text/javascript', 'js/route-briefing-view.mjs':'text/javascript',
-    'js/route-comparison.mjs':'text/javascript', 'js/route-comparison-view.mjs':'text/javascript',
-    'js/local-route-parser.mjs':'text/javascript', 'js/local-route-worker.mjs':'text/javascript',
-    'js/local-route-import.mjs':'text/javascript', 'js/local-route-storage.mjs':'text/javascript',
-    'js/local-routes-view.mjs':'text/javascript',
-    'js/route-state.mjs':'text/javascript', 'js/site-shell.mjs':'text/javascript', 'assets/site.css':'text/css',
-    'assets/semonzo.gpx':'application/xml'};
-  const omit = new Set(), served = new Set(), legacy = [];
+  const temp = await mkdtemp(join(tmpdir(),'kotr-legacy-')), out=join(temp,'public');
+  const cleanups=[], jobs=new Set();
+  let server;
+  t.after(async()=>{
+    for(const close of cleanups)await close();
+    if(server?.listening) {
+      const closed=new Promise(resolve=>server.close(resolve));
+      server.closeAllConnections();await closed;
+    }
+    await Promise.all([...jobs]);await rm(temp,{recursive:true,force:true});
+  });
+  await build('.',out);
+  const files=await readdir(out,{recursive:true});
+  const types={'.html':'text/html','.js':'text/javascript','.mjs':'text/javascript',
+    '.css':'text/css','.gpx':'application/xml','.json':'application/json'};
+  const omit = new Set(), served = new Set(), legacy = [], missing=[];
   const sdkStarted = Promise.withResolvers();
-  const server = createServer(async (req, res) => {
+  async function serve(req, res) {
     const file = new URL(req.url,'http://localhost').pathname.replace(/^\/kotr27\//, '') || 'index.html';
+    const sourceName=file.replace(/\.[a-f0-9]{24}\./,'.');
     if (/relief|ascent\.svg/.test(file)) legacy.push(file);
-    if (!Object.hasOwn(files, file) || omit.has(file)) {
+    if (!files.includes(file) || !types[extname(file)] || omit.has(sourceName)) {
+      if(file!=='favicon.ico' && !omit.has(sourceName))missing.push(file);
       res.writeHead(404).end(); return;
     }
     // The shell can now load the local profile before opt-in to online terrain.
     // Never serve or inspect the provisioned config in a browser test.
-    const data = file === 'js/config.js' ? 'window.KOTR_CONFIG = {};' :
-      await readFile(new URL(`../${file}`, import.meta.url));
-    served.add(file);
-    res.writeHead(200, {'Content-Type':files[file], 'Cache-Control':'no-store'}).end(data);
+    const data = sourceName === 'js/config.js' ? 'window.KOTR_CONFIG = {};' :
+      await readFile(join(out,file));
+    served.add(sourceName);
+    res.writeHead(200, {'Content-Type':types[extname(file)], 'Cache-Control':'no-store'}).end(data);
+  }
+  server = createServer((req,res)=>{
+    const job=serve(req,res).finally(()=>jobs.delete(job));jobs.add(job);
   });
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
-  t.after(() => { server.closeAllConnections(); server.close(); });
   const base = `http://127.0.0.1:${server.address().port}/kotr27/`;
   const url = base+'?area=explore&view=flyover';
   // Intercept the SDK only. Exercise the real DOM, GPX, controller, clock,
@@ -115,7 +116,7 @@ test('phone-sized cinematic follow, controls and asset fallbacks', {timeout: 600
     LngLatBounds:class { extend(){return this;} }, LngLat:class {}
   };`;
   let sdkGate, failSDK=false;
-  const {cmd, js, exceptions} = await browser(t, async (m, send) => {
+  const {cmd, js, exceptions} = await browser({after:fn=>cleanups.push(fn)}, async (m, send) => {
     if (m.method === 'Fetch.requestPaused') {
       sdkStarted.resolve();
       const script = m.params.request.url.endsWith('.js');
@@ -134,7 +135,9 @@ test('phone-sized cinematic follow, controls and asset fallbacks', {timeout: 600
   sdkGate=Promise.withResolvers();
   await cmd('Page.navigate',{url});
   await until(() => js(`document.querySelector('#deck')?.hidden === false`));
-  assert.equal(served.size, Object.keys(files).length);
+  assert.deepEqual(missing,[],'the actual package supplies the whole requested module graph');
+  for(const file of ['js/site-shell.mjs','assets/flyover.js','assets/terrain.js','js/config.js','assets/semonzo.gpx'])
+    assert.ok(served.has(file),`required legacy dependency: ${file}`);
   assert.ok(await js(`document.documentElement.scrollWidth <= innerWidth`));
   assert.ok(await js(`message.textContent.startsWith('Loading') && !document.querySelector('.viewport img,.viewport svg')`));
   await js(`play.click()`); await sleep(350);

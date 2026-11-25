@@ -167,39 +167,115 @@ test('native Chrome packaged controls: all seven, reduced motion, rapid cameras,
   assert.deepEqual(f.exceptions,[]);
 });
 
-async function nativeDrag(f,t) {
-  await f.evaluate(`new Promise(resolve=>{
-    nativeMap.getCanvas().scrollIntoView({block:'center'});
-    requestAnimationFrame(()=>requestAnimationFrame(resolve));
-  })`);
-  const drag=await f.js(`(()=>{
-    const r=nativeMap.getCanvas().getBoundingClientRect();
-    return {x:r.x+r.width*.4,y:r.y+r.height*.4};
-  })()`);
-  assert.equal(await f.js(`document.elementFromPoint(${drag.x},${drag.y})===nativeMap.getCanvas()`),true,
-    'The native drag must hit the visible map canvas after scrolling, not an overlay.');
+// Read-only bounded diagnostics: no visibility override, synthetic map input,
+// animation suppression or application readiness changes.
+async function installPointerProbe(f) {
   await f.js(`(()=>{
-    window.dragProbe=[];
-    for(const type of ['mousedown','mousemove','mouseup']) nativeMap.getCanvas().addEventListener(type,e=>{
-      dragProbe.push({type,isTrusted:e.isTrusted,buttons:e.buttons,x:e.clientX,y:e.clientY});
-    });
-    nativeMap.on('dragstart',()=>dragProbe.push({type:'SDK dragstart'}));
-    nativeMap.on('movestart',e=>dragProbe.push({type:'SDK movestart',originalEvent:!!e.originalEvent}));
+    window.pointerProbe?.dispose();
+    const canvas=nativeMap.getCanvas(),container=document.getElementById('official-terrain');
+    const describe=e=>e?{tag:e.tagName,id:e.id,classes:typeof e.className==='string'?e.className:''}:null;
+    const box=r=>({x:r.x,y:r.y,width:r.width,height:r.height});
+    const rect=e=>box(e.getBoundingClientRect());
+    const history=[],events=[],shifts=[],updates=[],focus=[];let frame,scrollAt=null,renderAt=null,previous;
+    const push=(list,value)=>{list.push(value);if(list.length>16)list.shift();};
+    const sample=(point=null)=>{
+      const r=rect(canvas),p=point??{x:r.x+r.width*.4,y:r.y+r.height*.4},style=getComputedStyle(canvas);
+      return {at:performance.now(),point:p,rect:r,hit:describe(document.elementFromPoint(p.x,p.y)),
+        hitCanvas:document.elementFromPoint(p.x,p.y)===canvas,
+        scroll:{x:scrollX,y:scrollY,lastAt:scrollAt},viewport:{width:innerWidth,height:innerHeight,
+          visual:visualViewport?{x:visualViewport.offsetLeft,y:visualViewport.offsetTop,width:visualViewport.width,
+            height:visualViewport.height,scale:visualViewport.scale}:null},
+        focused:document.hasFocus(),canvas:{connected:canvas.isConnected,visibility:style.visibility,display:style.display,
+          pointerEvents:style.pointerEvents,opacity:style.opacity},
+        containerVisibility:getComputedStyle(container).visibility,
+        render:{at:renderAt,status:document.getElementById('route-flyover').dataset.status,
+          proof:container.dataset.frame?JSON.parse(container.dataset.frame):null,moving:nativeMap.isMoving()}};
+    };
+    const scroll=()=>{scrollAt=performance.now();},render=()=>{renderAt=performance.now();};
+    const focused=e=>push(focus,{at:performance.now(),type:e.type,trusted:e.isTrusted,target:describe(e.target)});
+    window.addEventListener('focus',focused);window.addEventListener('blur',focused);
+    const input=e=>push(events,{at:performance.now(),type:e.type,trusted:e.isTrusted,
+      buttons:e.buttons,x:e.clientX,y:e.clientY,target:describe(e.target),state:sample({x:e.clientX,y:e.clientY})});
+    const jump=nativeMap.jumpTo;
+    nativeMap.jumpTo=function(...args){push(updates,{at:performance.now(),stack:new Error().stack});return jump.apply(this,args);};
+    const mutations=new MutationObserver(()=>push(history,sample()));
+    mutations.observe(container,{attributes:true,attributeFilter:['style','data-frame']});
+    document.addEventListener('scroll',scroll,true);nativeMap.on('render',render);
+    for(const type of ['mousedown','mousemove','mouseup'])document.addEventListener(type,input,true);
+    const observer=new PerformanceObserver(list=>{
+      for(const entry of list.getEntries())push(shifts,{at:entry.startTime,value:entry.value,
+        sources:(entry.sources??[]).slice(0,3).map(s=>({node:describe(s.node),previous:box(s.previousRect),current:box(s.currentRect)}))});
+    });observer.observe({type:'layout-shift',buffered:false});
+    function tick() {
+      const s=sample(),key=JSON.stringify([s.rect,s.hit,s.scroll.x,s.scroll.y,s.containerVisibility,s.render.status,s.render.proof]);
+      if(key!==previous){push(history,s);previous=key;}frame=requestAnimationFrame(tick);
+    }
+    window.pointerProbe={sample,history,events,shifts,updates,focus,dispose(){
+      cancelAnimationFrame(frame);observer.disconnect();document.removeEventListener('scroll',scroll,true);
+      mutations.disconnect();nativeMap.jumpTo=jump;
+      window.removeEventListener('focus',focused);window.removeEventListener('blur',focused);
+      nativeMap.off('render',render);
+      for(const type of ['mousedown','mousemove','mouseup'])document.removeEventListener(type,input,true);
+    }};tick();
   })()`);
-  await f.cmd('Input.dispatchMouseEvent',{type:'mouseMoved',...drag,button:'none',buttons:0});
-  await f.cmd('Input.dispatchMouseEvent',{type:'mousePressed',...drag,button:'left',buttons:1,clickCount:1});
-  await f.cmd('Input.dispatchMouseEvent',{type:'mouseMoved',x:drag.x+20,y:drag.y+20,button:'left',buttons:1});
-  try { await until(()=>f.js(`document.getElementById('flyover-orientation').textContent.includes('Manual')`)); }
-  catch(error) {
-    t.diagnostic(`Native drag failure: ${JSON.stringify(await f.js(`({events:dragProbe,
-      status:document.getElementById('flyover-status').textContent,
-      visibility:document.getElementById('official-terrain').style.visibility})`))}`);
+}
+
+async function stableCanvas(f) {
+  const result=await f.evaluate(`new Promise(resolve=>{
+    let previous=null,frame;
+    const deadline=setTimeout(()=>{cancelAnimationFrame(frame);resolve({error:'Canvas did not become stably hittable',last:pointerProbe.sample()});},5000);
+    function check() {
+      const s=pointerProbe.sample();
+      const ready=s.hitCanvas && s.canvas.connected && s.canvas.visibility==='visible' &&
+        s.containerVisibility==='visible' && s.render.status==='ready' && s.render.proof?.ok && !s.render.moving;
+      const key=ready?JSON.stringify([s.rect,s.scroll.x,s.scroll.y,s.viewport]):null;
+      if(key!==null && key===previous) {clearTimeout(deadline);resolve(s);return;}
+      if(s.render.status==='unavailable') {clearTimeout(deadline);resolve({error:'Terrain unavailable',last:s});return;}
+      previous=key;frame=requestAnimationFrame(check);
+    }
+    frame=requestAnimationFrame(check);
+  })`);
+  assert.ok(!result.error,JSON.stringify(result));
+  return result;
+}
+
+async function nativeDrag(f,t) {
+  await installPointerProbe(f);
+  try {
+    await f.js(`nativeMap.getCanvas().scrollIntoView({block:'center',behavior:'instant'})`);
+    const hover=await stableCanvas(f);
+    // Native hover can focus the page, causing local-library reconciliation →
+    // shell render → terrain revalidation/hiding. Two RAFs BEFORE that input
+    // cannot establish readiness AFTER it. Never retry a failed press/gesture.
+    await f.cmd('Input.dispatchMouseEvent',{type:'mouseMoved',...hover.point,button:'none',buttons:0});
+    const hit=await stableCanvas(f),drag=hit.point;
+    assert.equal(hit.hitCanvas,true,'Native press requires a visible, verified, stable canvas hit.');
+    await f.cmd('Input.dispatchMouseEvent',{type:'mousePressed',...drag,button:'left',buttons:1,clickCount:1});
+    try {
+      const press=await f.js(`pointerProbe.events.find(e=>e.type==='mousedown')`);
+      assert.ok(press?.trusted && press.buttons===1 && press.target.tag==='CANVAS' &&
+        press.state.hitCanvas && press.state.containerVisibility==='visible',
+      `The single native press must actually reach the visible canvas: ${JSON.stringify(press)}`);
+      await f.cmd('Input.dispatchMouseEvent',{type:'mouseMoved',x:drag.x+20,y:drag.y+20,button:'left',buttons:1});
+      await until(()=>f.js(`document.getElementById('flyover-orientation').textContent.includes('Manual')`));
+    } finally {
+      await f.cmd('Input.dispatchMouseEvent',{type:'mouseReleased',x:drag.x+20,y:drag.y+20,button:'left',buttons:0,clickCount:1});
+    }
+    await until(()=>f.js('!nativeMap.isMoving()'));
+    assert.match(await f.js(`document.getElementById('flyover-orientation').textContent`),/Manual/);
+    const evidence=await f.js(`({events:pointerProbe.events,focus:pointerProbe.focus,updates:pointerProbe.updates})`);
+    const focusRefresh=evidence.updates.find(e=>e.stack.includes('local-routes-view'));
+    if(focusRefresh)t.diagnostic(`Native hover focus-refresh settled before single trusted canvas press: ${JSON.stringify({
+      focus:evidence.focus,refreshAt:focusRefresh.at,readyAt:hit.at,
+      events:evidence.events.map(e=>({at:e.at,type:e.type,trusted:e.trusted,buttons:e.buttons,target:e.target,
+        visibility:e.state.containerVisibility})),
+    })}`);
+  } catch(error) {
+    t.diagnostic(`Native drag failure: ${JSON.stringify(await f.js(`({
+      current:pointerProbe.sample(),history:pointerProbe.history,events:pointerProbe.events,
+      shifts:pointerProbe.shifts,updates:pointerProbe.updates,focus:pointerProbe.focus})`))}`);
     throw error;
-  }
-  await f.cmd('Input.dispatchMouseEvent',{type:'mouseReleased',x:drag.x+20,y:drag.y+20,button:'left',buttons:0,clickCount:1});
-  await until(()=>f.js('!nativeMap.isMoving()'));
-  assert.match(await f.js(`document.getElementById('flyover-orientation').textContent`),/Manual/);
-  assert.ok(await f.js(`dragProbe.some(e=>e.type==='mousedown' && e.isTrusted && e.buttons===1)`));
+  } finally { await f.js('pointerProbe.dispose()'); }
 }
 
 async function nativeClick(f,id) {
@@ -216,6 +292,52 @@ async function nativeClick(f,id) {
   for(const type of ['mousePressed','mouseReleased'])
     await f.cmd('Input.dispatchMouseEvent',{type,...point,button:'left',buttons:type==='mousePressed' ? 1 : 0,clickCount:1});
 }
+
+test('native drag readiness rejects the old hit point during an actual focus-refresh frame gate', {timeout:120000},async t=>{
+  const f=await fixture(t,{real:true});
+  await f.cmd('Emulation.setDeviceMetricsOverride',{width:800,height:900,deviceScaleFactor:1,mobile:false});
+  await f.navigate(f.pack.catalog.routes.find(r=>r.name.startsWith('D1')));
+  await f.command('seekDistance',(await f.snapshot()).totalDistanceM*.5);
+  await f.js(`window.fixtureHeight=${(await f.snapshot()).position.rawElevationM}`);
+  await f.js(`document.getElementById('flyover-enable').click()`);
+  await until(()=>f.js(`document.getElementById('official-terrain').style.visibility==='visible'`));
+  const before=await f.snapshot();
+  await installPointerProbe(f);
+  await f.evaluate(`new Promise(resolve=>{
+    nativeMap.getCanvas().scrollIntoView({block:'center'});
+    requestAnimationFrame(()=>requestAnimationFrame(resolve));
+  })`);
+  const old=await stableCanvas(f);
+  // Deterministic notification control, NOT a synthetic drag: exercise the
+  // real async focus/storage reconciliation and renderer's safety gate.
+  // Observe its hidden interval in a microtask, regardless of render speed.
+  const negative=await f.evaluate(`new Promise((resolve,reject)=>{
+    const container=document.getElementById('official-terrain');
+    const observer=new MutationObserver(()=>{
+      if(getComputedStyle(container).visibility!=='hidden')return;
+      const hit=pointerProbe.sample(${JSON.stringify(old.point)});
+      observer.disconnect();clearTimeout(deadline);resolve(hit);
+    });
+    const deadline=setTimeout(()=>{observer.disconnect();reject(Error('Focus refresh did not exercise the frame gate'));},5000);
+    observer.observe(container,{attributes:true,attributeFilter:['style']});
+    window.dispatchEvent(new Event('focus'));
+  })`);
+  assert.equal(old.hitCanvas,true);
+  assert.equal(negative.hitCanvas,false,'Old separate hit check must reject a now-hidden canvas.');
+  assert.equal(negative.hit.id,'flyover-viewport');
+  assert.equal(negative.containerVisibility,'hidden');
+  assert.deepEqual(negative.rect,old.rect,'The demonstrated race is frame visibility, not stale geometry.');
+  assert.equal(negative.scroll.y,old.scroll.y);
+  assert.equal(negative.render.status,'ready','A stale ready label alone cannot authorize native input.');
+  const updates=await f.js('pointerProbe.updates');
+  assert.ok(updates.some(e=>e.stack.includes('local-routes-view') && e.stack.includes('route-terrain-view')));
+  assert.equal(await f.js('pointerProbe.events.length'),0,'No mouse input before the actual canvas is hittable.');
+  t.diagnostic(`Negative control: ${JSON.stringify({before:old,hidden:negative,source:updates[0].stack})}`);
+  await nativeDrag(f,t);
+  const after=await f.snapshot();
+  for(const key of ['distanceM','position','estimatedRide','recordedClock'])assert.deepEqual(after[key],before[key]);
+  assert.deepEqual(f.exceptions,[]);
+});
 
 test('native same-preset reselection and refinements reconcile manual UI with the actual camera', {timeout:120000},async t=>{
   const f=await fixture(t,{real:true});

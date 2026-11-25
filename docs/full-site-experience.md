@@ -2,6 +2,12 @@
 
 Product interaction contract · 24 November 2026 · `kotr27-800.1`
 
+Current implementation evidence: [final qualification](final-qualification.md)
+reconciles **every P01–P22 row and both personas**, including pending facts,
+Chrome-only operator scope, deferred browsers/fullscreen and unresolved
+qualification findings. The design-time observations below are historical,
+not current route-rights or implementation status.
+
 ## Status and evidence boundary
 
 This is a design specification, not an implementation, launch approval, event announcement or completion checklist. It defines the full **Plan / Explore / Prepare / Ride week** experience and the acceptance journeys that subsequent bounded implementation must satisfy. “Must” below describes that target, not a capability already shipped.

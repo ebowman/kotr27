@@ -43,6 +43,13 @@ for (const width of [320,375,1280]) test(`packaged shell ${width}px: no-map, his
   t.after(() => { server.closeAllConnections(); server.close(); });
   const base = `http://127.0.0.1:${server.address().port}/kotr27/`;
   const requests = [];
+  // The first-party controls and pure camera math are shell dependencies.
+  // The renderer, legacy cinema, terrain engine and provider configuration
+  // must remain lazy. Check exact packaged paths, not words in a URL.
+  const deferred = files.filter(file =>
+    /^(?:js\/(?:route-terrain-view|config)|assets\/(?:terrain|flyover))\.[a-f0-9]{24}\.(?:mjs|js)$/.test(file));
+  assert.equal(deferred.length,4,'all four lazy release boundaries are inventoried');
+  const deferredURLs = new Set(deferred.map(file => new URL(file,base).href));
   const lifecycle = [];
   const b = await browser(t,m => {
     if (m.method === 'Network.requestWillBeSent') requests.push(m.params.request.url);
@@ -61,6 +68,14 @@ for (const width of [320,375,1280]) test(`packaged shell ${width}px: no-map, his
   const cmd = (method,params) => diagnose(method,params,() => b.cmd(method,params));
   const js = expression => diagnose('Runtime.evaluate',{expression},() => b.js(expression));
   const {exceptions} = b;
+  const assertOfflineShell = async () => {
+    assert.deepEqual(requests.filter(url => new URL(url).origin !== new URL(base).origin),[],
+      'no third-party request, even a blocked one, before explicit opt-in');
+    assert.deepEqual(requests.filter(url => deferredURLs.has(new URL(url).origin + new URL(url).pathname)),[],
+      'no renderer, terrain, legacy flyover or provider config before explicit opt-in');
+    assert.equal(await js(`document.querySelectorAll('canvas').length`),0,
+      'no hidden or visible 3D canvas before explicit opt-in');
+  };
   await cmd('Page.enable');
   await cmd('Network.enable');
   await cmd('Network.setBlockedURLs',{urls:['https://*']});
@@ -78,7 +93,8 @@ for (const width of [320,375,1280]) test(`packaged shell ${width}px: no-map, his
   assert.ok(await js(`climb.hidden && !document.querySelector('#map canvas')`));
   assert.match(await js('document.body.innerText'),/Loading approved|Approved provisional/i);
   assert.equal(await js(`document.querySelectorAll('h1').length`),1);
-  assert.ok(!requests.some(u => /mapbox|terrain|flyover|config/.test(u)));
+  await assertOfflineShell();
+  t.diagnostic(`Eager first-party camera controls/math only: ${requests.filter(u => /flyover/.test(u)).map(u => new URL(u).pathname).join(', ')}`);
   assert.ok(await js(`document.documentElement.scrollWidth <= innerWidth`));
   await js(`document.querySelector('.site-nav a:nth-child(2)').focus()`);
   assert.match(await js(`document.getElementById('site-notice').textContent`),/Loading selected profile/);
@@ -146,7 +162,7 @@ for (const width of [320,375,1280]) test(`packaged shell ${width}px: no-map, his
     assert.ok(await js(`document.documentElement.scrollWidth <= innerWidth`),'200% text enlargement retains wrapping');
     await js(`document.documentElement.style.fontSize=''`);
   }
-  assert.ok(!requests.some(u => /mapbox|terrain|flyover|config/.test(u)));
+  await assertOfflineShell();
   await cmd('Page.navigate',{url:base+'explore.html?route=semonzo-example&rev=missing&view=clock'});
   await until(() => js(`document.querySelector('#site-notice')?.textContent.includes('revision unavailable')`));
   assert.ok(await js(`document.getElementById('legacy-explorer').hidden`));

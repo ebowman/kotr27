@@ -1,4 +1,10 @@
-# Publishing the route preview
+# Publishing the public companion artifact
+
+Current full-companion evidence and explicit publish/rollback handoff:
+[kotr27-800.21 qualification](final-qualification.md). The historical preview
+results later in this file are not full-site qualification. Chrome-only scope,
+deferred browsers/fullscreen and outstanding review/performance disposition
+are explicit in that report. No publication is authorized by these instructions.
 
 The local project is **not** the Pages tree. Do not publish this checkout,
 its Git history, or a recursive copy of it: it includes private project and
@@ -27,9 +33,11 @@ compare the two markers at the same minute, tap a chapter for grade and moving
 time, or select **Use my FTP**. Under **Pace & stop**, add a café stop to Plan B
 at 9 km. The chapter links seek the flyover only when followed.
 Stop the preview with Ctrl-C. Build into a **new** directory for each release.
-Its 14 files are `index.html`, `explore.html`, `.nojekyll`, the four
-fingerprinted flyover inputs (GPX, config, terrain and flyover scripts), and seven
-fingerprinted rider ES modules (including `ride-clock`). Keep screenshots
+The current normal candidate contains **76 files**, including both entries,
+`.nojekyll`, the fingerprinted first-party module/data graph, seven cleared
+route bundles and offline manifest/worker. Use the validated manifest rather
+than this count as the release authority. No fixture B/withdrawal revisions
+are part of a normal build. Keep screenshots
 outside that directory. Config is already browser-visible: use only the
 intended public, origin-restricted browser configuration there, never private
 credentials. The build does not need environment secrets.
@@ -42,6 +50,22 @@ record](semonzo-chapters.md) for the trace identity and attribution. The
 companion derives its chapters on the visitor's device and ships no second
 elevation dataset. Clearance resolves the data-rights gate; it does not
 itself request a deployment.
+
+The user's 2026-11-24 clearance also covers the seven route names, geometry
+and sanitized downloads; see [intake](route-intake.md) and
+[import/revision contract](route-import.md). Raw FIT originals remain private,
+public FIT export unavailable, and GPX cue-limited. Event logistics, day/calendar
+mapping, departures and fundraiser remain pending. This does not clear any
+2026 participant information or authorize deployment.
+
+For the bounded artifact-only MCP server (20 minutes, no source/fixtures):
+
+```sh
+node tools/qualification-preview.mjs /tmp/kotr27-new-review-artifact 48129
+```
+
+Use a new external destination. The command prints the actual release and URL;
+it refuses to replace an existing output and never takes over another listener.
 
 ## After authorization only: publish the artifact, not the source
 

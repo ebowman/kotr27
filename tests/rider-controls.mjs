@@ -248,7 +248,8 @@ for (const width of [320,1200]) test(`packaged ${width}px private keyboard walkt
     for (const id of n.childIds || []) walk(ax.get(id));
   }
   walk(nodes[0]);
-  assert.deepEqual(headings,['Explore the route','Semonzo example briefing','Semonzo example ascent · Pace and ride clock',
+  assert.deepEqual(headings,['Explore the route','Semonzo example briefing',
+    'Optional public start-area weather','Offline day packs · optional','Semonzo example ascent · Pace and ride clock',
     'Private local routes & recordings',
     'How far up Monte Grappa in an hour?','Chapter by chapter',
     'Two ways up the same climb','See a chapter in the flyover']);
@@ -371,7 +372,7 @@ for (const width of [320,1200]) test(`packaged ${width}px private keyboard walkt
   assert.ok(await js(`work.checkVisibility()`));
   await tab(); await tab();
   assert.equal(await js('document.activeElement.hash'), '#seek-9000');
-  assert.equal(await js('location.href'), url+'?area=explore&view=clock&route=semonzo-example&rev=semonzo-example-v1&chapter=high-step&at=11000');
+  assert.equal(await js('location.href'), url+'?area=explore&view=clock&route=semonzo-example&rev=semonzo-example-v1&chapter=high-step&at=11000&week=1&goal=social&cue=feel');
   assert.deepEqual(await js('[localStorage.length, sessionStorage.length, document.cookie]'), [0, 0, '']);
   const {result:stores} = await cmd('Runtime.evaluate',{awaitPromise:true,returnByValue:true,
     expression:'Promise.all([indexedDB.databases(),caches.keys(),navigator.serviceWorker.getRegistrations()]).then(xs=>xs.map(x=>x.length))'});
