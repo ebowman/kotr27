@@ -5,16 +5,16 @@ import { verifyAsset } from '/js/route-catalog.mjs';
 const $ = id => document.getElementById(id);
 const NS = 'http://www.w3.org/2000/svg';
 const groups = [
-  {label:'Monte Grappa / Asolo', routes:['rwgps-57873112','rwgps-57873019']},
-  {label:'Vicentine Hills', routes:['rwgps-57873183','rwgps-57874024']},
-  {label:'Brentha Valley', routes:['rwgps-57874050','rwgps-57874076']},
-  {label:'Warm-up', routes:['rwgps-57874121']},
+  {label:'D0 Warm-up', routes:['rwgps-57874121']},
+  {label:'D1 Vicentine Hills', routes:['rwgps-57873183','rwgps-57874024']},
+  {label:'D2 Asolo / Monte Grappa', routes:['rwgps-57873112','rwgps-57873019']},
+  {label:'D3 Brentha Valley', routes:['rwgps-57874050','rwgps-57874076']},
 ];
 const names = {
-  'rwgps-57873019':'Monte Grappa', 'rwgps-57873112':'Asolo',
-  'rwgps-57873183':'Vicentine Hills', 'rwgps-57874024':'Vicentine Hills',
-  'rwgps-57874050':'Brentha Valley', 'rwgps-57874076':'Brentha Valley',
-  'rwgps-57874121':'Warm-up',
+  'rwgps-57873019':'D2 Monte Grappa', 'rwgps-57873112':'D2 Asolo',
+  'rwgps-57873183':'D1 Vicentine Hills', 'rwgps-57874024':'D1 Vicentine Hills',
+  'rwgps-57874050':'D3 Brentha Valley', 'rwgps-57874076':'D3 Brentha Valley',
+  'rwgps-57874121':'D0 Warm-up',
 };
 const params = new URLSearchParams(location.search);
 document.body.classList.toggle('long-name',params.get('layout') === 'long-name');
@@ -143,9 +143,14 @@ async function terrain() {
       container:$('terrain'),analysis,snapshot:snapshot(),signal:controller.signal,
       onManual:()=>pause(),
       onStatus:(state) => {
+        if (controller.signal.aborted) return;
         if (state === 'ready') {
           clearTimeout(deadline);terrainReady = true;$('player').classList.add('online');
           status(playing ? 'Satellite terrain · preview playback' : 'Satellite terrain · paused');
+        }
+        if (state === 'verifying') {
+          terrainReady = false;
+          status('Satellite terrain · verifying view');
         }
         if (state === 'unavailable') {
           clearTimeout(deadline);
@@ -267,7 +272,7 @@ document.addEventListener('keydown',e=>{
   back();
 });
 const dialogText = {
-  week:['My week','Preview only. Browsing does not assign a ride. Source D1–D4 labels are not verified calendar dates; no itinerary is saved here.'],
+  week:['My week','Preview only. Ride order is D0 Warm-up, D1 Vicentine Hills, D2 Asolo / Monte Grappa, D3 Brentha Valley. Dates are not assigned; no itinerary is saved here.'],
   essentials:['Essentials','KOTR 2027 · Bassano del Grappa · May 20–24, 2027. Logistics are not part of this prototype. Standard labels the source short variant (or warm-up); Long may be a different route, not merely an extension.'],
 };
 document.querySelectorAll('[data-dialog]').forEach(button=>button.addEventListener('click',()=>{

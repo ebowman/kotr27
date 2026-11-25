@@ -1,4 +1,4 @@
-# Rider-first preview · kotr27-n00.1
+# Rider-first preview · kotr27-n00.1 / n00.10 correction
 
 **Owner approval is pending.** This is an isolated design prototype, not a
 production redesign, itinerary assignment or deployment. Independent review
@@ -29,8 +29,8 @@ Review at **1440×900** and **375×812**. Useful deliberate states:
 ## What changed in the experience
 
 Warm limestone, deep green, restrained ochre, large route typography and actual
-geometry replace the technical preamble. The normal opening contains **59 desktop
-/ 55 phone visible whitespace tokens**, even including attribution and symbols.
+geometry replace the technical preamble. The normal opening contains **60 desktop
+/ 56 phone visible whitespace tokens**, even including attribution and symbols.
 Event/place/date, the selected route, both metrics and Fly are above the fold.
 
 Fly replaces the page with the available viewport. Back, route, Play/Pause and
@@ -54,7 +54,22 @@ Featured **Monte Grappa / rwgps-57873019: 63.2 km, 1,835 m** uses RWGPS-listed
 totals; outline/profile elevations come from the source track and need not equal
 listed gain. Standard changes that source group to **Asolo: 57.6 km, 837 m**,
 not shortened Monte Grappa geometry. Other groups retain actual names and totals.
-Standard maps the source “short” variant (or Warm-up); D1–D4 are not dates.
+Standard maps the source “short” variant (or Warm-up).
+
+Owner-confirmed ride order is now **D0, D1, D2, D3**, displayed in that order
+in the chooser and consistently in selected identities/player options. Monte
+Grappa stays featured by default. This shifts display labels only: immutable
+catalog names/IDs/statistics remain unchanged, and no calendar dates are assigned.
+
+| Source label | Display identity / variant | Canonical route ID |
+|---|---|---|
+| D1 | D0 Warm-up · Standard only | rwgps-57874121 |
+| D2S | D1 Vicentine Hills · Standard | rwgps-57873183 |
+| D2L | D1 Vicentine Hills · Long | rwgps-57874024 |
+| D3S | D2 Asolo · Standard | rwgps-57873112 |
+| D3L | D2 Monte Grappa · Long | rwgps-57873019 |
+| D4S | D3 Brentha Valley · Standard | rwgps-57874050 |
+| D4L | D3 Brentha Valley · Long | rwgps-57874076 |
 
 No external request occurs before Fly. Its adjacent disclosure names Mapbox and
 map-area requests. Explicit entry reuses the existing public configuration,
@@ -90,77 +105,106 @@ Implementer inspected these parent-captured screenshots (not a new live walkthro
 - `/var/folders/ms/8skj9_fx6zs08v2ydsjcjjhc0000gp/T/chrome-devtools-mcp-xYK35j/screenshot.png`
   — phone title/back collision and crowded narrow profile/telemetry: do not copy.
 
-Parent's fresh MCP connection subsequently failed at `Target.setDiscoverTargets`
-(`Target closed`). No connector bypass/settings change was attempted. The checks
-below use the repository's existing **native installed Chrome/CDP** test helper,
-as separately authorized, not MCP and not a substitute claim of owner approval.
+Parent's fresh MCP connection initially failed at `Target.setDiscoverTargets`
+(`Target closed`). After the user quit Chrome and requested retry, the parent
+reported MCP reconnected and independently observed continuous terrain followed
+by one terminal fallback. That is parent evidence, not this implementer's browser
+run. The checks below use the repository's existing **native installed Chrome/CDP**
+helper, as separately authorized, not MCP or a claim of owner approval.
+
+## Playback correction and remaining limitation
+
+The original adapter hid its container on **every camera update**, then revealed
+it on valid render proof; transient failed coverage/clearance also hid it. The
+outline underneath therefore flashed even during successful playback. A new
+deterministic adapter test failed on the original code at the first successful
+motion update (`hidden`, expected `visible`).
+
+The minimal shared-adapter correction separates presentation from verification:
+initial terrain still requires valid proof; subsequently it stays visible during
+the existing bounded verification interval, explicitly labelled “verifying view.”
+Motion invalidates old frame evidence; invalid proofs remain false. Persistent
+failure still disposes the map once, with honest stable 2D fallback. No camera,
+proof threshold, tile budget, timeout or automatic-retry policy was relaxed.
+
+**Whole-route terrain is not qualified.** In an isolated live-provider comparison,
+the exact baseline adapter from `d26a263` was supplied only to the owned test
+browser's local module request (no file/provider substitution). Baseline produced
+74 hides before terminal fallback at **12.9 km / 18.3 s**; corrected code produced
+zero hides before the same terminal location/time, then one stable fallback.
+The corrected failed frame had `clear:false`, marker opacity 1 and a **34.8 m**
+mesh-pick discrepancy against the unchanged **8 m** clearance rule; other proof
+flags were true. Thus early clearance fallback predates this correction, but is
+not proven unavoidable. Follow-up **kotr27-7k3** records this limitation, open and
+unclaimed; camera/mesh-clearance remediation is not folded into the visibility fix.
+Parent MCP independently reported the same pattern near
+12.8 km. The user's preview listener on 4177 was not restarted or stopped.
 
 ## Validation and evidence
 
 ```sh
-node --test prototypes/rider-first/check.mjs
-node --test prototypes/rider-first/terrain-check.mjs
+node --test prototypes/rider-first/check.mjs prototypes/rider-first/terrain-check.mjs tests/route-flyover.mjs tests/route-flyover-browser.mjs
 node --check prototypes/rider-first/app.mjs
-node --check prototypes/rider-first/serve.mjs
+node --check js/route-terrain-view.mjs
+git diff --check
 ```
 
-2026-11-25: deterministic Chrome checks pass for both target sizes, copy budget,
+2026-11-25 correction: combined focused run **10 passed, 0 failed, 1 explicitly
+deferred fullscreen check**. Syntax checks pass for all six changed `.mjs` files;
+`git diff --check` passes. This is not a project-wide lint/regression claim.
+Deterministic Chrome checks pass for both target sizes, copy budget,
 no horizontal overflow, opening CTA visibility, actual route totals, all seven
 route selections, Standard/Long distinction, Standard-only, long-title layout,
 entry/back, play/pause, seeking, keyboard focus, profile/header separation,
 reduced motion, denied provider, no application storage writes and server isolation.
-No dependencies installed. Node syntax checks pass for all four `.mjs` files;
-this is not a project-wide lint or regression-suite claim.
+All seven route labels/order, variants and totals pass at both sizes. Phone
+spacing retains the opening CTA **and full provider disclosure**. No dependencies
+were installed. Deterministic adapter checks cover transient imagery/clearance/
+road/elevation failure, seek, fixed outage/load deadlines, tile-budget exhaustion,
+provider/context failure, disposal and rejection of late events.
 
-Live provider observation also succeeded: HTTP 200 imagery/SDK, telemetry 204;
-existing adapter reported framed/aligned/elevation/clear/road/imagery **all true**.
-Seek to halfway, play, pause advanced to 32.6 km with a valid terrain frame at
-desktop and phone sizes. These are bounded observations, not availability or
-whole-route guarantees. Initial height and phone provider-credit collisions were
-found during rendering, corrected, and rechecked.
+Live provider: HTTP 200 imagery/SDK, telemetry 204. At each size, eight seconds
+from start advanced **0→5.6 km** with zero hides; the halfway seek at **31.6 km**
+had all proof flags true. A further eight-second post-seek observation advanced
+to **37.2 km**, including a persistent `clear:false` and exactly one stable terminal
+fallback. Continuous RAF + style-mutation observation found no hidden-online
+frames or repeated surface switching. Route change/back/re-entry cleanup passed.
+This proves bounded continuity and honest fallback, not uninterrupted terrain
+through the route. No new services were left running.
 
-Review correction: the playback test previously sampled after a fixed 350 ms,
-but playback advances on animation frames, with its first frame initializing
-the clock and the distance label rounded to 0.1 km. A natural diagnostic advanced
-normally; a controlled 450 ms first-frame deferral reproduced `0.0 km` at the
-old deadline, then `0.1 km` at about 540 ms without any application change.
-This confirms the test's scheduling assumption; it does not reconstruct the
-reviewer's exact host scheduling. The test now waits at most five seconds for
-**distance, profile position and rider marker** all to advance, while requiring
-the running control state, visible page and no browser exceptions. A stalled
-player still fails; pause stability and the remaining interaction checks remain.
-Correction validation: normal combined checks passed 2/2 and standalone
-`check.mjs` passed 1/1, with capture unset; the delayed-first-frame diagnostic
-also passed the corrected assertions. All 12 existing PNG SHA-256 hashes stayed
-identical. In this combined run, live terrain entry had all proof flags true,
-but later seek/play/pause samples had `clear:false` / `ok:false`. The observational
-helper passed its assertions; those later samples are **not** a fresh terrain
-readiness qualification and do not replace the earlier captured evidence.
+Existing native adapter tests initially assumed visible meant verified; those
+assertions now require current proof/status while confirming focus refresh keeps
+terrain visible. A separate fixture race sought a null controller position
+before terrain was enabled; navigation now waits for the exact shared route/
+revision position. Native input, real WebGL pixel/proof and terminal-fallback
+checks all pass, with synthetic provider rasters explicitly distinct from live
+geographic imagery. The final normal run with capture unset preserved all 12
+capture SHA-256 hashes exactly.
 
 `prototypes/rider-first/evidence/` contains actual Chrome captures:
 
 - `desktop-landing.png`, `phone-landing.png`: normal first views.
 - `desktop-live-provider.png`: real terrain immediately after entry.
-- `desktop-live-summit.png`, `phone-live-summit.png`: actual terrain after seeking
-  and playback near the high section (filename is descriptive, not a summit POI).
+- `desktop-live-summit.png`, `phone-live-summit.png`: actual verified terrain paused
+  at halfway after start playback, before the longer post-seek observation
+  (filename is descriptive, not a summit POI or whole-route qualification).
 - `desktop-player-unavailable.png`, `phone-player-unavailable.png`: intentionally
   blocked provider, honest 2D fallback.
 - `desktop-profile.png`, `phone-profile.png`: working profile/seek in fallback.
 - `phone-standard-only.png`, `phone-long-name.png`,
   `phone-reduced-motion-2d.png`: deliberate edge layouts.
 
-Normal checks do not create directories or write screenshots; existing evidence
-stays unchanged. Capture is explicitly opt-in (paths are relative to the shell's
-working directory):
+All 12 captures displayed changed route labels, so they were regenerated and
+visually inspected. Normal checks do not create directories or write screenshots.
+The actual opt-in refresh commands were:
 
 ```sh
-RIDER_FIRST_EVIDENCE_DIR=prototypes/rider-first/captures node --test prototypes/rider-first/check.mjs
-RIDER_FIRST_EVIDENCE_DIR=prototypes/rider-first/captures node --test prototypes/rider-first/terrain-check.mjs
+RIDER_FIRST_EVIDENCE_DIR=prototypes/rider-first/evidence node --test prototypes/rider-first/check.mjs
+RIDER_FIRST_EVIDENCE_DIR=prototypes/rider-first/evidence node --test prototypes/rider-first/terrain-check.mjs
 ```
 
-These commands write to a separate capture directory, leaving the reviewed
-`evidence/` PNGs intact. Existing filenames in the explicitly selected destination
-are overwritten. Unset `RIDER_FIRST_EVIDENCE_DIR` for independent read-only review.
+Existing filenames in that explicitly selected destination are overwritten.
+Unset `RIDER_FIRST_EVIDENCE_DIR` for independent read-only review.
 Review images as well as assertions. Screenshots are evidence, never runtime
 backgrounds. Fresh independent review and human pixel approval remain outstanding;
 production changes stay blocked by kotr27-n00.2.

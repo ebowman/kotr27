@@ -123,7 +123,7 @@ dialog p{margin:18px 0 24px}
   #landing-route{width:calc(100% - 153px);font-size:11px;padding-left:6px;padding-right:15px}
   #variants{gap:0;flex-shrink:0}#variants button{font-size:11px;padding:6px 9px}#variants .only{font-size:11px}
   .long-name h1{font-size:36px;letter-spacing:-1px}
-  .geography{grid-row:5;min-height:0;height:310px}
+  .geography{grid-row:5;min-height:0;height:285px}
   .long-name .geography{height:250px}
   .long-name .geography>.route-map{height:165px}
   .map-heading{padding:13px 15px 0;font-size:9px}.map-heading b{margin-left:10px}

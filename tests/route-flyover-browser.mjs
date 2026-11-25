@@ -116,6 +116,12 @@ async function fixture(t,{real=false,headless=true}={}) {
     await until(()=>lifecycle.some(e=>e.loaderId===nav.loaderId && e.name==='DOMContentLoaded'));
     await until(()=>b.js(`!document.getElementById('route-flyover')?.hidden && !!document.getElementById('flyover-seek') &&
       document.getElementById('trip-planner')?.dataset.ready==='true'`));
+    // The visible analysis panel can precede the shared controller's async
+    // selection. Do not seek a null position before terrain is even enabled.
+    await until(async()=>{
+      const s=await command('getSnapshot');
+      return s.identity?.routeId===r.id && s.identity?.revisionId===r.currentRevisionId && s.position;
+    });
   }
   return {...b,base,pack,files,network,navigate,evaluate,command,
     snapshot:()=>command('getSnapshot'),
@@ -245,7 +251,7 @@ async function nativeDrag(f,t) {
     await f.js(`nativeMap.getCanvas().scrollIntoView({block:'center',behavior:'instant'})`);
     const hover=await stableCanvas(f);
     // Native hover can focus the page, causing local-library reconciliation →
-    // shell render → terrain revalidation/hiding. Two RAFs BEFORE that input
+    // shell render → terrain revalidation. Two RAFs BEFORE that input
     // cannot establish readiness AFTER it. Never retry a failed press/gesture.
     await f.cmd('Input.dispatchMouseEvent',{type:'mouseMoved',...hover.point,button:'none',buttons:0});
     const hit=await stableCanvas(f),drag=hit.point;
@@ -293,7 +299,7 @@ async function nativeClick(f,id) {
     await f.cmd('Input.dispatchMouseEvent',{type,...point,button:'left',buttons:type==='mousePressed' ? 1 : 0,clickCount:1});
 }
 
-test('native drag readiness rejects the old hit point during an actual focus-refresh frame gate', {timeout:120000},async t=>{
+test('native focus refresh retains terrain but invalidates stale proof before a verified drag', {timeout:120000},async t=>{
   const f=await fixture(t,{real:true});
   await f.cmd('Emulation.setDeviceMetricsOverride',{width:800,height:900,deviceScaleFactor:1,mobile:false});
   await f.navigate(f.pack.catalog.routes.find(r=>r.name.startsWith('D1')));
@@ -310,29 +316,30 @@ test('native drag readiness rejects the old hit point during an actual focus-ref
   const old=await stableCanvas(f);
   // Deterministic notification control, NOT a synthetic drag: exercise the
   // real async focus/storage reconciliation and renderer's safety gate.
-  // Observe its hidden interval in a microtask, regardless of render speed.
+  // Observe its unverified interval in a microtask, regardless of render speed.
+  // Presentation now stays continuous; visibility alone is not readiness.
   const negative=await f.evaluate(`new Promise((resolve,reject)=>{
     const container=document.getElementById('official-terrain');
     const observer=new MutationObserver(()=>{
-      if(getComputedStyle(container).visibility!=='hidden')return;
+      if(container.dataset.frame)return;
       const hit=pointerProbe.sample(${JSON.stringify(old.point)});
       observer.disconnect();clearTimeout(deadline);resolve(hit);
     });
     const deadline=setTimeout(()=>{observer.disconnect();reject(Error('Focus refresh did not exercise the frame gate'));},5000);
-    observer.observe(container,{attributes:true,attributeFilter:['style']});
+    observer.observe(container,{attributes:true,attributeFilter:['data-frame']});
     window.dispatchEvent(new Event('focus'));
   })`);
   assert.equal(old.hitCanvas,true);
-  assert.equal(negative.hitCanvas,false,'Old separate hit check must reject a now-hidden canvas.');
-  assert.equal(negative.hit.id,'flyover-viewport');
-  assert.equal(negative.containerVisibility,'hidden');
-  assert.deepEqual(negative.rect,old.rect,'The demonstrated race is frame visibility, not stale geometry.');
+  assert.equal(negative.hitCanvas,true,'A transient revalidation must not hide a presented canvas.');
+  assert.equal(negative.containerVisibility,'visible');
+  assert.deepEqual(negative.rect,old.rect,'Revalidation does not change hit geometry.');
   assert.equal(negative.scroll.y,old.scroll.y);
-  assert.equal(negative.render.status,'ready','A stale ready label alone cannot authorize native input.');
+  assert.equal(negative.render.status,'verifying','A visible canvas alone cannot authorize verified native input.');
+  assert.equal(negative.render.proof,null,'A previous frame cannot qualify the new camera update.');
   const updates=await f.js('pointerProbe.updates');
   assert.ok(updates.some(e=>e.stack.includes('local-routes-view') && e.stack.includes('route-terrain-view')));
   assert.equal(await f.js('pointerProbe.events.length'),0,'No mouse input before the actual canvas is hittable.');
-  t.diagnostic(`Negative control: ${JSON.stringify({before:old,hidden:negative,source:updates[0].stack})}`);
+  t.diagnostic(`Revalidation control: ${JSON.stringify({before:old,verifying:negative,source:updates[0].stack})}`);
   await nativeDrag(f,t);
   const after=await f.snapshot();
   for(const key of ['distanceM','position','estimatedRide','recordedClock'])assert.deepEqual(after[key],before[key]);
@@ -433,7 +440,8 @@ test('native Chrome real WebGL: cold steep/bendy/long route frames, manual, cont
     const before=await f.snapshot();
     for(const mode of ['follow','overview','side','cinematic']) {
       await f.js(`document.getElementById('flyover-${mode}').click()`);
-      await until(()=>f.js(`document.getElementById('official-terrain').style.visibility==='visible' ||
+      await until(()=>f.js(`(document.getElementById('route-flyover').dataset.status==='ready' &&
+        JSON.parse(document.getElementById('official-terrain').dataset.frame || '{}').ok === true) ||
         document.getElementById('route-flyover').dataset.status==='unavailable'`));
       assert.equal(await f.js(`document.getElementById('route-flyover').dataset.status`),'ready',
         await f.js(`JSON.stringify({text:document.getElementById('flyover-status').textContent,frame:document.getElementById('official-terrain').dataset.frame,requests:document.getElementById('official-terrain').dataset.requests})`));

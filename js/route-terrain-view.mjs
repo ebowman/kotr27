@@ -18,13 +18,13 @@ export async function mountRouteTerrain({container,analysis,snapshot,onStatus,on
   window.kotrDisposeTerrain?.();
   const imageConcurrency=gl.maxParallelImageRequests;
   gl.maxParallelImageRequests=4;
-  let map, rider, ready=false, stopped=false, manual=false, current=snapshot;
+  let map, rider, ready=false, presented=false, stopped=false, manual=false, current=snapshot;
   let refinements={}, lastPaint=-Infinity, timer, requests=0, updating=false;
   const beacon=document.createElement('div'); beacon.className='route-rider';
   beacon.setAttribute('aria-label','Selected rider position');
   function dispose() {
     if (stopped) return;
-    stopped=true; clearTimeout(timer); map?.remove();
+    stopped=true; clearTimeout(timer); container.style.visibility='hidden'; map?.remove();
     gl.maxParallelImageRequests=imageConcurrency;
     if (window.kotrDisposeTerrain===dispose) delete window.kotrDisposeTerrain;
   }
@@ -35,7 +35,11 @@ export async function mountRouteTerrain({container,analysis,snapshot,onStatus,on
     dispose(); onStatus('unavailable',reason);
   }
   function waiting() {
-    container.style.visibility='hidden';
+    // Initial proof gates presentation, not every camera/tile refinement.
+    // Keep an already presented map during the bounded verification interval;
+    // this is NOT a valid-frame claim. Terminal failure still removes it.
+    if (!presented) container.style.visibility='hidden';
+    else onStatus('verifying','Satellite terrain · verifying the current view.');
     // One deadline per coverage outage. Motion/tile traffic cannot extend it.
     timer ??= setTimeout(()=>fail('Imagery, elevation or an unobstructed rider view could not be verified.'),limits.coverageMs);
   }
@@ -107,6 +111,7 @@ export async function mountRouteTerrain({container,analysis,snapshot,onStatus,on
             container.dataset.requests=String(requests);
             if (!proof.ok) { waiting(); return; }
             clearTimeout(timer); timer=null;
+            presented=true;
             container.style.visibility='visible';
             onStatus('ready',manual ? 'Manual exploration · Return to rider to follow.' :
               'Satellite terrain · orange route, white-ring rider. Compass: north; route direction shown below.');
@@ -132,6 +137,8 @@ export async function mountRouteTerrain({container,analysis,snapshot,onStatus,on
           padding:40,duration:0,bearing:0,pitch:0,maxZoom:limits.maxZoom});
         else map.jumpTo(pose);
       }
+      delete container.dataset.frame;
+      delete container.dataset.distance;
       waiting();
       map.triggerRepaint();
     } catch { fail('Selected route position or camera unavailable.'); }

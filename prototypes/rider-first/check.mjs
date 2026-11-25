@@ -9,6 +9,15 @@ import { get } from 'node:http';
 import { browser, until } from '../../tests/browser.mjs';
 import { previewServer } from './serve.mjs';
 
+const routes = [
+  ['rwgps-57874121','D0 Warm-up','Standard','19.7'],
+  ['rwgps-57873183','D1 Vicentine Hills','Standard','67.0'],
+  ['rwgps-57874024','D1 Vicentine Hills','Long','86.7'],
+  ['rwgps-57873112','D2 Asolo','Standard','57.6'],
+  ['rwgps-57873019','D2 Monte Grappa','Long','63.2'],
+  ['rwgps-57874050','D3 Brentha Valley','Standard','53.5'],
+  ['rwgps-57874076','D3 Brentha Valley','Long','85.3'],
+];
 test('isolated rider-first preview: native Chrome desktop and phone', async t => {
   const server = await previewServer(0);
   t.after(() => {server.closeAllConnections();server.close();});
@@ -93,7 +102,13 @@ test('isolated rider-first preview: native Chrome desktop and phone', async t =>
     const result = await layout();
     assert.equal(result.scrollWidth,width);
     assert.ok(result.fly.bottom < height,`${label} CTA must be in opening viewport: ${JSON.stringify(result)}`);
-    assert.equal(result.title,'Monte Grappa');assert.equal(result.distance,'63.2');assert.equal(result.ascent,'1,835');
+    assert.ok(await b.js(`document.querySelector('.entry p').getBoundingClientRect().bottom<=innerHeight`),
+      'Provider disclosure must also fit in the opening viewport');
+    assert.equal(result.title,'D2 Monte Grappa');assert.equal(result.distance,'63.2');assert.equal(result.ascent,'1,835');
+    assert.deepEqual(await b.js(`[...document.getElementById('landing-route').options].map(o=>o.text)`),
+      ['D0 Warm-up','D1 Vicentine Hills','D2 Asolo / Monte Grappa','D3 Brentha Valley']);
+    assert.deepEqual(await b.js(`[...document.getElementById('player-route').options].map(o=>[o.value,o.text])`),
+      routes.map(([id,name,variant])=>[id,`${name} · ${variant}`]));
     assert.equal(outside.length,beforeEntry,'No new provider request before Fly');
     const words = await b.js(`(()=>{
       const walker=document.createTreeWalker(document.getElementById('landing'),NodeFilter.SHOW_TEXT);
@@ -112,11 +127,11 @@ test('isolated rider-first preview: native Chrome desktop and phone', async t =>
     assert.equal(await b.js('localStorage.length+sessionStorage.length'),0);
     await shot(label+'-landing');
     await b.js(`document.querySelector('#variants [aria-pressed="false"]').click()`);
-    await until(()=>b.js(`document.getElementById('route-title').textContent==='Asolo' && !document.getElementById('fly').disabled`));
+    await until(()=>b.js(`document.getElementById('route-title').textContent==='D2 Asolo' && !document.getElementById('fly').disabled`));
     assert.equal(await b.js(`document.getElementById('distance').textContent`),'57.6');
     assert.equal(await b.js(`document.activeElement.textContent`),'Standard');
     await b.js(`document.querySelector('#variants [aria-pressed="false"]').click()`);
-    await until(()=>b.js(`document.getElementById('route-title').textContent==='Monte Grappa' && !document.getElementById('fly').disabled`));
+    await until(()=>b.js(`document.getElementById('route-title').textContent==='D2 Monte Grappa' && !document.getElementById('fly').disabled`));
     await focusVisible('landing-route');
     // Both desktop and phone start paused, regardless of motion preference.
     await click('fly');
@@ -134,6 +149,12 @@ test('isolated rider-first preview: native Chrome desktop and phone', async t =>
     await b.js(`document.getElementById('seek').value=500;document.getElementById('seek').dispatchEvent(new Event('input'))`);
     assert.match(await b.js(`document.getElementById('position').value`),/^31\.6 km$/);
     await shot(label+'-profile');
+    const deniedRequests = outside.length;
+    await sleep(2800);
+    assert.equal(await b.js(`document.getElementById('terrain-status').textContent`),'Terrain unavailable · 2D route preview');
+    assert.equal(await b.js(`document.querySelectorAll('#terrain canvas').length`),0);
+    assert.equal(await b.js(`document.getElementById('player').classList.contains('online')`),false);
+    assert.equal(outside.length,deniedRequests,'Denied provider does not retry or oscillate');
     const overlap = await b.js(`(()=>{
       const a=document.getElementById('profile-panel').getBoundingClientRect();
       const b=document.querySelector('.player-header').getBoundingClientRect();
@@ -142,14 +163,33 @@ test('isolated rider-first preview: native Chrome desktop and phone', async t =>
     })()`);
     assert.equal(overlap,false);
     await set('player-route','rwgps-57873112');await ready();
-    assert.equal(await b.js(`document.getElementById('route-title').textContent`),'Asolo');
+    assert.equal(await b.js(`document.getElementById('route-title').textContent`),'D2 Asolo');
     assert.equal(await b.js(`document.getElementById('distance').textContent`),'57.6');
     await click('back');
     assert.equal(await b.js(`document.activeElement.id`),'fly');
-    await set('landing-route','3');await ready();
+    assert.equal(await b.js(`document.querySelectorAll('#terrain canvas').length`),0);
+    assert.equal(await b.js(`typeof window.kotrDisposeTerrain`),'undefined');
+    await set('landing-route','0');await ready();
     assert.equal(await b.js(`document.getElementById('variants').textContent`),'Standard only');
     assert.equal(await b.js(`document.getElementById('distance').textContent`),'19.7');
     if (label==='phone') await shot('phone-standard-only');
+    // Re-entry and every source identity at both sizes, without new provider
+    // loads. The day designations are display-only; canonical totals persist.
+    await b.js(`document.getElementById('offline').checked=true`);
+    const before2D = outside.length;
+    await click('fly');
+    for (const [id,name,,distance] of routes) {
+      await set('player-route',id);await ready();
+      assert.equal(await b.js(`document.getElementById('route-title').textContent`),name);
+      assert.equal(await b.js(`document.getElementById('distance').textContent`),distance);
+      assert.ok(await b.js(`document.getElementById('landing-route').selectedOptions[0].textContent.startsWith(${JSON.stringify(name.slice(0,2))})`));
+      await click('back');
+      assert.equal((await layout()).scrollWidth,width);
+      assert.ok((await layout()).fly.bottom<height,`${label} ${name} CTA fits`);
+      await click('fly');
+    }
+    assert.equal(outside.length,before2D);
+    await click('back');
     await b.js(`document.querySelector('[data-dialog="week"]').click()`);
     assert.equal(await b.js(`document.getElementById('info-dialog').open`),true);
     await click('dialog-close');
@@ -170,12 +210,7 @@ test('isolated rider-first preview: native Chrome desktop and phone', async t =>
   assert.equal(await b.js(`document.getElementById('play').getAttribute('aria-label')`),'Play route preview');
   assert.equal(outside.length,requests);
   await shot('phone-reduced-motion-2d');
-  for (const [id,name,distance] of [
-    ['rwgps-57873112','Asolo','57.6'],['rwgps-57873183','Vicentine Hills','67.0'],
-    ['rwgps-57874024','Vicentine Hills','86.7'],['rwgps-57874050','Brentha Valley','53.5'],
-    ['rwgps-57874076','Brentha Valley','85.3'],['rwgps-57874121','Warm-up','19.7'],
-    ['rwgps-57873019','Monte Grappa','63.2'],
-  ]) {
+  for (const [id,name,,distance] of routes) {
     await set('player-route',id);await ready();
     assert.equal(await b.js(`document.getElementById('distance').textContent`),distance);
     assert.ok(await b.js(`document.getElementById('route-title').textContent.startsWith(${JSON.stringify(name)})`));
