@@ -9,6 +9,17 @@ import { fileURLToPath } from 'node:url';
 import { build } from '../tools/build-release.mjs';
 import { browser,until } from './browser.mjs';
 import { syntheticGPX,syntheticFIT } from './local-route-fixtures.mjs';
+import { readRoutePack } from '../tools/route-pack.mjs';
+import { loadRouteAnalysis } from '../js/route-analysis-loader.mjs';
+
+function clockFixtureGPX(times,{stationary=false,powerBase=100}={}) {
+  return '<gpx xmlns="http://www.topografix.com/GPX/1/1" xmlns:t="http://www.garmin.com/xmlschemas/TrackPointExtension/v1" version="1.1">'+
+    '<trk><name>Clock regression fixture</name><trkseg>'+
+    times.map((s,i)=>`<trkpt lat="${45+(stationary?0:i*.0001)}" lon="11.1234567"><ele>100</ele>`+
+      `<time>${new Date(Date.UTC(2026,0,1)+s*1000).toISOString()}</time>`+
+      `<extensions><t:TrackPointExtension><t:speed>${stationary?0:8}</t:speed><t:power>${powerBase+i}</t:power>`+
+      '</t:TrackPointExtension></extensions></trkpt>').join('')+'</trkseg></trk></gpx>';
+}
 
 async function fixture(t,{deny=false}={}) {
   const tmp=await mkdtemp(join(tmpdir(),'kotr-local-')),out=join(tmp,'public');
@@ -154,14 +165,18 @@ test('packaged native-file 375px: GPX/FIT route and recording, keyboard, offline
     assert.match(await f.js(`document.getElementById('local-status').textContent`),/Imported/);
     assert.match(await f.js(`document.getElementById('site-selection').textContent`),/local/);
     assert.equal(await f.js(`document.querySelector('#site-route').innerHTML`),official);
-    assert.ok(await f.js(`!document.getElementById('route-briefing').hidden`));
-    assert.ok(await f.js(`!document.getElementById('briefing-map').hidden`));
+    const recorded=/recording|activity/.test(name);
+    assert.ok(await f.js(`!document.getElementById('${recorded?'recorded-replay':'route-briefing'}').hidden`));
+    assert.ok(await f.js(`!document.getElementById('${recorded?'replay-map':'briefing-map'}').hidden`));
     const url=new URL(await f.js('location.href'));
     assert.deepEqual([...url.searchParams.keys()],['area','view','route']);
     assert.match(url.searchParams.get('route'),/^user:[0-9a-f-]{36}$/);
-    await f.js(`document.getElementById('briefing-seek').focus()`);
+    await f.js(`document.getElementById('${recorded?'replay-seek':'briefing-seek'}').focus()`);
     for(const type of ['keyDown','keyUp'])await f.cmd('Input.dispatchKeyEvent',{type,key:'ArrowRight',code:'ArrowRight',windowsVirtualKeyCode:39});
-    assert.equal(await f.evaluate(`import('./${f.session}').then(m=>m.routePlayback.getSnapshot().distanceM)`),100);
+    if(recorded) {
+      assert.equal(await f.evaluate(`import('./${f.session}').then(m=>m.routePlayback.getSnapshot().recordedClock.elapsedSeconds)`),1);
+      assert.match(await f.js(`document.getElementById('replay-heartRateBpm').textContent`),/decoded sample/);
+    } else assert.equal(await f.evaluate(`import('./${f.session}').then(m=>m.routePlayback.getSnapshot().distanceM)`),100);
     assert.equal(await f.js('location.href'),url.href,'seek/coordinates/time never enter local URL');
     assert.ok(await f.js('document.documentElement.scrollWidth<=innerWidth'));
   }
@@ -187,6 +202,86 @@ test('packaged native-file 375px: GPX/FIT route and recording, keyboard, offline
     assert.equal(r.method,'GET');assert.ok(!r.body&&!r.postData);
     assert.doesNotMatch(r.url,/private-original|private-recording|private-activity|11\.1234567|heartRate|Synthetic/);
     assert.ok(!r.url.startsWith('https:'),'no provider request');
+  }
+  assert.deepEqual(f.exceptions,[]);
+});
+
+test('packaged recorded replay: native upload, exact official revision/basis ACK, D4S model decline, linked controls, deletion and no remote centers',async t=>{
+  const f=await fixture(t);
+  await f.cmd('Emulation.setDeviceMetricsOverride',{width:375,height:900,deviceScaleFactor:1,mobile:true});
+  await f.navigate(f.base+'index.html?area=explore&view=briefing');
+  const {pack}=await readRoutePack(fileURLToPath(new URL('../',import.meta.url)));
+  const catalog=await f.js(`document.getElementById('site-route').innerHTML`);
+  const snapshots=()=>f.evaluate(`import('./${f.session}').then(m=>m.routePlayback.getSnapshot())`);
+  for(const name of ['D1','D4S']) {
+    const r=pack.catalog.routes.find(r=>r.name.startsWith(name));
+    const a=await loadRouteAnalysis({pack,routeId:r.id,revisionId:r.currentRevisionId,
+      readAsset:path=>readFile(new URL('../'+path,import.meta.url))});
+    // Invented recording timestamps/sensors on public geometry; no private originals.
+    const points=a.points.slice(100,250);
+    const bytes=`<gpx xmlns="http://www.topografix.com/GPX/1/1" xmlns:t="http://www.garmin.com/xmlschemas/TrackPointExtension/v1" version="1.1"><trk><name>Private replay sentinel</name><trkseg>`+
+      points.map((p,i)=>`<trkpt lat="${p.lat}" lon="${p.lon}"><ele>${p.elevationM}</ele>`+
+        `<time>${new Date(Date.UTC(2026,0,1)+i*1000).toISOString()}</time><extensions><t:TrackPointExtension>`+
+        `<t:power>${210+i}</t:power><t:hr>120</t:hr>${i===2?'':'<t:cad>80</t:cad>'}<t:speed>8</t:speed>`+
+        `</t:TrackPointExtension></extensions></trkpt>`).join('')+'</trkseg></trk></gpx>';
+    const count=f.network.length;
+    await f.upload(bytes,'private-replay-sentinel.gpx');
+    await until(()=>f.js(`document.getElementById('replay-powerW')?.textContent.includes('210 W')`));
+    if(name==='D1')assert.deepEqual(await f.evaluate('indexedDB.databases()'),[]);
+    else assert.equal(await f.evaluate(`import('./${f.storage}').then(async m=>(await m.createLocalRouteStorage().read()).meta.entries.length)`),0);
+    assert.equal(await f.js(`document.getElementById('site-route').innerHTML`),catalog);
+    assert.equal((await snapshots()).estimatedRide.status,'unavailable','actual replay never installs a modeled local estimate');
+    const url=await f.js('location.href');
+    await f.js(`document.getElementById('replay-comparison').open=true;
+      document.getElementById('replay-plan').value=${JSON.stringify(r.currentRevisionId)};
+      document.getElementById('replay-plan').dispatchEvent(new Event('change'));
+      document.getElementById('replay-basis').value='distance';
+      document.getElementById('replay-basis').dispatchEvent(new Event('change'));
+      document.getElementById('replay-apply').click()`);
+    assert.match(await f.js(`document.getElementById('replay-selection').textContent`),/acknowledge/);
+    await f.js(`document.getElementById('replay-ack').checked=true;document.getElementById('replay-apply').click()`);
+    assert.equal(await f.js(`document.getElementById('replay-difference').dataset.status`),'available');
+    assert.match(await f.js(`document.getElementById('replay-selection').textContent`),new RegExp(r.currentRevisionId));
+    assert.match(await f.js(`document.getElementById('replay-alignment').textContent`),/partial overlap is not a whole-route match/);
+    if(name==='D4S') assert.match(await f.js(`document.getElementById('replay-assumptions').textContent`),/model unavailable/);
+    await f.js(`document.getElementById('replay-seek').focus()`);
+    for(let i=0;i<2;i++) for(const type of ['keyDown','keyUp'])
+      await f.cmd('Input.dispatchKeyEvent',{type,key:'ArrowRight',code:'ArrowRight',windowsVirtualKeyCode:39});
+    assert.equal((await snapshots()).recordedClock.elapsedSeconds,2);
+    assert.match(await f.js(`document.getElementById('replay-powerW').textContent`),/212 W.*GPX decoded sample/);
+    assert.match(await f.js(`document.getElementById('replay-cadenceRpm').textContent`),/unavailable/);
+    await f.js(`document.getElementById('replay-scenario').value='hard';document.getElementById('replay-scenario').dispatchEvent(new Event('change'))`);
+    assert.match(await f.js(`document.getElementById('replay-powerW').textContent`),/212 W.*GPX decoded sample/);
+    assert.equal((await snapshots()).recordedClock.elapsedSeconds,2);
+    assert.deepEqual(await f.js(`['replay-map','replay-profile','replay-position'].map(id=>document.getElementById(id).dataset.distance)`),
+      Array(3).fill(String((await snapshots()).distanceM)));
+    await f.js(`document.getElementById('replay-rate').value='4';document.getElementById('replay-rate').dispatchEvent(new Event('change'));
+      document.getElementById('replay-overview').click()`);
+    assert.equal((await snapshots()).recordedClock.elapsedSeconds,2);
+    await f.js(`document.getElementById('replay-play').click()`);
+    await until(async()=> (await snapshots()).recordedClock.elapsedSeconds>2);
+    await f.js(`document.getElementById('replay-play').click()`);
+    assert.equal((await snapshots()).phase,'paused');
+    // A changed basis (and changed revision) cannot silently reuse the grant.
+    await f.js(`document.getElementById('replay-basis').value='elapsed';document.getElementById('replay-basis').dispatchEvent(new Event('change'))`);
+    assert.equal(await f.js(`document.getElementById('replay-ack').checked`),false);
+    assert.equal(await f.js(`document.getElementById('replay-difference').dataset.status`),'unavailable');
+    await f.js(`document.getElementById('replay-ack').checked=true;document.getElementById('replay-apply').click()`);
+    assert.match(await f.js(`document.getElementById('replay-difference').textContent`),/planned start/);
+    await f.js(`document.getElementById('replay-plan').selectedIndex=1;document.getElementById('replay-plan').dispatchEvent(new Event('change'))`);
+    assert.equal(await f.js(`document.getElementById('replay-ack').checked`),false);
+    assert.equal(await f.js('location.href'),url);
+    assert.ok(await f.js('document.documentElement.scrollWidth<=innerWidth'));
+    assert.equal(f.network.length,count,'upload, replay, matching, scenario and controls need no requests');
+    await f.action('Delete this file');
+    await until(()=>f.js(`document.getElementById('local-status').textContent.includes('deleted')`));
+    assert.equal(await f.js(`document.getElementById('recorded-replay').textContent`),'');
+    assert.equal((await snapshots()).recordedClock.status,'unavailable');
+    assert.match(await f.js(`document.getElementById('site-notice').textContent`),/unavailable/);
+  }
+  for(const r of [...f.requests,...f.network]) {
+    assert.equal(r.method,'GET');assert.ok(!r.body&&!r.postData);assert.ok(!r.url.startsWith('https:'));
+    assert.doesNotMatch(r.url,/private-replay|Private|powerW|heartRate|user:/);
   }
   assert.deepEqual(f.exceptions,[]);
 });
@@ -220,6 +315,7 @@ test('packaged actual stale tab grant cannot cross delete-all; peer deletion cle
             window.grantEntered=true;
             grantGate.promise.then(()=>listener.call(request,event));
           });
+
         }});
       }
       return request;
@@ -238,6 +334,158 @@ test('packaged actual stale tab grant cannot cross delete-all; peer deletion cle
   assert.equal(await peer.js(`document.getElementById('route-briefing').textContent`),'');
   assert.doesNotMatch(await peer.js(`document.getElementById('route-pace').textContent`),/Synthetic private sentinel/);
   assert.deepEqual(peer.exceptions(),[]);assert.deepEqual(f.exceptions,[]);
+});
+
+test('packaged paused/missing-time recordings retain honest sample and gap controls without continuous elevation model',async t=>{
+  const f=await fixture(t);await f.navigate(f.base+'index.html?area=explore&view=briefing');
+  const point=(i)=>`<trkpt lat="45" lon="11.1234567">`+
+    `<time>${new Date(Date.UTC(2026,0,1)+[0,1000,2000,42000,43000][i]).toISOString()}</time>`+
+    '<extensions><t:TrackPointExtension><t:speed>0</t:speed><t:power>0</t:power></t:TrackPointExtension></extensions></trkpt>';
+  const bytes='<gpx xmlns="http://www.topografix.com/GPX/1/1" xmlns:t="http://www.garmin.com/xmlschemas/TrackPointExtension/v1" version="1.1">'+
+    `<trk><name>Paused sample</name><trkseg>${Array.from({length:5},(_,i)=>point(i)).join('')}</trkseg></trk></gpx>`;
+  await f.upload(bytes,'paused.gpx');
+  await until(()=>f.js(`document.getElementById('replay-powerW')?.textContent.includes('0 W')`));
+  assert.match(await f.js(`document.getElementById('replay-position').textContent`),/raw elevation unavailable/);
+  await f.evaluate(`import('./${f.session}').then(m=>m.routePlayback.seekRecordedSeconds(1.5))`);
+  assert.match(await f.js(`document.getElementById('replay-position').textContent`),/paused 1.5 s/);
+  assert.match(await f.js(`document.getElementById('replay-powerW').textContent`),/unavailable/);
+  await f.evaluate(`import('./${f.session}').then(m=>m.routePlayback.seekRecordedSeconds(20))`);
+  assert.match(await f.js(`document.getElementById('replay-position').textContent`),/Position unavailable/);
+  assert.equal(await f.js(`document.querySelector('#replay-map circle').getAttribute('visibility')`),'hidden');
+  await f.upload(bytes.replace(/<time>[^<]+<\/time>/,''),'missing-time.gpx');
+  assert.match(await f.js(`document.getElementById('replay-unavailable').textContent`),/Missing times are not invented/);
+  assert.equal(await f.js(`document.getElementById('replay-play')`),null);
+  assert.deepEqual(f.exceptions,[]);
+});
+
+test('packaged 375px same-recording navigation preserves exact source time, pauses, and never lends time to a different recording',async t=>{
+  const f=await fixture(t);
+  await f.cmd('Emulation.setDeviceMetricsOverride',{width:375,height:900,deviceScaleFactor:1,mobile:true});
+  await f.navigate(f.base+'index.html?area=explore&view=briefing');
+  await f.upload(clockFixtureGPX([0,1,2,3,4,5],{stationary:true}),'stationary-navigation.gpx');
+  const snapshot=()=>f.evaluate(`import('./${f.session}').then(m=>m.routePlayback.getSnapshot())`);
+  const seek=n=>f.evaluate(`import('./${f.session}').then(m=>m.routePlayback.seekRecordedSeconds(${n}))`);
+  const nav=label=>f.js(`[...document.querySelectorAll('.site-nav a')].find(a=>a.textContent===${JSON.stringify(label)}).click()`);
+  await until(async()=> (await snapshot()).recordedClock.status==='available');
+  const id=(await snapshot()).identity.routeId;
+  await seek(3);
+  assert.match(await f.js(`document.getElementById('replay-powerW').textContent`),/^103 W/);
+  await f.js(`[...document.querySelectorAll('#site-content a')].find(a=>a.textContent==='Recorded replay / planned comparison').click()`);
+  assert.equal((await snapshot()).recordedClock.elapsedSeconds,3);
+  assert.equal((await snapshot()).phase,'paused');
+  assert.match(await f.js(`document.getElementById('replay-powerW').textContent`),/^103 W/);
+  await seek(3.5);
+  await nav('Prepare');
+  assert.equal((await snapshot()).recordedClock.elapsedSeconds,3.5);
+  assert.equal((await snapshot()).phase,'paused');
+  await nav('Explore');
+  assert.equal((await snapshot()).recordedClock.elapsedSeconds,3.5);
+  assert.equal((await snapshot()).recordedClock.sampleAgeSeconds,.5);
+  assert.match(await f.js(`document.getElementById('replay-powerW').textContent`),/unavailable/);
+  await f.js('history.back()');
+  await until(()=>f.js(`document.getElementById('site-heading').textContent==='Prepare for the ride'`));
+  assert.equal((await snapshot()).recordedClock.elapsedSeconds,3.5);
+  await f.js('history.forward()');
+  await until(()=>f.js(`document.getElementById('site-heading').textContent==='Explore the route'`));
+  assert.equal((await snapshot()).recordedClock.elapsedSeconds,3.5);
+  // Play and leave in the same event task: no RAF can advance before navigation.
+  await f.js(`document.getElementById('replay-play').click();
+    [...document.querySelectorAll('.site-nav a')].find(a=>a.textContent==='Prepare').click()`);
+  assert.equal((await snapshot()).phase,'paused');
+  assert.equal((await snapshot()).recordedClock.elapsedSeconds,3.5);
+  await nav('Explore');
+  assert.equal((await snapshot()).phase,'paused');
+  await f.evaluate(`import('./${f.session}').then(m=>m.routePlayback.seekDistance(0))`);
+  assert.equal((await snapshot()).recordedClock.elapsedSeconds,0,'explicit pause-distance seek still selects first arrival');
+  await seek(3);
+  await f.js(`document.getElementById('replay-restart').click()`);
+  assert.equal((await snapshot()).recordedClock.elapsedSeconds,0,'restart is an intentional source-time reset');
+  await seek(3.5);
+  await f.upload(clockFixtureGPX([0,1,2,3,4,5],{stationary:true,powerBase:700}),'different-recording.gpx');
+  await until(async()=> (await snapshot()).identity?.routeId!==id);
+  assert.equal((await snapshot()).recordedClock.elapsedSeconds,0);
+  assert.match(await f.js(`document.getElementById('replay-powerW').textContent`),/^700 W/);
+  assert.equal((await snapshot()).phase,'ready');
+  assert.deepEqual(f.exceptions,[]);
+});
+
+test('packaged timestamp gap excludes its chord, splits outline, and declines ambiguous seek and inside-gap comparison',async t=>{
+  const f=await fixture(t);await f.navigate(f.base+'index.html?area=explore&view=briefing');
+  await f.upload(clockFixtureGPX([0,1,62,63,64,65]),'timestamp-gap.gpx');
+  const snapshot=()=>f.evaluate(`import('./${f.session}').then(m=>m.routePlayback.getSnapshot())`);
+  const seek=n=>f.evaluate(`import('./${f.session}').then(m=>m.routePlayback.seekRecordedSeconds(${n}))`);
+  await until(async()=> (await snapshot()).recordedClock.status==='available');
+  assert.deepEqual((await snapshot()).chapters,[]);
+  assert.equal(await f.js(`document.querySelector('#replay-map path').getAttribute('d').split('M').length-1`),2);
+  await seek(1);const before=(await snapshot()).distanceM;
+  await seek(62);assert.equal((await snapshot()).distanceM,before);
+  assert.match(await f.js(`document.getElementById('replay-position').textContent`),/timestamp\/coordinate gaps excluded/);
+  await seek(65);
+  assert.ok(Math.abs((await snapshot()).distanceM-6371000*Math.PI/180*.0004)<1e-6);
+  await seek(63.5);
+  await f.evaluate(`import('./${f.session}').then(m=>m.routePlayback.seekDistance(${before}))`);
+  assert.equal((await snapshot()).recordedClock.elapsedSeconds,63.5);
+  assert.match(await f.js(`document.getElementById('replay-position').textContent`),/Distance seek unavailable at collapsed gap/);
+  await seek(30);
+  assert.equal((await snapshot()).distanceM,before);
+  assert.match(await f.js(`document.getElementById('replay-position').textContent`),/Current distance unavailable inside gap/);
+  assert.equal(await f.js(`document.querySelector('#replay-map circle').getAttribute('visibility')`),'hidden');
+  await f.js(`document.getElementById('replay-comparison').open=true;
+    document.getElementById('replay-plan').selectedIndex=1;
+    document.getElementById('replay-plan').dispatchEvent(new Event('change'));
+    document.getElementById('replay-basis').value='distance';
+    document.getElementById('replay-basis').dispatchEvent(new Event('change'));
+    document.getElementById('replay-ack').checked=true;document.getElementById('replay-apply').click()`);
+  assert.equal(await f.js(`document.getElementById('replay-difference').dataset.status`),'unavailable');
+  assert.match(await f.js(`document.getElementById('replay-difference').textContent`),/position unavailable in timestamp\/coordinate gap/);
+  assert.deepEqual(f.exceptions,[]);
+});
+
+test('packaged 375px missing-elevation fallback and replay share timestamp/spatial boundaries and FIT point indices',async t=>{
+  const f=await fixture(t);
+  await f.cmd('Emulation.setDeviceMetricsOverride',{width:375,height:900,deviceScaleFactor:1,mobile:true});
+  await f.navigate(f.base+'index.html?area=explore&view=briefing');
+  const noElevation=xml=>xml.replace(/<ele>[^<]+<\/ele>/g,'');
+  const continuous=noElevation(clockFixtureGPX([0,1,2,3,4,5]));
+  const timedGap=noElevation(clockFixtureGPX([0,1,62,63,64,65]));
+  // Keep the new location after the jump, rather than invent a return edge.
+  const spatialGap=continuous.replace(/lat="([^"]+)"/g,(all,lat)=>
+    `lat="${Number(lat)>=45.0002 ? Number(lat)+.02 : lat}"`);
+  const cases=[
+    ['noele-continuous.gpx',continuous,[6]],
+    ['noele-timestamp-gap.gpx',timedGap,[2,4]],
+    ['noele-spatial-gap.gpx',spatialGap,[2,4]],
+    // Sample 2 has no coordinate. Geometry indices after it differ from sample
+    // indices: both renderers must preserve all 39 actual geometry vertices.
+    ['missing-coordinate.fit',syntheticFIT({recording:true,gap:true,missing:true}),[2,37]],
+  ];
+  for(const [name,bytes,expected] of cases) {
+    await f.upload(bytes,name);
+    await until(()=>f.js(`document.getElementById('local-outline') && document.getElementById('replay-map')`));
+    assert.ok(await f.js(`!document.getElementById('local-details').hidden && !document.getElementById('recorded-replay').hidden`));
+    const runs=await f.js(`(()=>{
+      const vertices=selector=>[...document.querySelectorAll(selector)].flatMap(p=>
+        p.getAttribute('d').split('M').slice(1).map(run=>
+          run.trim().split(/\\s*L\\s*/).map(pair=>pair.split(',').map(Number))));
+      return {fallback:vertices('#local-outline path'),replay:vertices('#replay-map path')};
+    })()`);
+    assert.deepEqual(runs.fallback.map(run=>run.length),expected,name);
+    assert.deepEqual(runs.replay,runs.fallback,`${name}: identical geometry indices/vertices and gap boundaries`);
+    assert.match(await f.js(`document.getElementById('local-details').textContent`),/gaps are not joined/);
+    assert.ok(await f.js('document.documentElement.scrollWidth<=innerWidth'));
+    if(name==='noele-timestamp-gap.gpx') {
+      await f.evaluate(`import('./${f.session}').then(m=>m.routePlayback.seekRecordedSeconds(30))`);
+      assert.match(await f.js(`document.getElementById('replay-position').textContent`),/Current distance unavailable inside gap/);
+    }
+    // Avoid library capacity influencing the boundary fixtures.
+    await f.action('Delete this file');
+    await until(()=>f.js(`document.getElementById('local-status').textContent.includes('deleted')`));
+    assert.equal(await f.js(`document.getElementById('local-outline')`),null);
+  }
+  await f.upload(timedGap.replace(/<time>[^<]+<\/time>/,''),'noele-partial-time.gpx');
+  assert.equal(await f.js(`document.getElementById('local-outline')`),null);
+  assert.match(await f.js(`document.getElementById('local-details').textContent`),/Recording outline unavailable without a complete timestamp replay model/);
+  assert.deepEqual(f.exceptions,[]);
 });
 
 test('packaged quota abort keeps memory, cancel stays responsive, old local flyover link cannot start provider',async t=>{
@@ -551,6 +799,7 @@ test('packaged global Preferences Forget clears recording, pending committed sav
   for(const b of [f,peer]) {
     assert.equal(await b.js(`document.getElementById('local-details').textContent`),'');
     assert.equal(await b.js(`document.getElementById('route-briefing').textContent`),'');
+    assert.equal(await b.js(`document.getElementById('recorded-replay').textContent`),'');
     assert.doesNotMatch(await b.js(`document.getElementById('local-files').textContent`),/global-recording/);
   }
   const pref=f.files.find(p=>p.startsWith('js/preference-storage.'));

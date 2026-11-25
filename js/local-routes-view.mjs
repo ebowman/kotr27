@@ -18,7 +18,7 @@ export function installLocalRoutes(parent,{open,changed,removed,storageBarrier=(
     'Files, names, original metadata and telemetry stay on this device. No uploads, external lookups or local-route 3D.',root);
   node('p','Default: document memory only (lost on reload). Remember is explicit per file, stored in IndexedDB for up to 90 days. '+
     'Local links work only in this browser with a remembered file; they are not portable or public share links. '+
-    'Recorded samples are retained separately; recorded replay is not yet available. Session decoded budget: 40,000 geometry points across files. No offline pack is installed.',root);
+    'Recorded samples are retained separately; complete timestamps enable private recorded replay below. Session decoded budget: 40,000 geometry points across files. No offline pack is installed.',root);
   const label=node('label','Import GPX or FIT for this session',root);
   const input=node('input','',label,'local-file'); input.type='file'; input.accept='.gpx,.fit';
   const cancel=node('button','Cancel import',root,'local-cancel'); cancel.type='button'; cancel.disabled=true;
@@ -213,7 +213,7 @@ export function installLocalRoutes(parent,{open,changed,removed,storageBarrier=(
     if(isLocalId(id) && meta.entries.some(e=>e.id===id)) await load(id);
     root.dataset.ready='true';
   })();
-  function show(state) {
+  function show(state,recording=null) {
     root.hidden=state.area!=='explore';
     const r=memory.get(state.routeId); selected=r?.id??null;
     details.hidden=!r || state.area!=='explore';
@@ -223,10 +223,22 @@ export function installLocalRoutes(parent,{open,changed,removed,storageBarrier=(
     node('p','Not an organizer route. Available only in this browser; no public sharing, external map or 3D is enabled for local files.',details);
     for(const text of r.decoded.notices) node('p',text,details);
     node('p',`${r.decoded.points.length} geometry points · ${r.decoded.samples.length} separate samples · ${r.decoded.segments} source segments. `+
-      'Only supported continuous geometry gets shared distance animation and modeled estimates below. Animation is not recorded replay.',details);
+      'Continuous geometry supports shared briefing analysis. Recorded replay uses source timestamps separately; missing times are never invented.',details);
     if(r.analysis.status==='supported') return;
     node('p','Continuous analysis unavailable: '+[...new Set(r.analysis.issues.map(i=>i.code))].join(', ')+
       '. Outline only; gaps are not joined, missing heights are not filled.',details);
+    // Recording edges belong to the same timestamp-qualified model as replay.
+    // Never reconstruct them using geometry alone, sample-index guesses or a
+    // second time threshold (coordinate-less FIT samples shift point indices).
+    let supportedEdges=null;
+    if(r.decoded.kind==='recording') {
+      if(recording?.status!=='available' || recording.adapter.identity.routeId!==r.id ||
+        recording.adapter.identity.revisionId!==r.revisionId) {
+        node('p','Recording outline unavailable without a complete timestamp replay model. No continuous fallback is drawn across unknown recording gaps.',details);
+        return;
+      }
+      supportedEdges=recording.supportedPointEdges;
+    }
     const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
     svg.id='local-outline';svg.setAttribute('viewBox','0 0 400 400');svg.setAttribute('role','img');
     svg.setAttribute('aria-label','Local route outline. Disconnected segments and gaps are not joined.');
@@ -234,8 +246,10 @@ export function installLocalRoutes(parent,{open,changed,removed,storageBarrier=(
     // No decimation across a gap: render independent runs, then cap display
     // vertices inside each run. Original geometry/samples remain untouched.
     const runs=[];let run=[];
-    for(const p of points) {
-      if(run.length && (p.breakBefore || horizontalDistanceM(run.at(-1),p)>500)) {runs.push(run);run=[];}
+    for(const [i,p] of points.entries()) {
+      const gap=supportedEdges ? !supportedEdges.has(i) :
+        p.breakBefore || run.length && horizontalDistanceM(run.at(-1),p)>500;
+      if(run.length && gap) {runs.push(run);run=[];}
       run.push(p);
     }
     if(run.length)runs.push(run);

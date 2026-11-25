@@ -69,6 +69,14 @@ a { color:inherit; text-underline-offset:.2em }
 #briefing-seek { width:100%; display:block }
 #briefing-position { font-weight:700 }
 #briefing-controls { position:relative }
+#recorded-replay { margin:2rem 0; min-width:0; overflow-wrap:anywhere }
+#recorded-replay input { font:inherit; max-width:100%; min-height:44px }
+#recorded-replay input[type="checkbox"] { min-width:1.2rem; vertical-align:middle }
+#recorded-replay select, #replay-seek { width:100% }
+#replay-map { display:block; width:100%; max-width:32rem; background:#eff1df }
+#replay-profile { display:block; width:100%; height:10rem; background:#eff1df; cursor:crosshair }
+#replay-signals dt { font-weight:700 }
+#replay-signals dd { margin:0 0 .75rem }
 #route-comparison { margin:2rem 0; min-width:0; overflow-wrap:anywhere }
 #route-comparison fieldset { min-width:0; margin:1rem 0; border:1px solid var(--line) }
 #route-comparison fieldset label { min-height:44px; padding:.4rem }

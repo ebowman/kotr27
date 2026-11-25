@@ -30,7 +30,7 @@ export function createRoutePlayback({loadRoute, animationDurationSeconds = 150,
   reducedMotion = false, hidden = false} = {}) {
   if (typeof loadRoute !== 'function' || !finite(animationDurationSeconds) ||
       animationDurationSeconds <= 0) throw TypeError('Expected loader and positive animation duration');
-  let route = null, last = null, originM = 0, elapsedSeconds = 0;
+  let route = null, last = null, originM = 0, originRecorded = 0, elapsedSeconds = 0;
   let state = {
     phase: 'idle', requestId: 0, selection: null, identity: null,
     position: null, distanceM: null, totalDistanceM: null, chapterId: null,
@@ -39,11 +39,14 @@ export function createRoutePlayback({loadRoute, animationDurationSeconds = 150,
     reducedMotion: Boolean(reducedMotion), hidden: Boolean(hidden),
     renderer: {requestId: 0, enabled: false, status: 'standby'},
     estimatedRide: unavailable('No estimate supplied'),
-    recordedClock: unavailable('No recording supplied'), error: null,
+    recordedClock: unavailable('No recording supplied'), error: null, seekNotice: null,
   };
   let snapshot = copy(state);
   function publish() { snapshot = copy(state); return snapshot; }
-  function rebase() { last = null; originM = state.distanceM ?? 0; elapsedSeconds = 0; }
+  function rebase() {
+    last = null; originM = state.distanceM ?? 0;
+    originRecorded = state.recordedClock.elapsedSeconds ?? 0; elapsedSeconds = 0;
+  }
   function pause() {
     if (state.phase === 'playing') state.phase = 'paused';
     rebase();
@@ -60,23 +63,28 @@ export function createRoutePlayback({loadRoute, animationDurationSeconds = 150,
     state.error = {code, message: 'Selected route playback unavailable. Retry or choose a route explicitly.'};
     return publish();
   }
-  function position(distanceM) {
-    const p = route.positionAt(distanceM);
+  function position(distanceM, recordedSeconds = null) {
+    const replay=route.recordedReplay;
+    const sourceSecond=replay ? recordedSeconds ?? replay.secondAtDistance(distanceM) : null;
+    if(replay && sourceSecond===null)throw TypeError('Ambiguous recorded distance');
+    const recorded = replay ? replay.atSecond(sourceSecond) :
+      route.recordedAtDistance?.(distanceM) ?? unavailable('No recording supplied');
+    if(replay)distanceM=recorded.distanceM;
+    const p = replay ? {...recorded.position,distanceM} : route.positionAt(distanceM);
     if (!p || p.distanceM !== distanceM) throw TypeError('Adapter must preserve exact distance');
     const index = state.chapters.findIndex(c => distanceM >= c.startM &&
       (distanceM < c.endM || distanceM === state.totalDistanceM && c.endM === distanceM));
     const estimated = route.estimatedAtDistance?.(distanceM) ?? unavailable('No estimate supplied');
-    const recorded = route.recordedAtDistance?.(distanceM) ?? unavailable('No recording supplied');
     // Evaluate all projections before installing a new position, atomically.
     const projected = copy({position: p, estimatedRide: estimated, recordedClock: recorded});
-    Object.assign(state, projected, {distanceM, chapterId: state.chapters[index]?.id ?? null,
+    Object.assign(state, projected, {distanceM, seekNotice:null, chapterId: state.chapters[index]?.id ?? null,
       previousChapterId: state.chapters[index - 1]?.id ?? null,
       nextChapterId: index < 0 ? null : state.chapters[index + 1]?.id ?? null});
   }
   function validateRoute(value, selection) {
     if (!value || value.identity?.routeId !== selection.routeId ||
         value.identity?.revisionId !== selection.revisionId ||
-        !finite(value.distanceM) || value.distanceM <= 0 ||
+        !finite(value.distanceM) || value.distanceM < 0 || value.distanceM===0 && !value.recordedReplay ||
         typeof value.positionAt !== 'function' || !Array.isArray(value.chapters))
       throw TypeError('Expected matching complete playback route');
     const ids = new Set();
@@ -98,7 +106,7 @@ export function createRoutePlayback({loadRoute, animationDurationSeconds = 150,
     pause(); route = null;
     Object.assign(state, {requestId, selection: selected, identity: null, phase: 'loading',
       position: null, distanceM: null, totalDistanceM: null, chapterId: null,
-      chapters: [], previousChapterId: null, nextChapterId: null, error: null,
+      chapters: [], previousChapterId: null, nextChapterId: null, error: null, seekNotice:null,
       estimatedRide: unavailable('Route loading'), recordedClock: unavailable('Route loading'),
       cameraMode: 'overview',
       renderer: {requestId: state.renderer.requestId + 1, enabled: false, status: 'standby'}});
@@ -117,7 +125,8 @@ export function createRoutePlayback({loadRoute, animationDurationSeconds = 150,
       state.identity = copy(route.identity);
       state.totalDistanceM = route.distanceM;
       state.chapters = copy(route.chapters);
-      position(chapter?.startM ?? distance);
+      position(chapter?.startM ?? distance,
+        route.recordedReplay && chapterId===null && selection?.distanceM==null ? 0 : null);
       // Link restoration and route selection are never animation instructions.
       state.phase = chapterId !== null || distance > 0 ? 'paused' : 'ready';
       state.cameraMode = chapterId !== null || distance > 0 ? 'follow' : 'overview';
@@ -133,6 +142,10 @@ export function createRoutePlayback({loadRoute, animationDurationSeconds = 150,
     pause();
     if (!finite(value) || strict && (value < 0 || value > state.totalDistanceM))
       return publish(); // Invalid UI draft pauses but never changes position.
+    if(route.recordedReplay?.secondAtDistance(clamp(value,state.totalDistanceM))===null) {
+      state.seekNotice='Distance seek unavailable at collapsed gap endpoints. Choose recorded elapsed or a sample; no gap distance inferred.';
+      return publish();
+    }
     try {
       position(clamp(value, state.totalDistanceM));
       state.phase = 'paused'; state.cameraMode = 'follow'; rebase();
@@ -155,10 +168,18 @@ export function createRoutePlayback({loadRoute, animationDurationSeconds = 150,
         throw TypeError('Replacement must retain exact route identity and distance');
       pause();
       route = value;
-      try { position(state.distanceM); return publish(); }
+      try { position(state.distanceM,route.recordedReplay ? state.recordedClock.elapsedSeconds : null); return publish(); }
       catch { return fail('route-projection'); }
     },
     seekDistance,
+    seekRecordedSeconds(value) {
+      if(!usable() || !route.recordedReplay || !finite(value))return snapshot;
+      pause();
+      try {
+        position(0,value);state.phase='paused';state.cameraMode='follow';rebase();
+        return publish();
+      } catch { return fail('route-projection'); }
+    },
     selectChapter,
     nextChapter: () => selectChapter(state.nextChapterId),
     previousChapter: () => selectChapter(state.previousChapterId),
@@ -168,7 +189,8 @@ export function createRoutePlayback({loadRoute, animationDurationSeconds = 150,
           !['ready', 'flat'].includes(state.renderer.status)) return snapshot;
       if (state.phase === 'playing') return snapshot;
       try {
-        if (state.distanceM === state.totalDistanceM) position(0);
+        if (route.recordedReplay ? state.recordedClock.elapsedSeconds===route.recordedReplay.durationSeconds :
+          state.distanceM === state.totalDistanceM) position(0,route.recordedReplay ? 0 : null);
         state.phase = 'playing'; state.cameraMode = 'follow'; rebase();
         return publish();
       } catch { return fail('route-projection'); }
@@ -181,13 +203,17 @@ export function createRoutePlayback({loadRoute, animationDurationSeconds = 150,
       if (last === null) { last = now; return snapshot; }
       elapsedSeconds += playbackFrameSeconds(now - last); last = now;
       try {
-        position(Math.min(state.totalDistanceM, originM +
+        if(route.recordedReplay) {
+          // Source elapsed seconds, not route fraction / adjusted movie duration.
+          position(0,originRecorded+elapsedSeconds*state.animationRate);
+        } else position(Math.min(state.totalDistanceM, originM +
           elapsedSeconds * state.totalDistanceM / animationDurationSeconds * state.animationRate));
-        if (state.distanceM === state.totalDistanceM) { pause(); state.phase = 'finished'; }
+        if (route.recordedReplay ? state.recordedClock.elapsedSeconds===route.recordedReplay.durationSeconds :
+          state.distanceM === state.totalDistanceM) { pause(); state.phase = 'finished'; }
         return publish();
       } catch { return fail('route-projection'); }
     },
-    restart: () => seekDistance(0),
+    restart: () => route?.recordedReplay ? api.seekRecordedSeconds(0) : seekDistance(0),
     backToOverview() { pause(); state.cameraMode = 'overview'; return publish(); },
     setCameraMode(mode) {
       if (!cameras.includes(mode)) throw RangeError('Unknown camera mode');
@@ -220,7 +246,7 @@ export function createRoutePlayback({loadRoute, animationDurationSeconds = 150,
         chapters: [], previousChapterId: null, nextChapterId: null, cameraMode: 'overview',
         renderer: {requestId: state.renderer.requestId + 1, enabled: false, status: 'standby'},
         estimatedRide: unavailable('No estimate supplied'),
-        recordedClock: unavailable('No recording supplied'), error: null};
+        recordedClock: unavailable('No recording supplied'), error: null, seekNotice:null};
       return publish();
     },
   };

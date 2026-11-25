@@ -1,5 +1,17 @@
 # Shared route playback · kotr27-800.10
 
+Integration update `.17`: [recorded replay](recorded-replay.md) now uses this
+same controller with an optional `recordedReplay` adapter and
+`seekRecordedSeconds`. Its source-time cursor supports pauses at unchanged
+distance; tick uses accepted seconds × replay rate, **not** route distance /
+animation duration. Distance seeks choose first recorded arrival for ordinary
+pauses, but decline collapsed gap subtotals with an explicit `seekNotice`;
+elapsed/sample seeks remain available. Time seeks can enter pauses. Scenario
+replacement and same-recording view/area navigation preserve recorded elapsed,
+paused; navigation does not imply a seek or restart. Ordinary
+geometry animation and the legacy example semantics below remain unchanged.
+The original standalone/integration boundaries below describe `.10` at delivery.
+
 `js/route-playback.mjs` owns **one distance position** independently of a
 renderer, rider model or browser scheduler. `js/route-playback-adapters.mjs`
 connects the existing revisioned analysis/model and the Semonzo example.

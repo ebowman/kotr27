@@ -104,7 +104,7 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
       'itinerary','trip-planner','trip-planner-view','route-time','route-playback','route-playback-adapters',
       'route-session','route-briefing','route-briefing-view','route-comparison','route-comparison-view',
       'route-pace','route-pace-view','local-route-parser','local-route-worker','local-route-import',
-      'local-route-storage','local-routes-view'].map(n=>`js/${n}.mjs`)];
+      'local-route-storage','local-routes-view','recorded-replay','recorded-replay-view'].map(n=>`js/${n}.mjs`)];
   expected.push(...routeFiles.map(n=>n.replace(/\.[0-9a-f]{24}\./,'.')));
   assert.deepEqual(names.map(n=>n.replace(/\.[0-9a-f]{24}\./,'.')).sort(),expected.sort());
   for (const n of names.filter(n=>n.includes('/'))) {
@@ -137,7 +137,7 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   await edit('js/ride-clock.mjs', 'export function createRideClock', '/* release fixture */ export function createRideClock');
   await build(src, c);
   const cNames = new Set(await files(c));
-  assert.deepEqual([...bNames].filter(n=>!cNames.has(n)).sort(), [...bNames].filter(n=>/\/(?:ride-clock|route-pace-view|site-shell|rider-controls)\./.test(n)).sort());
+  assert.deepEqual([...bNames].filter(n=>!cNames.has(n)).sort(), [...bNames].filter(n=>/\/(?:ride-clock|route-pace-view|recorded-replay|recorded-replay-view|site-shell|rider-controls)\./.test(n)).sort());
   assert.notDeepEqual(await readFile(join(b,'index.html')), await readFile(join(c,'index.html')));
   const marker = async dir => (await readFile(join(dir,'explore.html'),'utf8')).match(/<meta name="kotr-release" content="([a-f0-9]{24})">/)[1];
   const indexMarker = async dir => (await readFile(join(dir,'index.html'),'utf8')).match(/<meta name="kotr-release" content="([a-f0-9]{24})">/)[1];
@@ -179,15 +179,19 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   let shellPrevious = validatorRelease;
   for (const [file, before, after, affected] of [
     ['js/route-analysis.mjs', 'export function analyzeRoute', '/* release fixture */ export function analyzeRoute',
-      /\/(?:route-analysis|route-analysis-loader|trip-planner|trip-planner-view|semonzo-profile|route-time|route-pace|route-pace-view|route-playback-adapters|route-briefing|route-briefing-view|route-comparison-view|local-route-worker|local-route-import|local-routes-view|site-shell|rider-controls|flyover)\./],
+      /\/(?:route-analysis|route-analysis-loader|trip-planner|trip-planner-view|semonzo-profile|route-time|route-pace|route-pace-view|route-playback-adapters|route-briefing|route-briefing-view|route-comparison-view|local-route-worker|local-route-import|local-routes-view|recorded-replay|recorded-replay-view|site-shell|rider-controls|flyover)\./],
     ['js/route-playback.mjs', 'export function createRoutePlayback', '/* release fixture */ export function createRoutePlayback',
-      /\/(?:route-playback|route-session|route-pace-view|route-briefing-view|route-comparison-view|site-shell|rider-controls|flyover)\./],
+      /\/(?:route-playback|route-session|route-pace-view|route-briefing-view|route-comparison-view|recorded-replay-view|site-shell|rider-controls|flyover)\./],
     ['js/route-pace.mjs', 'export function createRoutePace', '/* release fixture */ export function createRoutePace',
-      /\/(?:route-pace|route-pace-view|trip-planner-view|site-shell|rider-controls)\./],
+      /\/(?:route-pace|route-pace-view|trip-planner-view|recorded-replay-view|site-shell|rider-controls)\./],
     ['js/route-pace-view.mjs', 'export function installRoutePace', '/* release fixture */ export function installRoutePace',
       /\/(?:route-pace-view|site-shell|rider-controls)\./],
     ['js/route-briefing.mjs', 'export function briefingAt', '/* release fixture */ export function briefingAt',
-      /\/(?:route-briefing|route-briefing-view|route-comparison-view|local-routes-view|site-shell|rider-controls)\./],
+      /\/(?:route-briefing|route-briefing-view|route-comparison-view|local-routes-view|recorded-replay-view|site-shell|rider-controls)\./],
+    ['js/recorded-replay.mjs', 'export function createRecordedReplay', '/* release fixture */ export function createRecordedReplay',
+      /\/(?:recorded-replay|recorded-replay-view|site-shell|rider-controls)\./],
+    ['js/recorded-replay-view.mjs', 'export function installRecordedReplay', '/* release fixture */ export function installRecordedReplay',
+      /\/(?:recorded-replay-view|site-shell|rider-controls)\./],
     ['js/local-route-parser.mjs','export function parseLocalBytes','/* release fixture */ export function parseLocalBytes',
       /\/(?:local-route-parser|local-route-worker|local-route-import|local-routes-view|site-shell|rider-controls)\./],
     ['js/local-route-storage.mjs','export function createLocalRouteStorage','/* release fixture */ export function createLocalRouteStorage',

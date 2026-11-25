@@ -14,6 +14,8 @@ import { installRouteComparison } from './route-comparison-view.mjs';
 import { comparisonViews } from './route-comparison.mjs';
 import { installLocalRoutes } from './local-routes-view.mjs';
 import { isLocalId } from './local-route-storage.mjs';
+import { createRecordedReplay } from './recorded-replay.mjs';
+import { installRecordedReplay } from './recorded-replay-view.mjs';
 
 const el = id => document.getElementById(id);
 // Common Plan/Explore/pace views run in either shell. Do not lose memory-only
@@ -36,11 +38,12 @@ let catalog = exampleCatalog, planner = null, comparison = null, catalogLoading 
 const profiles = {};
 const pendingProfiles = new Set();
 const playbackFactories = new Map();
+const recordings = new Map();
 let exampleAnalysis;
 function preparePlayback(revisionId) {
   const entry=playbackFactories.get(revisionId);
   if (!entry) return null;
-  const route=entry.make(routePace.model(entry.analysis));
+  const route=entry.make(entry.recorded ? null : routePace.model(entry.analysis));
   registerPlaybackRoute(route);
   return route;
 }
@@ -127,11 +130,21 @@ function reflectPosition(snapshot, chapterId = null) {
 }
 const linkedBriefing = installRouteBriefing(shell, reflectPosition);
 const linkedPace = installRoutePace(shell, riderState, reflectPosition);
+const linkedReplay = installRecordedReplay(shell,{onSeek:reflectPosition,
+  plans:()=>catalog.data.routes.filter(r=>r.kind==='organizer').flatMap(r=>r.revisions.map(revision=>({
+    name:r.name,revisionId:revision.id,source:revision.provenance.source,
+    analysis:()=>profiles[revision.id],
+  }))),
+});
 const localLibrary=installLocalRoutes(shell,{
   storageBarrier:()=>riderState.settled(),
   open(record) {
     profiles[record.revisionId]=record.analysis;
-    if(record.analysis.status==='supported') {
+    const replay=createRecordedReplay(record);
+    if(record.decoded.kind==='recording')recordings.set(record.revisionId,replay);
+    if(replay.status==='available') {
+      playbackFactories.set(record.revisionId,{analysis:record.analysis,recorded:true,make:()=>replay.adapter});
+    } else if(record.analysis.status==='supported') {
       playbackFactories.set(record.revisionId,{analysis:record.analysis,
         make:estimate=>createAnalysisPlaybackRoute(record.analysis,{estimate})});
     }
@@ -139,6 +152,7 @@ const localLibrary=installLocalRoutes(shell,{
   },
   removed(id) {
     const revision=`local-${id.slice(5)}`;
+    linkedReplay.forget(id);recordings.delete(revision);
     delete profiles[revision];playbackFactories.delete(revision);
     unregisterPlaybackRoute(id,revision);routePace.forgetRoute(id);
   },
@@ -248,7 +262,7 @@ function briefing(parent) {
   for (const [k,v] of Object.entries({x1:0,x2:0,y1:0,y2:100,stroke:'#8a3c22','stroke-width':4})) cursor.setAttribute(k,v);
   svg.append(cursor);
 }
-function render(focus = false, notify = true) {
+function render(focus = false, notify = true, {preserveRecording = true} = {}) {
   const active = document.activeElement;
   const activeLink = active?.closest('a')?.href;
   const {state:s, bundle, code, notices} = current;
@@ -305,7 +319,8 @@ function render(focus = false, notify = true) {
   }
   if (bundle && s.area === 'explore') {
     const actions = node('div','',content); actions.className = 'site-actions';
-    for (const [view,label] of (bundle.route.kind==='local' ?
+    for (const [view,label] of (recordings.get(s.revisionId)?.status==='available' ?
+      [['briefing','Recorded replay / planned comparison']] : bundle.route.kind==='local' ?
       [['briefing','Local route briefing'],['clock','Modeled pace (not recorded replay)']] : bundle.route.id === exampleRouteId ?
       [['briefing','Route briefing'],['clock','Example ride clock'],['sensitivity','FTP / weight sensitivity'],['flyover','Optional 3D flyover']] :
       [['briefing','Route briefing'],['clock','Pace / ride clock'],['sensitivity','FTP / weight sensitivity'],
@@ -337,17 +352,30 @@ function render(focus = false, notify = true) {
     flyover.dataset.distance = s.distanceM;
     startFlyover();
   }
-  linkedBriefing.show(current);
-  linkedPace.show(current,bundle?.route.id===exampleRouteId ? exampleAnalysis : null);
-  localLibrary.show(s);
+  const recording=recordings.get(s.revisionId);
+  const geometryView=recording?.status==='available' ? {...current,profile:null} : current;
+  linkedBriefing.show(geometryView);
+  linkedPace.show(geometryView,bundle?.route.id===exampleRouteId ? exampleAnalysis : null);
+  linkedReplay.show(localLibrary.get(s.routeId),recording,s.area==='explore');
+  localLibrary.show(s,recording);
   // The official comparison workspace never retains private analyses/names.
   // Local comparison/replay is a separate capability, not a catalog insertion.
   comparison?.show(s.routeId?.startsWith('user:') ?
     {...current,bundle:null,profile:null,state:{...s,area:'prepare',routeId:null,revisionId:null}} : current);
   if (notify) {
-    if (code === 'ready' && profiles[s.revisionId]?.status !== 'unsupported' && profiles[s.revisionId]) {
-      preparePlayback(s.revisionId);
-      routePlayback.selectRoute(s);
+    if (code === 'ready' && (recording?.status==='available' || profiles[s.revisionId]?.status !== 'unsupported' && profiles[s.revisionId])) {
+      const live=routePlayback.getSnapshot();
+      if(preserveRecording && recording?.status==='available' &&
+        live.identity?.routeId===s.routeId && live.identity?.revisionId===s.revisionId &&
+        live.recordedClock.status==='available') {
+        // Navigation is not a distance seek. Distance loses pause/gap time and
+        // between-sample selection; retain the sole controller's exact cursor.
+        routePlayback.pause();
+      } else {
+        preparePlayback(s.revisionId);
+        routePlayback.selectRoute(recording?.status==='available' ?
+          {routeId:s.routeId,revisionId:s.revisionId} : s);
+      }
     } else routePlayback.clear();
   }
   for (const listener of listeners) listener(current);
@@ -403,7 +431,9 @@ export function navigateSelection(patch, {replace = false, focus = true, notify 
   if (!isLocalId(next.routeId)) riderState.select(href);
   history[replace ? 'replaceState' : 'pushState'](null, '', href);
   current = resolveLocation();
-  render(focus, notify);
+  render(focus, notify, {preserveRecording:
+    snapshot.identity?.routeId===next.routeId && snapshot.identity?.revisionId===next.revisionId &&
+    !Object.hasOwn(patch,'distanceM') && !Object.hasOwn(patch,'chapterId')});
 }
 el('site-day').onchange = e => navigateSelection({dayId:e.target.value || null, variantId:null, routeId:null, revisionId:null});
 el('site-variant').onchange = e => navigateSelection({variantId:e.target.value || null, routeId:null, revisionId:null});

@@ -4,8 +4,10 @@ Explore → **Private local routes & recordings** accepts one native file input
 at a time. The default is document memory, not localStorage/sessionStorage.
 There is no upload, analytics, remote decoding, DEM lookup or local-route map
 provider. First-party SVG and the existing shared briefing/pace/playback
-controller are used. A recording's animation remains **distance animation**;
-recorded replay belongs to `.17`.
+controller are used. `.17` now adds [timestamp-based recorded replay and
+explicit planned comparison](recorded-replay.md). Files without complete
+timestamps never get an invented replay clock; supported geometry remains
+available separately.
 
 ## Decoder audit and supported subset
 
