@@ -37,7 +37,7 @@ export function readSelection(input, catalog, profiles = {}, exampleId = 'semonz
     } else state.distanceM = Number(legacySeek[1]);
   }
   if (state.routeId?.startsWith('user:'))
-    return fail('local', 'Available only in this browser. Local library/import is not available in this release; this link cannot be shared or replaced with an official route.');
+    return fail('local', 'Available only in this browser. Open the local library in Explore or import again; this link cannot be shared or replaced with an official route.');
   for (const field of ['dayId','variantId','routeId','revisionId']) {
     if (state[field] && !publicId(state[field])) return fail('invalid', 'This route link cannot be opened: invalid public identifier.');
   }

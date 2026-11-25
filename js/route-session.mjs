@@ -40,6 +40,10 @@ export const routePlayback = Object.fromEntries(Object.entries(engine).map(([nam
 export function registerPlaybackRoute(route) {
   routes.set(`${route.identity.routeId}:${route.identity.revisionId}`, route);
 }
+export function unregisterPlaybackRoute(routeId,revisionId) {
+  routes.delete(`${routeId}:${revisionId}`);
+  if(engine.getSnapshot().identity?.routeId===routeId) routePlayback.clear();
+}
 export function subscribePlayback(listener) {
   listeners.add(listener); listener(engine.getSnapshot());
   return () => listeners.delete(listener);

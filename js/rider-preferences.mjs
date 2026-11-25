@@ -66,6 +66,7 @@ export function createRiderPreferences({storage, now = Date.now, token = () => c
     }
   }
   function remove(categories, type) {
+    let confirmed=false;
     epoch++;
     const generation = epoch;
     for (const category of categories) authority[category] = null;
@@ -82,6 +83,7 @@ export function createRiderPreferences({storage, now = Date.now, token = () => c
         const result = await apply(all
           ? {type, versions:{rider:token(), preferences:token()}}
           : {type, category:categories[0], nextVersion:token()});
+        confirmed=true;
         for (const category of categories) {
           // A revoke result can update only its OWN observation, not authority.
           observed[category] = (all ? result[category] : result).consentVersion;
@@ -100,7 +102,7 @@ export function createRiderPreferences({storage, now = Date.now, token = () => c
         announce();
         emit(all);
       } finally { pendingRemovals--; }
-    }, true);
+    }, true).then(()=>({confirmed,message:status}));
   }
   const ready = serial(async () => {
     const generation = epoch;

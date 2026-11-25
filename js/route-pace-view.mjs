@@ -93,12 +93,13 @@ export function installRoutePace(parent, preferences, onSeek) {
   sens('div','comparisons','',sc);
   let a, name, model, clock, selectedTarget, sensitivityKey, preferenceState=preferences.snapshot();
   let builds=0, updateSensitivity, sensitivityLoader;
+  const sensitivityCache=new Map();
   root.dataset.meshBuilds='0';
   function refreshSensitivity() {
     if (!a || root.hidden || !sensitivity.open) { updateSensitivity?.cancel(); return; }
     if (!updateSensitivity) {
       sensitivityLoader ??= import('./climb-sensitivity-view.mjs').then(api=>{
-        updateSensitivity=api.installSensitivity(null,{lookup,onBuild:()=>{
+        updateSensitivity=api.installSensitivity(null,{lookup,cache:sensitivityCache,onBuild:()=>{
           root.dataset.meshBuilds=String(++builds);
         }});
         // Read CURRENT selection/input after loading, never a captured draft.
@@ -229,7 +230,19 @@ export function installRoutePace(parent, preferences, onSeek) {
     const next=resolved.profile?.identity ? resolved.profile : exampleAnalysis;
     root.hidden=resolved.code!=='ready' || resolved.state.area!=='explore' ||
       ['compare','skyline','radial'].includes(resolved.state.view) || !next;
-    if (root.hidden) { updateSensitivity?.cancel(); return; }
+    if (root.hidden) {
+      updateSensitivity?.cancel();
+      if(a?.routeId?.startsWith('user:')) {
+        a=null;model=null;clock=null;sensitivityKey=null;selectedTarget=null;name='';
+        heading.textContent='Pace and ride clock';sensName.textContent='';
+        for(const e of [summary,position,clockText,assumptions,comparisons,chapterRows,stopChapter,target]) {
+          e.replaceChildren();for(const key of Object.keys(e.dataset))delete e.dataset[key];
+        }
+        updateSensitivity?.invalidate('Local route no longer active.');
+        sensitivityCache.clear();
+      }
+      return;
+    }
     name=resolved.bundle.route.name;
     heading.textContent=`${name} · Pace and ride clock`;
     if (a!==next) {

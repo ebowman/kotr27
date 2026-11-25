@@ -103,7 +103,8 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
       'semonzo-profile','route-analysis','route-analysis-loader','route-pack-contract','route-catalog','example-catalog','route-state','site-shell',
       'itinerary','trip-planner','trip-planner-view','route-time','route-playback','route-playback-adapters',
       'route-session','route-briefing','route-briefing-view','route-comparison','route-comparison-view',
-      'route-pace','route-pace-view'].map(n=>`js/${n}.mjs`)];
+      'route-pace','route-pace-view','local-route-parser','local-route-worker','local-route-import',
+      'local-route-storage','local-routes-view'].map(n=>`js/${n}.mjs`)];
   expected.push(...routeFiles.map(n=>n.replace(/\.[0-9a-f]{24}\./,'.')));
   assert.deepEqual(names.map(n=>n.replace(/\.[0-9a-f]{24}\./,'.')).sort(),expected.sort());
   for (const n of names.filter(n=>n.includes('/'))) {
@@ -121,6 +122,10 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
     for (const [,spec] of text.matchAll(/(?:from\s*|import\s*\()\s*['"](\.[^'"]+)['"]/g)) {
       assert.match(spec, /\.[0-9a-f]{24}\.mjs$/);
       assert.ok(names.includes(join(dirname(name),spec)), `${name} → ${spec}`);
+    }
+    for(const [,spec] of text.matchAll(/new URL\(\s*['"](\.[^'"]+\.mjs)['"]/g)) {
+      assert.match(spec,/\.[0-9a-f]{24}\.mjs$/);
+      assert.ok(names.includes(join(dirname(name),spec)),`${name} → worker ${spec}`);
     }
   }
   const bNames = new Set(await files(b));
@@ -174,7 +179,7 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   let shellPrevious = validatorRelease;
   for (const [file, before, after, affected] of [
     ['js/route-analysis.mjs', 'export function analyzeRoute', '/* release fixture */ export function analyzeRoute',
-      /\/(?:route-analysis|route-analysis-loader|trip-planner|trip-planner-view|semonzo-profile|route-time|route-pace|route-pace-view|route-playback-adapters|route-briefing|route-briefing-view|route-comparison-view|site-shell|rider-controls|flyover)\./],
+      /\/(?:route-analysis|route-analysis-loader|trip-planner|trip-planner-view|semonzo-profile|route-time|route-pace|route-pace-view|route-playback-adapters|route-briefing|route-briefing-view|route-comparison-view|local-route-worker|local-route-import|local-routes-view|site-shell|rider-controls|flyover)\./],
     ['js/route-playback.mjs', 'export function createRoutePlayback', '/* release fixture */ export function createRoutePlayback',
       /\/(?:route-playback|route-session|route-pace-view|route-briefing-view|route-comparison-view|site-shell|rider-controls|flyover)\./],
     ['js/route-pace.mjs', 'export function createRoutePace', '/* release fixture */ export function createRoutePace',
@@ -182,7 +187,11 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
     ['js/route-pace-view.mjs', 'export function installRoutePace', '/* release fixture */ export function installRoutePace',
       /\/(?:route-pace-view|site-shell|rider-controls)\./],
     ['js/route-briefing.mjs', 'export function briefingAt', '/* release fixture */ export function briefingAt',
-      /\/(?:route-briefing|route-briefing-view|route-comparison-view|site-shell|rider-controls)\./],
+      /\/(?:route-briefing|route-briefing-view|route-comparison-view|local-routes-view|site-shell|rider-controls)\./],
+    ['js/local-route-parser.mjs','export function parseLocalBytes','/* release fixture */ export function parseLocalBytes',
+      /\/(?:local-route-parser|local-route-worker|local-route-import|local-routes-view|site-shell|rider-controls)\./],
+    ['js/local-route-storage.mjs','export function createLocalRouteStorage','/* release fixture */ export function createLocalRouteStorage',
+      /\/(?:local-route-storage|local-routes-view|site-shell|rider-controls)\./],
     ['js/route-comparison.mjs', 'export function comparisonRow', '/* release fixture */ export function comparisonRow',
       /\/(?:route-comparison|route-comparison-view|site-shell|rider-controls)\./],
     ['js/route-comparison-view.mjs', 'export function installRouteComparison', '/* release fixture */ export function installRouteComparison',

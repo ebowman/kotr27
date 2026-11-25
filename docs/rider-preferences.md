@@ -42,9 +42,17 @@ route/UI consent captures the current selection even if it is blocked.
 Revoking one consent removes that category, retaining the other only if separately
 chosen. Current entries remain usable in memory. **Clear entries / Robin's
 example** resets the calculation (and updates an already-consented record);
-**Forget all local rider values and preferences** additionally revokes both
-consents, resets dependent calculation controls and removes stored settings.
+**Forget all local data: rider values, preferences & files** additionally revokes
+both settings consents, resets dependent calculation controls and removes stored
+settings plus the local route/recording library and its active views.
 The current public route URL stays intact, including blocked revisions.
+The settings controller's `forget()` remains category-scoped and returns a
+`{confirmed, message}` removal outcome. The Preferences UI coordinates that API
+with the local library's injected `forget()` API, invalidating both immediately
+and awaiting both outcomes. It never transfers consent authority between stores.
+Success requires both confirmations; partial failure names the unconfirmed
+category and offers explicit retry/site-data recovery. See
+[local-file privacy](local-route-import.md) for pending-save deletion fencing.
 
 ## Storage, recovery and tabs · human-authorized redesign
 

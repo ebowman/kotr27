@@ -21,7 +21,9 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') riderState.check();
 });
 
-export function installPreferences(parent, {edit, selection}) {
+export function installPreferences(parent, {edit, selection, forgetLocalFiles}) {
+  if(typeof forgetLocalFiles!=='function')throw TypeError('Local-file deletion API required for global Forget');
+  let forgetting=false;
   const details = document.createElement('details');
   details.id = 'site-preferences';
   details.innerHTML = `
@@ -45,9 +47,10 @@ export function installPreferences(parent, {edit, selection}) {
       on focus and before saves; inactive tabs may display old entries until focused.</p>
     <p id="preference-status" role="status" aria-live="polite"></p>
     <a id="preference-route" hidden>Open remembered route / revision</a>
-    <button id="preference-forget" type="button">Forget all local rider values and preferences</button>
-    <p>Forget resets active rider calculations and removes this app’s stored settings, not unrelated
-      site data or the public route link currently open. No offline pack or activity library is installed.
+    <button id="preference-forget" type="button">Forget all local data: rider values, preferences &amp; files</button>
+    <p id="preference-forget-status" role="status" aria-live="polite"></p>
+    <p>Forget resets active rider calculations and local file views, revokes pending saves and removes this app’s stored
+      rider settings, route/UI preferences and local originals. Unrelated site data and official routes are unaffected. No offline pack is installed.
       Browser site-data settings can also remove HTTP cache. Personal-settings import/export is not approved.</p>`;
   parent.append(details);
   const el = id => details.querySelector(`#${id}`);
@@ -55,21 +58,44 @@ export function installPreferences(parent, {edit, selection}) {
   el('preference-edit').onclick = edit;
   for (const category of ['rider','preferences']) {
     el(`remember-${category}`).onchange = async event => {
+      if(forgetting)return;
       const enabled = event.target.checked;
-      if (category === 'preferences' && enabled)
-        riderState.select(selection());
+      const link=category==='preferences' && enabled ? selection() : null;
+      if (link) riderState.select(link);
       await riderState.remember(category, enabled);
     };
   }
-  el('preference-forget').onclick = () => riderState.forget();
+  el('preference-forget').onclick = async () => {
+    if(forgetting)return;
+    forgetting=true;
+    el('preference-forget').disabled=true;
+    el('preference-forget-status').textContent='Clearing all app-owned local data… Both storage categories must confirm deletion.';
+    // Both APIs invalidate memory/pending work synchronously before their first
+    // await. Neither category borrows the other's consent or deletion authority.
+    const invoke=operation=>{
+      try {return operation();}
+      catch(error) {return Promise.reject(error);}
+    };
+    const results=await Promise.allSettled([invoke(()=>riderState.forget()),invoke(forgetLocalFiles)]);
+    const labels=['Rider values/preferences','Local files'];
+    const confirmed=results.map(r=>r.status==='fulfilled' && r.value?.confirmed===true);
+    el('preference-forget-status').textContent=confirmed.every(Boolean) ?
+      'All app-owned local data removed: rider values, preferences and local files. Memory cleared; consent revoked.' :
+      'Forget incomplete. '+results.map((r,i)=>`${labels[i]}: ${confirmed[i] ? 'removed' :
+        `deletion NOT confirmed (${r.status==='fulfilled' ? r.value?.message : r.reason?.message})`}.`).join(' ')+
+        ' Stored data may remain. Retry Forget or use browser site-data controls.';
+    forgetting=false;el('preference-forget').disabled=false;
+    for(const category of ['rider','preferences'])el(`remember-${category}`).disabled=!riderState.snapshot().usable;
+    el('remember-itinerary').disabled=!riderState.snapshot().usable || !riderState.snapshot().consent.preferences;
+  };
   el('remember-itinerary').onchange = event => riderState.rememberItinerary(event.target.checked);
   riderState.subscribe(state => {
     for (const category of ['rider','preferences']) {
       el(`remember-${category}`).checked = state.consent[category];
-      el(`remember-${category}`).disabled = !state.usable;
+      el(`remember-${category}`).disabled = forgetting || !state.usable;
     }
     el('remember-itinerary').checked = state.rememberTrip && state.consent.preferences;
-    el('remember-itinerary').disabled = !state.usable || !state.consent.preferences;
+    el('remember-itinerary').disabled = forgetting || !state.usable || !state.consent.preferences;
     el('preference-status').textContent = state.status;
     if (!state.usable || state.status.includes('expired after')) details.open = true;
     const {validation:v} = state;

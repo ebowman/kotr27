@@ -24,6 +24,10 @@ export function createRoutePace() {
   }
   return {
     model,
+    forgetRoute(routeId) {
+      for(const key of cache.keys()) if(JSON.parse(key)[0].routeId===routeId) cache.delete(key);
+      for(const key of stops.keys()) if(JSON.parse(key).routeId===routeId) stops.delete(key);
+    },
     snapshot: () => ({scenario, rider:{...rider}, invalid}),
     subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
     setRider(validation, reset = false) {

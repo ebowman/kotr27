@@ -6,12 +6,14 @@ import { createCatalog } from './route-catalog.mjs';
 import { publicAssetReader, loadPlannerPack, createAnalysisStore } from './trip-planner.mjs';
 import { installTripPlanner } from './trip-planner-view.mjs';
 import { createAnalysisPlaybackRoute, createSemonzoPlaybackRoute } from './route-playback-adapters.mjs';
-import { routePlayback, registerPlaybackRoute, subscribePlayback } from './route-session.mjs';
+import { routePlayback, registerPlaybackRoute, unregisterPlaybackRoute, subscribePlayback } from './route-session.mjs';
 import { installRouteBriefing } from './route-briefing-view.mjs';
 import { routePace } from './route-pace.mjs';
 import { installRoutePace } from './route-pace-view.mjs';
 import { installRouteComparison } from './route-comparison-view.mjs';
 import { comparisonViews } from './route-comparison.mjs';
+import { installLocalRoutes } from './local-routes-view.mjs';
+import { isLocalId } from './local-route-storage.mjs';
 
 const el = id => document.getElementById(id);
 // Common Plan/Explore/pace views run in either shell. Do not lose memory-only
@@ -19,6 +21,11 @@ const el = id => document.getElementById(id);
 // genuinely document-specific legacy example engines require navigation.
 const documentEntry=location.pathname.endsWith('explore.html') ? 'explore.html' : 'index.html';
 function selectionLink(state) {
+  if (isLocalId(state.routeId)) {
+    const q=new URLSearchParams({area:areas.includes(state.area)?state.area:'explore',
+      view:['briefing','clock','sensitivity'].includes(state.view)?state.view:'briefing',route:state.routeId});
+    return `./${documentEntry}?${q}`;
+  }
   const legacy=state.routeId===exampleRouteId && state.area==='explore' &&
     ['clock','sensitivity','flyover'].includes(state.view);
   return legacy ? publicSelectionLink(state) :
@@ -45,6 +52,23 @@ routePace.subscribe(()=>{
 let current, flyoverStarted = false, profileLoading = true;
 const resolveLocation = () => {
   const query = new URL(location.href).searchParams;
+  if (query.get('route')?.startsWith('user:')) {
+    const id=query.get('route'), record=isLocalId(id) && localLibrary.get(id);
+    const state={area:areas.includes(query.get('area'))?query.get('area'):'explore',
+      view:['briefing','clock','sensitivity'].includes(query.get('view'))?query.get('view'):'briefing',
+      routeId:id,revisionId:record?.revisionId??null,dayId:null,variantId:null,chapterId:null,distanceM:0};
+    const result={state,code:'local',message:localLibrary.missing(),notices:[],bundle:null,profile:null};
+    if (!isLocalId(id) || query.getAll('route').length!==1) return {...result,message:'Invalid local identifier. Import again; no organizer route substituted.'};
+    if (!record) return result;
+    const snapshot=routePlayback.getSnapshot();
+    if(snapshot.identity?.routeId===id && snapshot.identity.revisionId===record.revisionId) {
+      state.distanceM=snapshot.distanceM;
+      state.chapterId=current?.state.routeId===id ? current.state.chapterId : null;
+    }
+    return {...result,code:'ready',message:'Private local file · not portable · no external map.',
+      profile:record.analysis,bundle:{route:{id,name:record.name,kind:'local',currentRevisionId:record.revisionId},
+        revision:{id:record.revisionId,status:'local',provenance:{source:'Private local import',observedOn:'this device'}}}};
+  }
   const revision = query.get('rev') ?? catalog.data.routes.find(r=>r.id===query.get('route'))?.currentRevisionId;
   const resolved = readSelection(location.href, catalog, profiles, exampleRouteId,
     {loading:profileLoading || catalogLoading || pendingProfiles.has(revision)});
@@ -95,7 +119,7 @@ function reflectPosition(snapshot, chapterId = null) {
   current = {...current, state:next};
   const href=selectionLink(next);
   history.replaceState(null,'',href);
-  riderState.select(href);
+  if (!isLocalId(next.routeId)) riderState.select(href);
   for (const a of shell.querySelectorAll('a')) {
     const patch=linkPatches.get(a);
     if (patch) a.href=selectionLink(changeSelection(next,patch));
@@ -103,6 +127,23 @@ function reflectPosition(snapshot, chapterId = null) {
 }
 const linkedBriefing = installRouteBriefing(shell, reflectPosition);
 const linkedPace = installRoutePace(shell, riderState, reflectPosition);
+const localLibrary=installLocalRoutes(shell,{
+  storageBarrier:()=>riderState.settled(),
+  open(record) {
+    profiles[record.revisionId]=record.analysis;
+    if(record.analysis.status==='supported') {
+      playbackFactories.set(record.revisionId,{analysis:record.analysis,
+        make:estimate=>createAnalysisPlaybackRoute(record.analysis,{estimate})});
+    }
+    navigateSelection({area:'explore',view:'briefing',routeId:record.id,revisionId:record.revisionId,dayId:null,variantId:null});
+  },
+  removed(id) {
+    const revision=`local-${id.slice(5)}`;
+    delete profiles[revision];playbackFactories.delete(revision);
+    unregisterPlaybackRoute(id,revision);routePace.forgetRoute(id);
+  },
+  changed() { if(current) {current=resolveLocation();render(false,false);} },
+});
 subscribePlayback(snapshot=>{
   if (snapshot.identity?.routeId!==exampleRouteId || !snapshot.position) return;
   const text=el('site-example-position');
@@ -119,13 +160,14 @@ subscribePlayback(snapshot=>{
   }
 });
 installPreferences(shell.querySelector('.site-header'), {
+  forgetLocalFiles:()=>localLibrary.forget(),
   edit:() => {
     if (el('personal') && !el('legacy-explorer').hidden) {
       el('personal').open = true;
       el('mass').focus();
     } else navigateSelection({area:'explore', view:'clock'});
   },
-  selection:() => selectionLink(current.state),
+  selection:() => isLocalId(current.state.routeId) ? null : selectionLink(current.state),
 });
 
 function link(parent, text, patch, {replace = false} = {}) {
@@ -163,6 +205,7 @@ function picker() {
 function briefing(parent) {
   const {profile, state, bundle} = current;
   const example = bundle.route.id === exampleRouteId;
+  if (bundle.route.kind==='local') return; // Local provenance/details, common linked controls below.
   const section = card(parent, example ? 'Semonzo example briefing' : `${bundle.route.name} · Briefing`,
     example ?
     'Semonzo → Monte Grappa summit. A provisional ascent study, not an official event route, stage or group assignment. Surface and stops are not verified.'
@@ -242,7 +285,7 @@ function render(focus = false, notify = true) {
     const actions = node('div','',intro); actions.className = 'site-actions';
     if (bundle) {
       link(actions, 'Read selected route briefing', {area:'explore', view:'briefing'});
-      link(actions, 'Compare routes / Skyline / Radial', {area:'explore', view:'compare'});
+      if(bundle.route.kind!=='local')link(actions, 'Compare routes / Skyline / Radial', {area:'explore', view:'compare'});
       if (bundle.route.id === exampleRouteId) link(actions, 'Open optional example flyover', {area:'explore', view:'flyover'});
     }
   } else if (s.area === 'prepare') {
@@ -262,7 +305,8 @@ function render(focus = false, notify = true) {
   }
   if (bundle && s.area === 'explore') {
     const actions = node('div','',content); actions.className = 'site-actions';
-    for (const [view,label] of (bundle.route.id === exampleRouteId ?
+    for (const [view,label] of (bundle.route.kind==='local' ?
+      [['briefing','Local route briefing'],['clock','Modeled pace (not recorded replay)']] : bundle.route.id === exampleRouteId ?
       [['briefing','Route briefing'],['clock','Example ride clock'],['sensitivity','FTP / weight sensitivity'],['flyover','Optional 3D flyover']] :
       [['briefing','Route briefing'],['clock','Pace / ride clock'],['sensitivity','FTP / weight sensitivity'],
         ['compare','Compare variants'],['skyline','Skyline'],['radial','Radial']])) {
@@ -295,7 +339,11 @@ function render(focus = false, notify = true) {
   }
   linkedBriefing.show(current);
   linkedPace.show(current,bundle?.route.id===exampleRouteId ? exampleAnalysis : null);
-  comparison?.show(current);
+  localLibrary.show(s);
+  // The official comparison workspace never retains private analyses/names.
+  // Local comparison/replay is a separate capability, not a catalog insertion.
+  comparison?.show(s.routeId?.startsWith('user:') ?
+    {...current,bundle:null,profile:null,state:{...s,area:'prepare',routeId:null,revisionId:null}} : current);
   if (notify) {
     if (code === 'ready' && profiles[s.revisionId]?.status !== 'unsupported' && profiles[s.revisionId]) {
       preparePlayback(s.revisionId);
@@ -352,7 +400,7 @@ export function navigateSelection(patch, {replace = false, focus = true, notify 
     riderState.select(href).then(() => location.assign(href));
     return;
   }
-  riderState.select(href);
+  if (!isLocalId(next.routeId)) riderState.select(href);
   history[replace ? 'replaceState' : 'pushState'](null, '', href);
   current = resolveLocation();
   render(focus, notify);
@@ -372,7 +420,8 @@ document.querySelector('.skip').addEventListener('click', event => {
   event.preventDefault();
   el('site-heading').focus();
 });
-const restore = () => { current = resolveLocation(); riderState.select(selectionLink(current.state)); render(true); };
+const restore = () => { current = resolveLocation();
+  if (!isLocalId(current.state.routeId)) riderState.select(selectionLink(current.state)); render(true); };
 window.addEventListener('popstate', restore);
 window.addEventListener('hashchange', restore);
 window.addEventListener('pageshow', event => { if (event.persisted) restore(); });

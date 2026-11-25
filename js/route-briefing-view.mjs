@@ -23,7 +23,9 @@ export function installRouteBriefing(parent, onSeek) {
   function build(bundle, a) {
     root.replaceChildren();
     node('h2',`${bundle.route.name} · Route briefing`,root);
-    node('p',`${bundle.revision.status} · ${bundle.revision.id}. ${bundle.revision.provenance.source}. ` +
+    node('p',bundle.route.kind==='local' ?
+      'Private local geometry, not an organizer revision. Dates, facility annotations and source measurements are not verified. No external map.' :
+      `${bundle.revision.status} · ${bundle.revision.id}. ${bundle.revision.provenance.source}. ` +
       `Observed ${bundle.revision.provenance.observedOn}; provider revision date unknown. D1–D4 are source groups, not calendar assignments.`,root);
     const unsupported = briefingAt(a,0);
     if (unsupported.status !== 'supported') {
@@ -180,7 +182,10 @@ export function installRouteBriefing(parent, onSeek) {
       const a=resolved.profile;
       visible=resolved.state.area==='explore' && !['compare','skyline','radial'].includes(resolved.state.view) && Boolean(a?.identity);
       root.hidden=!visible;
-      if (!visible) return;
+      if (!visible) {
+        if(analysis?.routeId.startsWith('user:')) {analysis=null;identity=null;draw=()=>{};root.replaceChildren();}
+        return;
+      }
       if (identity!==a.identity) { identity=a.identity; analysis=a; build(resolved.bundle,analysis); }
       draw(routePlayback.getSnapshot());
     },
