@@ -6,7 +6,23 @@ import { createAnalysisStore } from '../js/trip-planner.mjs';
 import { createAnalysisPlaybackRoute } from '../js/route-playback-adapters.mjs';
 import { createRoutePlayback } from '../js/route-playback.mjs';
 import { estimateRouteTime } from '../js/route-time.mjs';
-import { cameraJobs, cameraPose, officialFlyover, routeLine, routeBounds, frameEvidence, flyoverLimits } from '../js/route-flyover.mjs';
+import { positionAt } from '../js/route-analysis.mjs';
+import { cameraJobs, cameraPose, followBearing, shortestAngle, followMotion, officialFlyover, routeLine, routeBounds, frameEvidence, terrainDepthEvidence, flyoverLimits } from '../js/route-flyover.mjs';
+
+// Deterministic packed-depth fixture. Real GPU terrain/ridge coverage is tested
+// separately in route-flyover-browser, never inferred from this fixture.
+function depthFixture(map) {
+  let bound=null;
+  const gl={FRAMEBUFFER:1,FRAMEBUFFER_BINDING:2,RGBA:3,UNSIGNED_BYTE:4,
+    isContextLost:()=>false,getParameter:()=>bound,bindFramebuffer:(_,value)=>{bound=value;},
+    readPixels:(_x,_y,_w,_h,_format,_type,pixels)=>pixels.set([0,0,0,map.clear===false ? 102 : 128])};
+  map.transform={width:200,height:200,worldSize:1,projection:{name:'mercator'},
+    locationCoordinate:()=>({x:0,y:0}),projMatrix:[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1]};
+  map.painter={width:200,height:200,context:{gl},terrain:{
+    proxyCoords:[{key:'current'}],terrainTileForTile:{current:{dem:{}}},
+    _depthFBO:{width:200,height:200,framebuffer:{}}}};
+  return map;
+}
 
 test('all actual approved routes: camera jobs at start, steepest, bends, middle and finish preserve every shared projection',async()=>{
   const {pack}=await readRoutePack('.');
@@ -48,8 +64,8 @@ test('all actual approved routes: camera jobs at start, steepest, bends, middle 
 test('actual paint gate rejects missing imagery/elevation, rider occlusion, stale registration and absent route',()=>{
   const p={lon:11,lat:45,rawElevationM:100}, box={left:0,top:0,right:200,bottom:200,width:200,height:200};
   const dot={left:89,top:89,right:111,bottom:111,width:22,height:22};
-  const map={project:()=>({x:100,y:100}),queryTerrainElevation:()=>100,
-    unproject:()=>({lng:11,lat:45}),queryRenderedFeatures:()=>[{}]};
+  const map=depthFixture({project:()=>({x:100,y:100}),queryTerrainElevation:()=>100,
+    unproject:()=>{throw Error('Approximate inverse picks are not visibility proof');},queryRenderedFeatures:()=>[{}]});
   const marker={getBoundingClientRect:()=>dot},container={getBoundingClientRect:()=>box};
   const old=globalThis.getComputedStyle;globalThis.getComputedStyle=()=>({opacity:1});
   try {
@@ -57,12 +73,98 @@ test('actual paint gate rejects missing imagery/elevation, rider occlusion, stal
     assert.equal(frameEvidence(map,p,marker,container,()=>false).ok,false);
     for (const change of [
       {queryTerrainElevation:()=>null},{queryTerrainElevation:()=>999},
-      {unproject:()=>({lng:11.01,lat:45})},{project:()=>({x:-1,y:100})},
+      {painter:depthFixture({clear:false}).painter},{project:()=>({x:-1,y:100})},{painter:null},
       {queryRenderedFeatures:()=>[]},
     ]) assert.equal(frameEvidence({...map,...change},p,marker,container,()=>true).ok,false);
     globalThis.getComputedStyle=()=>({opacity:.2});
     assert.equal(frameEvidence(map,p,marker,container,()=>true).ok,false);
   } finally {globalThis.getComputedStyle=old;}
+});
+
+test('rendered depth rejects occlusion, missing/unbound DEM, stale depth and preserves framebuffer binding',()=>{
+  const map=depthFixture({}),p={lon:11,lat:45},xy={x:100,y:100};
+  assert.equal(terrainDepthEvidence(map,p,xy,100).visible,true);
+  assert.equal(map.painter.context.gl.getParameter(),null,'Read restores GL state');
+  map.clear=false;
+  const blocked=terrainDepthEvidence(map,p,xy,100);
+  assert.equal(blocked.visible,false);
+  assert.ok(blocked.gap>.0005,'Foreground depth, not inverse ground-coordinate discrepancy, blocks');
+  map.clear=true;
+  assert.equal(terrainDepthEvidence(map,p,xy,null).visible,false);
+  const dem=map.painter.terrain.terrainTileForTile.current.dem;
+  delete map.painter.terrain.terrainTileForTile.current.dem;
+  assert.equal(terrainDepthEvidence(map,p,xy,100).covered,false,'A numeric rider elevation cannot cover an unbound foreground region');
+  map.painter.terrain.terrainTileForTile.current.dem=dem;
+  map.painter.terrain._depthFBO.width=100;
+  assert.equal(terrainDepthEvidence(map,p,xy,100).visible,false,'Stale resize depth is unknown');
+  map.painter.terrain._depthFBO.width=200;
+  for(const [surface,visible] of [[-.00049,true],[-.00051,false]]){
+    map.painter.context.gl.readPixels=(_x,_y,_w,_h,_format,_type,pixels)=>{
+      let value=(surface+1)/2;
+      for(let i=3;i>=0;i--){value*=255;pixels[i]=Math.floor(value);value-=pixels[i];}
+    };
+    assert.equal(terrainDepthEvidence(map,p,xy,100).visible,visible,'Exactly the pinned SDK .0005 NDC bias');
+  }
+  map.painter.context.gl.readPixels=()=>{throw Error('readback failure');};
+  assert.throws(()=>terrainDepthEvidence(map,p,xy,100),/readback/);
+  assert.equal(map.painter.context.gl.getParameter(),null,'Failed reads also restore GL state');
+});
+
+test('fractional-DPR depth allocation accepts SDK ceiling sizes but rejects genuinely stale dimensions',()=>{
+  const map=depthFixture({}),p={lon:11,lat:45};
+  for(const [width,height,dpr] of [[375,812,1.25],[375,813,1.25],[375,813,1.5],[1440,900,1]]){
+    map.transform.width=width;map.transform.height=height;
+    map.painter.width=width*dpr;map.painter.height=height*dpr;
+    const fbo=map.painter.terrain._depthFBO;
+    fbo.width=Math.ceil(map.painter.width);fbo.height=Math.ceil(map.painter.height);
+    const xy={x:width/2,y:height/2};
+    assert.equal(terrainDepthEvidence(map,p,xy,100).visible,true,`${width}x${height} DPR ${dpr}`);
+    for(const axis of ['width','height']){
+      const current=fbo[axis];
+      for(const stale of [current-1,current+1]){
+        fbo[axis]=stale;
+        assert.equal(terrainDepthEvidence(map,p,xy,100).visible,false,`Stale ${axis} ${stale}`);
+        assert.equal(terrainDepthEvidence(map,p,xy,100).gap,null);
+      }
+      fbo[axis]=current;
+    }
+    map.clear=false;
+    assert.equal(terrainDepthEvidence(map,p,xy,100).visible,false,'Fractional DPR does not excuse occlusion');
+    map.clear=true;
+    assert.equal(terrainDepthEvidence(map,p,xy,null).visible,false,'Missing DEM remains unknown');
+  }
+});
+
+test('follow yaw uses broad actual Grappa context and bounded shortest-angle turns',async()=>{
+  assert.equal(shortestAngle(179,-179),2);
+  assert.equal(shortestAngle(-179,179),-2);
+  assert.equal(followBearing(-179,179,200),181);
+  assert.equal(followBearing(179,-179,200),-181);
+  assert.equal(followBearing(120,0,10000),3,'Suspension never accumulates a large turn');
+  assert.equal(followBearing(120,0,0),0,'No elapsed update means no autonomous rotation');
+  assert.equal(followBearing(-90,undefined,0),-90,'Explicit reset starts at selected context');
+  const {pack}=await readRoutePack('.');
+  const route=pack.catalog.routes.find(r=>r.id==='rwgps-57873019');
+  const a=await createAnalysisStore(pack,path=>readFile(path))(route.id,route.currentRevisionId);
+  let priorLocal,priorTarget,bearing,localMax=0,targetTravel=0,localTravel=0,smoothedMax=0;
+  for(let distanceM=0;distanceM<=a.distanceM;distanceM+=a.distanceM/450) {
+    const snapshot={identity:a.identity,position:positionAt(a,distanceM),distanceM,cameraMode:'follow'};
+    const pose=cameraPose(a,snapshot);
+    const local=cameraPose(a,{...snapshot,cameraMode:'side'}).bearing-90;
+    const next=followBearing(pose.bearing,bearing,200);
+    assert.deepEqual(pose.center,[snapshot.position.lon,snapshot.position.lat]);
+    if(bearing!==undefined)smoothedMax=Math.max(smoothedMax,Math.abs(shortestAngle(bearing,next)));
+    if(priorLocal!==undefined){
+      const step=Math.abs(shortestAngle(priorLocal,local));
+      localMax=Math.max(localMax,step);localTravel+=step;
+      targetTravel+=Math.abs(shortestAngle(priorTarget,pose.bearing));
+    }
+    bearing=next;priorLocal=local;priorTarget=pose.bearing;
+  }
+  assert.ok(localMax>90,'Actual route contains abrupt local hairpin heading changes');
+  assert.ok(targetTravel<localTravel/2,'Broad context materially reduces route tangent coupling');
+  assert.ok(smoothedMax<=followMotion.yawDegreesPerSecond*.2+1e-9);
+  console.log('Actual Grappa yaw regression:',{localMax,localTravel,targetTravel,smoothedMax});
 });
 
 // Execute the actual adapter with a deterministic SDK/clock, retaining the real
@@ -82,13 +184,14 @@ async function terrainFixture() {
     }}};
   class FixtureMap {
     events={}; imagery=true; elevation=100; clear=true; road=true; removed=0;
-    constructor(options){this.options=options;map=this;}
+    constructor(options){this.options=options;map=this;depthFixture(this);}
     on(name,fn){this.events[name]=fn;}
     once(name,fn){this.on(name,fn);}
     emit(name,e={}){this.events[name]?.(e);}
     addControl(){} addSource(){} addLayer(){} setTerrain(){} triggerRepaint(){} resize(){}
     getSource(){return {tiles:[],tileSize:256};}
-    jumpTo(pose){this.center=pose.center;} fitBounds(){}
+    jumpTo(pose){if(pose.center)this.center=pose.center;if(pose.pitch!==undefined)this.pitch=pose.pitch;}
+    getPitch(){return this.pitch;} fitBounds(){}
     project(){return {x:100,y:100};}
     queryTerrainElevation(){return this.elevation;}
     unproject(){return {lng:this.center[0]+(this.clear?0:.01),lat:this.center[1]};}
@@ -107,10 +210,10 @@ async function terrainFixture() {
   };
   let nextTimer=0;
   const mount=new Function('window','document','devicePixelRatio','performance','setTimeout','clearTimeout',
-    'cameraPose','routeBounds','routeLine','frameEvidence','limits',
+    'cameraPose','followBearing','routeBounds','routeLine','frameEvidence','limits',
     source+'\nreturn mountRouteTerrain;')(window,document,1,{now:()=>now},
     (fn,ms)=>{const id=++nextTimer;timers.set(id,{fn,at:now+ms});return id;},
-    id=>timers.delete(id),cameraPose,routeBounds,routeLine,proof,flyoverLimits);
+    id=>timers.delete(id),cameraPose,followBearing,routeBounds,routeLine,proof,flyoverLimits);
   const identity={revisionId:'test',geometrySha256:'test'};
   const position={lon:11,lat:45,rawElevationM:100,elevationM:100,distanceM:0};
   const analysis={identity,distanceM:100,points:[position,{...position,lon:11.001,distanceM:100}]};
@@ -180,4 +283,20 @@ test('terrain outages keep a fixed deadline; terminal failures dispose once with
     assert.equal(f.timers.size,0);
     assert.equal(f.gl.maxParallelImageRequests,16);
   }
+});
+
+test('actual occlusion retains honest fallback and never flattens the selected camera',async()=>{
+  const f=await terrainFixture();
+  f.map.emit('render');
+  f.map.clear=false;
+  for(let i=0;i<100;i++){
+    f.advance(16);f.map.emit('render');
+    assert.equal(f.map.pitch,45);
+    assert.equal(JSON.parse(f.container.dataset.frame).clear,false,'The failed painted frame stays failed');
+  }
+  assert.equal(f.map.removed,0);
+  f.advance(1000);
+  assert.equal(f.map.removed,1);
+  assert.equal(f.statuses.at(-1).state,'unavailable');
+  f.controller.abort();
 });

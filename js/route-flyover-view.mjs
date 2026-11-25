@@ -147,7 +147,7 @@ export function installRouteFlyover(parent,onSeek) {
           'Estimated ride unavailable: profile/model domain or rider inputs unsupported; source extremes are not clamped.');
       const pose=cameraPose(analysis,s,refinements);
       orientation.textContent=manual ? 'Manual exploration · compass shows north. Return to rider restores the selected location.' :
-        `${cameraJobs.find(j=>j[0]===s.cameraMode)[1]} · view bearing ${((pose.bearing%360+360)%360).toFixed(0)}° clockwise from north. Start → finish in source riding order.`;
+        `${cameraJobs.find(j=>j[0]===s.cameraMode)[1]} · ${s.cameraMode==='follow' ? 'route-context target (camera turns gradually)' : 'view bearing'} ${((pose.bearing%360+360)%360).toFixed(0)}° clockwise from north. Start → finish in source riding order.`;
       seek.value=s.distanceM;seek.setAttribute('aria-valuetext',hud.textContent);rate.value=s.animationRate;
       play.textContent=s.phase==='playing' ? 'Pause animation' : 'Play animation';
       for (const [b,mode] of buttons) b.setAttribute('aria-pressed',String(!manual && s.cameraMode===mode));

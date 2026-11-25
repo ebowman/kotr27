@@ -1,4 +1,4 @@
-import { cameraPose, routeBounds, routeLine, frameEvidence, flyoverLimits as limits } from './route-flyover.mjs';
+import { cameraPose, followBearing, routeBounds, routeLine, frameEvidence, flyoverLimits as limits } from './route-flyover.mjs';
 
 // One lazy map, no preloading, no automatic retries, no autonomous camera RAF.
 // Only approved, already verified geometry may reach this adapter.
@@ -20,6 +20,7 @@ export async function mountRouteTerrain({container,analysis,snapshot,onStatus,on
   gl.maxParallelImageRequests=4;
   let map, rider, ready=false, presented=false, stopped=false, manual=false, current=snapshot;
   let refinements={}, lastPaint=-Infinity, timer, requests=0, updating=false;
+  let bearing;
   const beacon=document.createElement('div'); beacon.className='route-rider';
   beacon.setAttribute('aria-label','Selected rider position');
   function dispose() {
@@ -92,6 +93,11 @@ export async function mountRouteTerrain({container,analysis,snapshot,onStatus,on
           properties:{},geometry:{type:'LineString',coordinates:routeLine(analysis)}}});
         map.addLayer({id:'route',type:'line',source:'route',
           paint:{'line-color':'#ff932e','line-width':5}});
+        // 2.15 produces its terrain depth texture for circle/symbol layers.
+        // No visible geometry or extra source/request: this enables the SDK's
+        // own current-frame occlusion pass, read by frameEvidence on render.
+        map.addLayer({id:'terrain-depth-pass',type:'circle',source:'route',
+          paint:{'circle-opacity':0}});
         map.setTerrain({source:'dem',exaggeration:1});
         rider=new gl.Marker({element:beacon,anchor:'center'}).setLngLat(cameraPose(analysis,current).center).addTo(map);
         for(const [point,text,offset] of [[analysis.points[0],'S',[-12,-12]],[analysis.points.at(-1),'F',[12,12]]]) {
@@ -124,15 +130,23 @@ export async function mountRouteTerrain({container,analysis,snapshot,onStatus,on
   function update(s,force=false,options=refinements) {
     refinements=options;
     if (stopped || !ready || !s.position || document.hidden) return;
-    if (!force && s.phase==='playing' && performance.now()-lastPaint<limits.frameMs) return;
+    if (!force && s.phase==='playing' && s.distanceM<analysis.distanceM &&
+        performance.now()-lastPaint<limits.frameMs) return;
+    const now=performance.now(), elapsed=now-lastPaint;
+    const reset=force || current.cameraMode!==s.cameraMode ||
+      current.identity?.geometrySha256!==s.identity?.geometrySha256;
     current=s;
-    lastPaint=performance.now();
+    lastPaint=now;
     try {
       updating=true;
       const pose=cameraPose(analysis,s,options);
       rider.setLngLat(pose.center);
       if (!manual || force) {
         manual=false;
+        if (reset) bearing=undefined;
+        if (s.cameraMode==='follow') pose.bearing=followBearing(pose.bearing,bearing,elapsed);
+        bearing=pose.bearing;
+        container.dataset.camera=JSON.stringify({bearing:pose.bearing,pitch:pose.pitch});
         if (s.cameraMode==='overview') map.fitBounds(routeBounds(analysis),{
           padding:40,duration:0,bearing:0,pitch:0,maxZoom:limits.maxZoom});
         else map.jumpTo(pose);

@@ -1,0 +1,893 @@
+{
+  "label": "desktop",
+  "width": 1440,
+  "height": 900,
+  "elapsedMs": 90135,
+  "completed": true,
+  "frames": 5409,
+  "hidden": 0,
+  "fallback": 0,
+  "valid": 4957,
+  "invalid": 18,
+  "maxYawStep": 2.6124000005721655,
+  "maxYawRate": 12.724239440360865,
+  "minPitch": 45,
+  "maxPitch": 45,
+  "maxRequests": 49,
+  "checkpoints": [
+    {
+      "distance": "0",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": 0.000009677447640910053,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "1017.4720351761487",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": 0.000010197102671583025,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "2034.944070352295",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": -0.000008189609291386901,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "3087.5739432843875",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": -0.000011593691214617508,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "4093.396874533428",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": 0.000010185988461253181,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "5134.307468213527",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": -0.000010455904200790123,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "6011.428853665379",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": -0.000010675913552193883,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "7028.97106416637",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": -0.000009459922487020656,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "8046.4430993424985",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": 0.000010022343889914964,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "9052.26603059153",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": -0.000010282829712160435,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "10069.738065767684",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": 0.00000870249688722513,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "11098.999555520677",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": -0.000007730340326306262,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "12116.401415371965",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": 0.0000028974468310183354,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "13005.312255400677",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": 0.0000011607125078860747,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "14139.766557122017",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": -0.000004354532842421044,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "15005.238838646772",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": 0.0000011632052934196224,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "16022.710873822927",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": 6.931836704637817e-8,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "17040.253084323944",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": 0.000006141277824611713,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "18057.725119500094",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": -0.000004393341505704029,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "19063.54805074913",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": 0.000007949806914542279,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "20081.020085925284",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": -0.000010635618824417215,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "21110.21140035341",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": -0.0000018386713352969153,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "22104.31505235047",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": -0.000005670445562433457,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "23133.506366778605",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": -0.000009059937233879545,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "24139.32929802764",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": -0.000007995178897934885,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "25039.88924198347",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": 0.000010983115069085336,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "26069.080556411598",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": 0.000014766285333922546,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "27086.622766912613",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": -0.000004775992535677176,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "28104.094802088766",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": 0.000004024996803186909,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "29109.9177333378",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": 0.000007834453409460984,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "30139.038872441066",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": 0.000004471809092243539,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "31004.51115396583",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": -0.0000024512405853993613,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "32022.053364466843",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": -0.000009652325885900481,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "33039.525399643",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": 0.0000054618231059011535,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "34068.71671407113",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": -0.000008183616117096726,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "35097.90802849934",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": -0.000006479811664128476,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "36103.7309597484",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": 0.00001862284370868217,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "37004.290903704234",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": 0.000003244687932335566,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "38010.11383495335",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": -0.000024322302269785823,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "39004.14731162557",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": 0.000019836162760911158,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "40033.40880137857",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": 0.000015103861626952764,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "41074.31939505877",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": 0.000012348241689164041,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "42080.07215098295",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": -0.000022135613675478005,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "43097.61436148398",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": 0.000007946157181693003,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "44126.805675912205",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": -0.00000841217648628323,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "45003.927061364084",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": -0.00001799340377039993,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "46021.46927186516",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": -0.000011890541709913549,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "47027.29220311436",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": -0.000006479782262980294,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "48068.13262146966",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": -0.000009041294363187902,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "49085.674831970806",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": 0.000026657856492473542,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "50114.866146399094",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": 0.000013875904369631265,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "51120.689077648174",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": 0.000024537166551819034,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "52149.880392076426",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": -0.000060272997354116065,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "53038.721056780414",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": 0.00003342349493751229,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "54044.54398802953",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": -0.00002936482464277468,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "55073.73530245776",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": -0.000009569147530474886,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "56102.926616886034",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": -0.000011906021462948502,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "57132.04775598937",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": 0.000009972654122503144,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "58020.958596018165",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": -0.000009895734604747908,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "59038.43063119447",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": 0.000010281003113510323,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "60067.6921209475",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": -0.000008302164211881902,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "61096.8132600509",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": -0.000010092483064383373,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "62114.42564587691",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": -0.000009954443947024494,
+        "imagery": true,
+        "ok": true
+      }
+    },
+    {
+      "distance": "63143.5467849802",
+      "proof": {
+        "framed": true,
+        "aligned": true,
+        "elevation": true,
+        "clear": true,
+        "road": true,
+        "depthGap": 0.000009666239827565981,
+        "imagery": true,
+        "ok": true
+      }
+    }
+  ],
+  "transitions": [
+    {
+      "distance": "0",
+      "surface": "terrain"
+    }
+  ],
+  "maxInverseM": 136.49988196326058,
+  "inverseOver8Frames": 272,
+  "approximatePickVisible": 268,
+  "maxDepthGap": 0.0000594710828945022,
+  "lastInvalid": {
+    "framed": true,
+    "aligned": true,
+    "elevation": true,
+    "clear": true,
+    "road": true,
+    "depthGap": 0.00001630985447265143,
+    "imagery": false,
+    "ok": false
+  },
+  "progress": "63.2 km",
+  "finalDistance": 63157.7923759248,
+  "endAligned": true,
+  "finalProof": {
+    "framed": true,
+    "aligned": true,
+    "elevation": true,
+    "clear": true,
+    "road": true,
+    "depthGap": -0.000010916161745533337,
+    "imagery": true,
+    "ok": true
+  },
+  "canvases": 1,
+  "responses": 56,
+  "statuses": [
+    "api.mapbox.com:200",
+    "events.mapbox.com:204"
+  ],
+  "bytes": 3151379,
+  "providerBytes": 2334207,
+  "failures": []
+}

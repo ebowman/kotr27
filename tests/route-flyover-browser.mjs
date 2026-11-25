@@ -17,10 +17,15 @@ function png(rgb) {
   const chunk=(type,data)=>{
     const b=Buffer.concat([Buffer.from(type),data]);return Buffer.concat([u32(data.length),b,u32(crc32(b))]);
   };
-  const row=Buffer.concat([Buffer.alloc(1),Buffer.alloc(256*3,Buffer.from(rgb))]);
+  const rows=Array.from({length:256},(_,y)=>{
+    if(typeof rgb!=='function')return Buffer.concat([Buffer.alloc(1),Buffer.alloc(256*3,Buffer.from(rgb))]);
+    const row=Buffer.alloc(1+256*3);
+    for(let x=0;x<256;x++)row.set(rgb(x,y),1+x*3);
+    return row;
+  });
   return Buffer.concat([Buffer.from('89504e470d0a1a0a','hex'),
     chunk('IHDR',Buffer.from('00000100000001000802000000','hex')),
-    chunk('IDAT',deflateSync(Buffer.concat(Array(256).fill(row)))),chunk('IEND',Buffer.alloc(0))]);
+    chunk('IDAT',deflateSync(Buffer.concat(rows))),chunk('IEND',Buffer.alloc(0))]);
 }
 const instrumentation=`
 window.nativeFrames=[];
@@ -51,7 +56,7 @@ mapboxgl.Map=class extends mapboxgl.Map {
 async function fixture(t,{real=false,headless=true}={}) {
   const temp=await mkdtemp(join(tmpdir(),'kotr-flyover-')),out=join(temp,'public');
   const cleanups=[],jobs=new Set(),errors=[],network=[],lifecycle=[];
-  let server;
+  let server,ridge;
   t.after(async()=>{
     for(const close of cleanups)await close();
     if(server?.listening) {
@@ -73,8 +78,20 @@ async function fixture(t,{real=false,headless=true}={}) {
   async function serve(req,res) {
     const path=new URL(req.url,'http://localhost').pathname.slice('/kotr27/'.length)||'index.html';
     if(path.startsWith('fixture/')) {
+      if(path.startsWith('fixture/missing-dem/'))return res.writeHead(404).end();
       const h=Number(path.split('/')[2]),v=Math.round((h+10000)*10);
-      const tile=path.startsWith('fixture/dem/') ? png([v>>16,(v>>8)&255,v&255]) : png([40,130,80]);
+      let tile;
+      if(path.startsWith('fixture/dem/') && ridge){
+        const [z,tx,ty]=path.split('/').slice(3).map(Number);
+        const mx=(ridge.lon+180)/360,my=(1-Math.log(Math.tan(Math.PI/4+ridge.lat*Math.PI/360))/Math.PI)/2;
+        tile=png((x,y)=>{
+          const dx=(tx+(x+.5)/256)/2**z-mx,dy=(ty+(y+.5)/256)/2**z-my;
+          const distance=Math.hypot(dx,dy)*40075016.68557849*Math.cos(ridge.lat*Math.PI/180);
+          const wall=distance>800 && distance<1600 ? 3000 : 0;
+          const value=Math.round((h+wall+10000)*10);
+          return [value>>16,(value>>8)&255,value&255];
+        });
+      } else tile=path.startsWith('fixture/dem/') ? png([v>>16,(v>>8)&255,v&255]) : png([40,130,80]);
       return res.writeHead(200,{'Content-Type':'image/png'}).end(tile);
     }
     if(!files.includes(path) || !types[extname(path)])return res.writeHead(404).end();
@@ -123,7 +140,7 @@ async function fixture(t,{real=false,headless=true}={}) {
       return s.identity?.routeId===r.id && s.identity?.revisionId===r.currentRevisionId && s.position;
     });
   }
-  return {...b,base,pack,files,network,navigate,evaluate,command,
+  return {...b,base,pack,files,network,navigate,evaluate,command,setRidge:p=>{ridge=p;},
     snapshot:()=>command('getSnapshot'),
     select:r=>evaluate(`import('./${shell}').then(m=>m.navigateSelection({area:'explore',view:'flyover',routeId:'${r.id}',revisionId:'${r.currentRevisionId}',dayId:null,variantId:null}))`),
   };
@@ -478,14 +495,50 @@ test('native Chrome real WebGL: cold steep/bendy/long route frames, manual, cont
       await until(()=>f.js(`document.getElementById('route-flyover').dataset.status==='ready'`));
     }
     if(prefix==='D1') await f.js(`nativeMap.queryTerrainElevation=()=>null;nativeMap.triggerRepaint();void 0`);
-    else if(prefix==='D3L') await f.js(`nativeMap.unproject=()=>({lng:0,lat:0});nativeMap.triggerRepaint();void 0`);
+    else if(prefix==='D3L') await f.js(`nativeMap.getSource('dem').setTiles(
+      [location.origin+'/kotr27/fixture/missing-dem/{z}/{x}/{y}']);void 0`);
     else await f.js(`nativeMap.fire('webglcontextlost');void 0`);
     await until(()=>f.js(`document.getElementById('route-flyover').dataset.status==='unavailable'`));
     assert.equal(await f.js(`document.getElementById('route-flyover').dataset.status`),'unavailable');
     assert.equal(await f.js(`document.querySelectorAll('#route-flyover canvas').length`),0);
     assert.equal((await f.snapshot()).distanceM,before.distanceM);
+    if(prefix==='D3L')assert.ok(f.network.some(url=>url.includes('/fixture/missing-dem/')),
+      'Actual DEM HTTP 404 requests, not a synthetic error event');
     t.diagnostic(`${prefix}: explicit fallback disposed canvas and preserved distance.`);
   }
+  assert.deepEqual(f.exceptions,[]);
+});
+
+test('native rendered terrain depth rejects an actual foreground DEM ridge at oblique pitch',async t=>{
+  const f=await fixture(t,{real:true});
+  await f.cmd('Emulation.setDeviceMetricsOverride',{width:800,height:900,deviceScaleFactor:1,mobile:false});
+  await f.navigate(f.pack.catalog.routes.find(r=>r.id==='rwgps-57873019'));
+  await f.command('setCameraMode','follow');
+  const before=await f.snapshot();
+  f.setRidge(before.position);
+  await f.js(`window.fixtureHeight=${before.position.rawElevationM};
+    document.getElementById('flyover-enable').click()`);
+  await until(()=>f.js(`Number.isFinite(JSON.parse(document.getElementById('official-terrain').dataset.frame||'{}').depthGap)`));
+  const actual=await f.js(`({proof:JSON.parse(document.getElementById('official-terrain').dataset.frame),
+    pitch:nativeMap.getPitch(),elevation:nativeMap.queryTerrainElevation(nativeMap.getCenter()),
+    image: nativeFrames.at(-1),visible:document.getElementById('official-terrain').style.visibility,
+    ringElevation:nativeMap.queryTerrainElevation([nativeMap.getCenter().lng,nativeMap.getCenter().lat-.01]),
+    eye:nativeMap.getFreeCameraOptions().position.toLngLat().toArray(),
+    eyeAltitude:nativeMap.getFreeCameraOptions().position.toAltitude()})`);
+  t.diagnostic('Native ridge geometry: '+JSON.stringify(actual));
+  assert.equal(actual.proof.clear,false,'Foreground GPU depth occludes the rider');
+  assert.equal(actual.proof.elevation,true,'Rider DEM itself is present and plausible');
+  assert.equal(actual.pitch,45,'No camera-flattening escape');
+  assert.equal(actual.visible,'hidden','An occluded initial view is never presented');
+  assert.ok(actual.image.green>0,'The native GPU really rendered the synthetic terrain');
+  t.diagnostic('Actual 3km foreground DEM ridge, 800–1600m from rider: '+JSON.stringify(actual));
+  // The initial load deadline is 12s, not the shorter post-presentation outage.
+  const deadline=Date.now()+14000;
+  while(Date.now()<deadline && await f.js(`document.getElementById('route-flyover').dataset.status!=='unavailable'`))
+    await new Promise(resolve=>setTimeout(resolve,200));
+  assert.equal(await f.js(`document.getElementById('route-flyover').dataset.status`),'unavailable');
+  assert.equal(await f.js(`document.querySelectorAll('#route-flyover canvas').length`),0);
+  assert.deepEqual((await f.snapshot()).position,before.position);
   assert.deepEqual(f.exceptions,[]);
 });
 
