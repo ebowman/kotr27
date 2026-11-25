@@ -1,6 +1,6 @@
 import { exampleCatalog, exampleRouteId } from './example-catalog.mjs';
 import { loadProfile, loadExampleTrack } from './semonzo-profile.mjs';
-import { areas, changeSelection, readSelection, selectionLink as publicSelectionLink } from './route-state.mjs';
+import { areas, changeSelection, readSelection, readPractice, selectionLink as publicSelectionLink } from './route-state.mjs';
 import { installPreferences, riderState } from './preferences-view.mjs';
 import { createCatalog } from './route-catalog.mjs';
 import { publicAssetReader, loadPlannerPack, createAnalysisStore } from './trip-planner.mjs';
@@ -16,6 +16,8 @@ import { installLocalRoutes } from './local-routes-view.mjs';
 import { isLocalId } from './local-route-storage.mjs';
 import { createRecordedReplay } from './recorded-replay.mjs';
 import { installRecordedReplay } from './recorded-replay-view.mjs';
+import { installEventGuide } from './event-guide-view.mjs';
+import { practiceWeek } from './event-guide.mjs';
 
 const el = id => document.getElementById(id);
 // Common Plan/Explore/pace views run in either shell. Do not lose memory-only
@@ -26,6 +28,9 @@ function selectionLink(state) {
   if (isLocalId(state.routeId)) {
     const q=new URLSearchParams({area:areas.includes(state.area)?state.area:'explore',
       view:['briefing','clock','sensitivity'].includes(state.view)?state.view:'briefing',route:state.routeId});
+    for (const [k,v] of Object.entries(readPractice(new URLSearchParams({
+      week:String(state.week??1),goal:state.goal??'social',cue:state.cue??'feel',
+    })))) if(v!=={week:1,goal:'social',cue:'feel'}[k]) q.set(k,String(v));
     return `./${documentEntry}?${q}`;
   }
   const legacy=state.routeId===exampleRouteId && state.area==='explore' &&
@@ -59,7 +64,7 @@ const resolveLocation = () => {
     const id=query.get('route'), record=isLocalId(id) && localLibrary.get(id);
     const state={area:areas.includes(query.get('area'))?query.get('area'):'explore',
       view:['briefing','clock','sensitivity'].includes(query.get('view'))?query.get('view'):'briefing',
-      routeId:id,revisionId:record?.revisionId??null,dayId:null,variantId:null,chapterId:null,distanceM:0};
+      routeId:id,revisionId:record?.revisionId??null,dayId:null,variantId:null,chapterId:null,distanceM:0,...readPractice(query)};
     const result={state,code:'local',message:localLibrary.missing(),notices:[],bundle:null,profile:null};
     if (!isLocalId(id) || query.getAll('route').length!==1) return {...result,message:'Invalid local identifier. Import again; no organizer route substituted.'};
     if (!record) return result;
@@ -125,10 +130,13 @@ function reflectPosition(snapshot, chapterId = null) {
   if (!isLocalId(next.routeId)) riderState.select(href);
   for (const a of shell.querySelectorAll('a')) {
     const patch=linkPatches.get(a);
+    if (patch && a.dataset.practice==='true')
+      patch.week=practiceWeek(current.profile?.chapters?.find(c=>c.id===snapshot.chapterId));
     if (patch) a.href=selectionLink(changeSelection(next,patch));
   }
 }
 const linkedBriefing = installRouteBriefing(shell, reflectPosition);
+const eventGuide = installEventGuide(shell,{navigate:navigateSelection,link});
 const linkedPace = installRoutePace(shell, riderState, reflectPosition);
 const linkedReplay = installRecordedReplay(shell,{onSeek:reflectPosition,
   plans:()=>catalog.data.routes.filter(r=>r.kind==='organizer').flatMap(r=>r.revisions.map(revision=>({
@@ -174,7 +182,7 @@ subscribePlayback(snapshot=>{
   }
 });
 installPreferences(shell.querySelector('.site-header'), {
-  forgetLocalFiles:()=>localLibrary.forget(),
+  forgetLocalFiles:()=>{eventGuide.forget();return localLibrary.forget();},
   edit:() => {
     if (el('personal') && !el('legacy-explorer').hidden) {
       el('personal').open = true;
@@ -295,7 +303,7 @@ function render(focus = false, notify = true, {preserveRecording = true} = {}) {
   const grid = node('div','',content); grid.className = 'site-grid';
   if (s.area === 'plan') {
     const intro = card(grid, 'A clear start, without a map',
-      'Build a trip from the approved provisional route pack below. Source names and revisions are preserved; dates, departures, fundraising and organizer logistics remain unverified. Nothing here is an announced schedule.');
+      'Build a trip from the approved provisional route pack below. The sourced event date range is listed in the event guide; day/calendar assignments, departures, fundraising and organizer logistics remain pending. Nothing here is an announced ride schedule.');
     const actions = node('div','',intro); actions.className = 'site-actions';
     if (bundle) {
       link(actions, 'Read selected route briefing', {area:'explore', view:'briefing'});
@@ -303,22 +311,25 @@ function render(focus = false, notify = true, {preserveRecording = true} = {}) {
       if (bundle.route.id === exampleRouteId) link(actions, 'Open optional example flyover', {area:'explore', view:'flyover'});
     }
   } else if (s.area === 'prepare') {
-    const prepare = card(grid, 'Start with the example', 'Practice weeks, packing checklist and chapter-linked training are not yet available. You can already read the example sections and explore optional time assumptions without entering FTP.');
+    const prepare = card(grid, 'Prepare without a prescription', 'Choose a start-anytime practice idea and optional packing checks below. Social/performance goals and feel/power cues are independent. Route sections are context, not a required workout.');
     const actions = node('div','',prepare); actions.className = 'site-actions';
     if (bundle) {
       link(actions, 'Read selected section', {area:'explore', view:'briefing'});
-      link(actions, 'Explore example time assumptions', {area:'explore', view:'clock'});
+      link(actions, 'Explore optional time assumptions', {area:'explore', view:'clock'});
     }
     card(grid, 'Rider information stays optional', 'The ride clock and sensitivity tools share one validated profile and use fictional assumptions for omitted values. Entries stay in memory unless you choose Remember in Preferences & privacy; never in navigation links.');
   } else if (s.area === 'ride-week') {
-    const ride = card(grid, 'Briefing · awaiting verification', 'Calendar mapping, departure, contacts, logistics and sourced stops are not published. There is no “today” or “tomorrow” assignment. This is not live tracking or turn-by-turn navigation.');
+    const ride = card(grid, 'Briefing · selected route, not a calendar assignment', 'Read the sourced event snapshot and revisioned route card below. Calendar mapping, departures, contacts, logistics and sourced stops remain pending. This is not live tracking or turn-by-turn navigation.');
     const actions = node('div','',ride); actions.className = 'site-actions';
     if (bundle) link(actions, 'Read selected route / section', {area:'explore', view:'briefing'});
-    const downloads = card(grid, 'Downloads in Plan; print, offline & weather pending', 'Choose route downloads in Plan. No ride card, saved offline pack or weather service is installed. Do not rely on cached pages for navigation or current event information.');
+    const downloads = card(grid, 'Downloads and print; offline & weather pending', 'Choose verified route downloads in Plan or print the cleared organizer card below. No saved offline pack or weather service is installed. Do not rely on cached pages or printed cards for navigation or current event information.');
     link(downloads, 'Open trip planner', {area:'plan', view:'briefing'});
   }
   if (bundle && s.area === 'explore') {
     const actions = node('div','',content); actions.className = 'site-actions';
+    const chapter=current.profile?.chapters?.find(c=>s.chapterId ? c.id===s.chapterId :
+      s.distanceM>=c.startM && (s.distanceM<c.endM || s.distanceM===current.profile.distanceM && c.endM===s.distanceM));
+    link(actions,'Practise selected section',{area:'prepare',view:'briefing',week:practiceWeek(chapter)}).dataset.practice='true';
     for (const [view,label] of (recordings.get(s.revisionId)?.status==='available' ?
       [['briefing','Recorded replay / planned comparison']] : bundle.route.kind==='local' ?
       [['briefing','Local route briefing'],['clock','Modeled pace (not recorded replay)']] : bundle.route.id === exampleRouteId ?
@@ -357,6 +368,7 @@ function render(focus = false, notify = true, {preserveRecording = true} = {}) {
   linkedBriefing.show(geometryView);
   linkedPace.show(geometryView,bundle?.route.id===exampleRouteId ? exampleAnalysis : null);
   linkedReplay.show(localLibrary.get(s.routeId),recording,s.area==='explore');
+  eventGuide.show(current,catalog.data.events.find(e=>e.id==='kotr-2027'));
   localLibrary.show(s,recording);
   // The official comparison workspace never retains private analyses/names.
   // Local comparison/replay is a separate capability, not a catalog insertion.

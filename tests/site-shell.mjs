@@ -119,12 +119,13 @@ for (const width of [320,375,1280]) test(`packaged shell ${width}px: no-map, his
   await ready();
   assert.match(await js('location.href'),/chapter=high-step/);
   assert.equal(await js('document.activeElement.id'),'site-heading');
-  assert.match(await js('document.body.innerText'),/not yet available/);
+  assert.match(await js('document.body.innerText'), /Find a practice ride · start anytime/);
+  assert.match(await js('document.body.innerText'), /Packing|packing checklist/);
   await js(`document.querySelector('.site-nav a:nth-child(4)').click()`);
   await until(() => js(`document.querySelector('.site-nav a:nth-child(4)')?.getAttribute('aria-current') === 'page'`));
   await ready();
   assert.match(await js('location.href'),/chapter=high-step/);
-  assert.match(await js('document.body.innerText'),/no “today” or “tomorrow”/);
+  assert.match(await js('document.body.innerText'), /No “today” or “tomorrow” route is inferred/);
   await js('history.back()');
   await until(() => js(`document.querySelector('#site-heading')?.textContent === 'Prepare for the ride'`));
   await ready();

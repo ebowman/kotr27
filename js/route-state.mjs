@@ -4,6 +4,13 @@ export const areas = ['plan', 'explore', 'prepare', 'ride-week'];
 export const views = ['briefing', 'clock', 'sensitivity', 'flyover', 'compare', 'skyline', 'radial'];
 const publicId = value => /^[a-z][a-z0-9-]*$/.test(value || '');
 const keys = ['area', 'view', 'day', 'variant', 'route', 'rev', 'chapter', 'at'];
+export function readPractice(query) {
+  const valid = {week:['1','2','3','4'], goal:['social','performance'], cue:['feel','power']};
+  return Object.fromEntries(Object.entries(valid).map(([key,values]) => {
+    const value=query.getAll(key).length===1 && values.includes(query.get(key)) ? query.get(key) : values[0];
+    return [key,key==='week'?Number(value):value];
+  }));
+}
 
 export function readSelection(input, catalog, profiles = {}, exampleId = 'semonzo-example', {loading = false} = {}) {
   const url = new URL(input, 'https://navigation.invalid/');
@@ -17,8 +24,12 @@ export function readSelection(input, catalog, profiles = {}, exampleId = 'semonz
     dayId:q.get('day') || null, variantId:q.get('variant') || null,
     routeId:q.get('route') || null, revisionId:q.get('rev'),
     chapterId:q.get('chapter') || null, distanceM:0,
+    ...readPractice(q),
   };
   const notices = [];
+  if (['week','goal','cue'].some(key=>q.has(key) &&
+      (q.getAll(key).length!==1 || String(state[key])!==q.get(key))))
+    notices.push('Practice choice unavailable; showing week 1 / social / feel defaults for invalid fields.');
   const fail = (code, message) => ({state, code, message, notices, bundle:null, profile:null});
   if (q.has('route') && !state.routeId) return fail('invalid', 'This route link cannot be opened: no public route identifier.');
   // Empty revision is a public, non-sensitive blocked-link marker. Unlike an
@@ -108,6 +119,9 @@ export function selectionLink(state) {
   if (state.revisionId != null && !publicId(state.revisionId)) q.set('rev', '');
   if (state.routeId && !publicId(state.routeId)) q.set('route', '');
   if (Number.isFinite(state.distanceM) && state.distanceM > 0) q.set('at', String(Math.round(state.distanceM * 1000) / 1000));
+  if ([1,2,3,4].includes(state.week)) q.set('week',String(state.week));
+  if (['social','performance'].includes(state.goal)) q.set('goal',state.goal);
+  if (['feel','power'].includes(state.cue)) q.set('cue',state.cue);
   const page = state.area === 'explore' && state.view !== 'flyover' ? 'explore.html' : 'index.html';
   return `./${page}?${q}`;
 }

@@ -25,6 +25,7 @@ export function validatePreferenceLink(link) {
     day:/^[a-z][a-z0-9-]*$/, variant:/^[a-z][a-z0-9-]*$/,
     route:/^(?:[a-z][a-z0-9-]*)?$/, rev:/^(?:[a-z][a-z0-9-]*)?$/,
     chapter:/^[a-z][a-z0-9-]*$/, at:/^(?:0|[1-9]\d*)(?:\.\d{1,3})?$/,
+    week:/^[1-4]$/, goal:/^(social|performance)$/, cue:/^(feel|power)$/,
   };
   return url.searchParams.has('area') && url.searchParams.has('view') &&
     [...url.searchParams].every(([key, value]) => allowed[key]?.test(value) &&

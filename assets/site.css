@@ -97,6 +97,26 @@ a { color:inherit; text-underline-offset:.2em }
   .comparison-route details { border-left:3px solid var(--line); padding-left:.5rem }
 }
 #trip-itinerary, #trip-download-results { padding-left:1.4rem }
+#event-guide { margin:2rem 0; min-width:0; overflow-wrap:anywhere }
+#event-guide > section { margin:1.5rem 0; padding:1rem; border:1px solid var(--line); min-width:0 }
+#event-guide dt { font-weight:700 }
+#event-guide dd { margin:0 0 .75rem }
+#preparation-guide label { min-height:44px; margin:.6rem 0 }
+#preparation-guide select { display:block; width:100% }
+#preparation-guide input { min-width:1.2rem; min-height:1.2rem; margin:.5rem }
+@media print {
+  @page { margin:15mm }
+  body { background:white !important; color:black !important; font:10pt/1.4 system-ui,sans-serif !important }
+  body > :not(main), main > :not(#site-shell), #site-shell > :not(#event-guide) { display:none !important }
+  body main { max-width:none; padding:0; margin:0 }
+  #event-guide, #event-briefing, #ride-card { display:block !important; margin:0 0 1rem; padding:0; border:0 }
+  #event-guide > :not(#event-briefing):not(#ride-card), #event-guide button,
+  #event-guide .site-actions { display:none !important }
+  #event-guide p, #event-guide dd { max-width:none; orphans:3; widows:3 }
+  #event-guide h2, #event-guide h3, #event-guide dt { break-after:avoid }
+  #event-guide a { color:black; text-decoration:none }
+  #event-briefing a::after { content:" (" attr(href) ")"; overflow-wrap:anywhere }
+}
 #legacy-explorer, #climb { margin-top:1.5rem }
 #legacy-explorer h2 { font-size:clamp(1.7rem,4vw,2.4rem) }
 @media (prefers-reduced-motion:reduce) {
