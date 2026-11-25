@@ -2,6 +2,12 @@
 
 Architecture decision · `kotr27-800.3` · observed **2026-11-24**
 
+Implementation follow-up: [optional offline day packs](offline-packs.md)
+(`kotr27-800.20`) documents the release transaction, conservative coverage,
+test commands and Chrome MCP rehearsal. The owner has deferred Safari and
+fullscreen qualification; the original broad support table below is not a
+claim that those targets have passed.
+
 ## Decision and evidence
 
 Recommend an **artifact-first static core**: local route selection, calculations,

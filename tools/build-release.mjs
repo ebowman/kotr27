@@ -5,6 +5,7 @@ import { basename, dirname, extname, join, relative, resolve, sep } from 'node:p
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createCatalog, verifyAsset } from '../js/route-catalog.mjs';
 import { readRoutePack } from './route-pack.mjs';
+import { canonical, validateOfflineManifest, offlineRouteInventory } from '../js/offline-contract.mjs';
 
 const digest = data => createHash('sha256').update(data).digest('hex').slice(0, 24);
 function replace(text, from, to) {
@@ -77,9 +78,13 @@ async function writeRelease(root, out, routePack) {
     'js/preference-storage.mjs': ['./rider-scenario.mjs','./itinerary.mjs'],
     'js/rider-preferences.mjs': ['./rider-scenario.mjs','./preference-storage.mjs','./itinerary.mjs'],
     'js/preferences-view.mjs': ['./preference-storage.mjs','./rider-preferences.mjs'],
+    'js/offline-contract.mjs': ['./route-pack-contract.mjs'],
+    'js/offline-storage.mjs': [],
+    'js/offline-client.mjs': ['./offline-contract.mjs','./offline-storage.mjs'],
+    'js/offline-view.mjs': ['./offline-client.mjs','./offline-contract.mjs'],
     'js/route-time.mjs': ['./route-analysis.mjs','./ascent-estimator.mjs'],
     'js/route-pace.mjs': ['./route-time.mjs','./ascent-estimator.mjs'],
-    'js/trip-planner-view.mjs': ['./itinerary.mjs','./trip-planner.mjs','./route-pace.mjs'],
+    'js/trip-planner-view.mjs': ['./itinerary.mjs','./trip-planner.mjs','./route-pace.mjs','./route-catalog.mjs'],
     'js/climb-sensitivity.mjs': ['./ascent-estimator.mjs'],
     'js/climb-sensitivity-view.mjs': ['./climb-sensitivity.mjs'],
     'js/ride-clock.mjs': [],
@@ -105,7 +110,7 @@ async function writeRelease(root, out, routePack) {
     'js/local-routes-view.mjs': ['./local-route-import.mjs','./local-route-storage.mjs','./route-briefing.mjs','./route-analysis.mjs'],
     'js/recorded-replay.mjs': ['./route-analysis.mjs','./route-time.mjs','./ride-clock.mjs'],
     'js/recorded-replay-view.mjs': ['./recorded-replay.mjs','./route-session.mjs','./route-pace.mjs','./route-briefing.mjs','./route-analysis.mjs'],
-    'js/site-shell.mjs': ['./example-catalog.mjs','./semonzo-profile.mjs','./route-state.mjs','./preferences-view.mjs','./route-catalog.mjs','./trip-planner.mjs','./trip-planner-view.mjs','./route-playback-adapters.mjs','./route-session.mjs','./route-briefing-view.mjs','./route-flyover-view.mjs','./route-pace.mjs','./route-pace-view.mjs','./route-comparison-view.mjs','./route-comparison.mjs','./local-routes-view.mjs','./local-route-storage.mjs','./recorded-replay.mjs','./recorded-replay-view.mjs','./event-guide.mjs','./event-guide-view.mjs','./route-weather-view.mjs'],
+    'js/site-shell.mjs': ['./example-catalog.mjs','./semonzo-profile.mjs','./route-state.mjs','./preferences-view.mjs','./route-catalog.mjs','./trip-planner.mjs','./trip-planner-view.mjs','./route-playback-adapters.mjs','./route-session.mjs','./route-briefing-view.mjs','./route-flyover-view.mjs','./route-pace.mjs','./route-pace-view.mjs','./route-comparison-view.mjs','./route-comparison.mjs','./local-routes-view.mjs','./local-route-storage.mjs','./recorded-replay.mjs','./recorded-replay-view.mjs','./event-guide.mjs','./event-guide-view.mjs','./route-weather-view.mjs','./offline-view.mjs'],
     'assets/flyover.js': ['../js/semonzo-profile.mjs','../js/route-session.mjs','../js/route-playback-adapters.mjs'],
     'js/chapter-reveal.mjs': [], 'js/plan-comparison.mjs': [],
     'js/rider-controls.mjs': ['./preferences-view.mjs','./chapter-reveal.mjs','./plan-comparison.mjs','./site-shell.mjs','./ride-clock.mjs','./climb-sensitivity-view.mjs'],
@@ -137,6 +142,26 @@ async function writeRelease(root, out, routePack) {
       `<meta name="kotr-release" content="RELEASE_ID">\n  <script>${check}</script>`);
     await writeFile(join(out, entry), replace(html, 'content="RELEASE_ID"', `content="${digest(html)}"`));
   }
+  // This manifest binds final HTML, every rewritten module dependency and the
+  // approved route graph. No recursive source discovery or personal stores.
+  const routePaths = new Set([...routePack.files.keys()].filter(p=>!p.includes('route-manifest-')));
+  const common = ['index.html','explore.html',...names.values(),packEntry,
+    ...[...routePack.files.keys()].filter(p=>!routePaths.has(p))];
+  const resources=[];
+  for(const path of [...common,...routePaths]) {
+    const bytes=await readFile(join(out,path));
+    resources.push({path,bytes:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex')});
+  }
+  const body={schema:1,common,resources,catalog:JSON.parse(routePack.pointerBytes).path,
+    days:routePack.pack.catalog.days.map(d=>({id:d.id,name:d.name})),
+    routes:offlineRouteInventory(routePack.pack.catalog)};
+  const offline={...body,release:createHash('sha256').update(canonical(body)).digest('hex')};
+  await validateOfflineManifest(offline,path=>readFile(join(out,path)).then(bytes=>new Response(bytes)));
+  await writeFile(join(out,'offline-release.json'),canonical(offline)+'\n');
+  const worker=await readFile(new URL('./offline-worker.js',import.meta.url),'utf8');
+  await writeFile(join(out,'offline-worker.js'),
+    replace(replace(worker,"'../js/offline-contract.mjs'",`'./${names.get('js/offline-contract.mjs')}'`),
+      "'../js/offline-storage.mjs'",`'./${names.get('js/offline-storage.mjs')}'`));
   await writeFile(join(out, '.nojekyll'), '');
 }
 

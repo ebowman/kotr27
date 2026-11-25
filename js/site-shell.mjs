@@ -20,6 +20,7 @@ import { installRecordedReplay } from './recorded-replay-view.mjs';
 import { installEventGuide } from './event-guide-view.mjs';
 import { practiceWeek } from './event-guide.mjs';
 import { installRouteWeather } from './route-weather-view.mjs';
+import { installOffline } from './offline-view.mjs';
 
 const el = id => document.getElementById(id);
 // Common Plan/Explore/pace views run in either shell. Do not lose memory-only
@@ -42,6 +43,27 @@ function selectionLink(state) {
 }
 const labels = {plan:'Plan', explore:'Explore', prepare:'Prepare', 'ride-week':'Ride week'};
 let catalog = exampleCatalog, planner = null, comparison = null, catalogLoading = true;
+const withdrawnRoutes=new Set();
+function applyWithdrawals(ids) {
+  for(const id of ids)withdrawnRoutes.add(id);
+  const data=structuredClone(catalog.data);
+  for(const route of data.routes) if(withdrawnRoutes.has(route.id)) {
+    for(const revision of route.revisions) {
+      delete profiles[revision.id];playbackFactories.delete(revision.id);
+      unregisterPlaybackRoute(route.id,revision.id);routePace.forgetRoute(route.id);
+    }
+    route.status='withdrawn';route.currentRevisionId=null;route.revisions=[];
+  }
+  data.annotations=data.annotations.filter(a=>!withdrawnRoutes.has(a.routeId));
+  catalog=createCatalog(data);
+  planner?.withdraw([...withdrawnRoutes]);
+  // Comparison's cached models cannot outlive a permission withdrawal.
+  if(comparison) {comparison.root.remove();comparison=null;}
+  if(current) {current=resolveLocation();render(false);}
+}
+window.addEventListener('kotr-offline-withdrawn',event=>{
+  if(event.detail.some(id=>!withdrawnRoutes.has(id)))applyWithdrawals(event.detail);
+});
 const profiles = {};
 const pendingProfiles = new Set();
 const playbackFactories = new Map();
@@ -82,6 +104,8 @@ const resolveLocation = () => {
   const revision = query.get('rev') ?? catalog.data.routes.find(r=>r.id===query.get('route'))?.currentRevisionId;
   const resolved = readSelection(location.href, catalog, profiles, exampleRouteId,
     {loading:profileLoading || catalogLoading || pendingProfiles.has(revision)});
+  if(withdrawnRoutes.has(query.get('route'))) return {...resolved,code:'withdrawn',bundle:null,profile:null,notices:[],
+    message:'This route has been withdrawn. Its details and exports are unavailable; no replacement has been selected.'};
   if (catalogLoading && resolved.code === 'missing')
     return {...resolved, code:'loading', message:'Loading approved route catalog…'};
   return resolved;
@@ -114,7 +138,7 @@ shell.innerHTML = `
   </details>
   <div id="site-content"></div>
   <footer class="site-footer">Static companion preview · Not for navigation. No account or FTP needed.
-    No offline pack is installed by this site; ordinary browser caching is not an offline guarantee.</footer>`;
+    Offline packs are optional; ordinary browser caching is not an offline guarantee.</footer>`;
 document.querySelector('main').append(shell.querySelector('.site-footer'));
 function reflectPosition(snapshot, chapterId = null) {
   if (!snapshot.position || snapshot.identity?.routeId !== current.state.routeId ||
@@ -141,6 +165,7 @@ const linkedBriefing = installRouteBriefing(shell, reflectPosition);
 const linkedFlyover = installRouteFlyover(shell, reflectPosition);
 const eventGuide = installEventGuide(shell,{navigate:navigateSelection,link});
 const weather = installRouteWeather(shell);
+const offline = installOffline(shell,{storageBarrier:()=>riderState.ready});
 const linkedPace = installRoutePace(shell, riderState, reflectPosition);
 const linkedReplay = installRecordedReplay(shell,{onSeek:reflectPosition,
   plans:()=>catalog.data.routes.filter(r=>r.kind==='organizer').flatMap(r=>r.revisions.map(revision=>({
@@ -186,6 +211,7 @@ subscribePlayback(snapshot=>{
   }
 });
 installPreferences(shell.querySelector('.site-header'), {
+  forgetOffline:offline.forget,
   forgetLocalFiles:()=>{eventGuide.forget();weather.forget();return localLibrary.forget();},
   edit:() => {
     if (el('personal') && !el('legacy-explorer').hidden) {
@@ -326,7 +352,7 @@ function render(focus = false, notify = true, {preserveRecording = true} = {}) {
     const ride = card(grid, 'Briefing · selected route, not a calendar assignment', 'Read the sourced event snapshot and revisioned route card below. Calendar mapping, departures, contacts, logistics and sourced stops remain pending. This is not live tracking or turn-by-turn navigation.');
     const actions = node('div','',ride); actions.className = 'site-actions';
     if (bundle) link(actions, 'Read selected route / section', {area:'explore', view:'briefing'});
-    const downloads = card(grid, 'Downloads, print and optional weather', 'Choose verified route downloads in Plan or print the cleared organizer card below. Optional public start-area weather is below; no saved offline pack is installed. Do not rely on cached pages or printed cards for navigation or current event information.');
+    const downloads = card(grid, 'Downloads, print and optional weather', 'Choose verified route downloads in Plan or print the cleared organizer card below. Save optional offline day packs below before disconnecting. Weather and terrain have no offline coverage. Do not rely on cached pages or printed cards for navigation or current event information.');
     link(downloads, 'Open trip planner', {area:'plan', view:'briefing'});
   }
   if (bundle && s.area === 'explore') {
@@ -499,6 +525,7 @@ const catalogReady = (async () => {
     for (const route of loaded.catalog.data.routes) for (const revision of route.revisions) {
       pendingProfiles.add(revision.id);
       analysisFor(route.id,revision.id).then(analysis=>{
+        if(withdrawnRoutes.has(route.id))return;
         profiles[revision.id]=analysis;
         if (analysis.status==='supported') {
           playbackFactories.set(revision.id,{analysis,make:estimate=>createAnalysisPlaybackRoute(analysis,{estimate})});
@@ -521,6 +548,7 @@ const catalogReady = (async () => {
       }))});
     // Plan's choices/downloads precede its secondary comparison workspace.
     shell.append(comparison.root);
+    if(withdrawnRoutes.size)applyWithdrawals([...withdrawnRoutes]);
     el('site-catalog-status').textContent = 'Approved provisional routes · source labels, not a calendar schedule';
   } catch {
     el('site-catalog-status').textContent = 'Approved route pack unavailable or failed verification. Reload to retry; example remains separate.';
@@ -541,7 +569,7 @@ const exampleReady = (async () => {
   profileLoading = false;
 })();
 export const shellReady = (async () => {
-  await Promise.all([catalogReady, exampleReady]);
+  await Promise.all([catalogReady, exampleReady, offline.ready]);
   current = resolveLocation();
   render((location.search.length > 0 || location.hash.length > 0) && document.activeElement === document.body);
   shell.dataset.ready = 'true';

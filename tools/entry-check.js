@@ -12,8 +12,12 @@ addEventListener('pageshow', async () => {
     }
     return;
   }
+  // A controlled document belongs to a whole saved graph. Its offline panel
+  // checks the network-only manifest and offers explicit update/reload instead
+  // of replacing HTML underneath old clients. No cached response proves current.
+  if (navigator.serviceWorker?.controller?.scriptURL.endsWith('/offline-worker.js')) return;
   try {
-    const response = await fetch(here, {cache:'no-cache', mode:'same-origin'});
+    const response = await fetch(here, {cache:'no-cache', mode:'same-origin', headers:{'X-KOTR-Freshness':'1'}});
     if (!response.ok) return;
     const next = (await response.text()).match(/<meta name="kotr-release" content="([a-f0-9]{24})">/);
     if (!next || next[1] === release) return;

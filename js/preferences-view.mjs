@@ -21,7 +21,7 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') riderState.check();
 });
 
-export function installPreferences(parent, {edit, selection, forgetLocalFiles}) {
+export function installPreferences(parent, {edit, selection, forgetLocalFiles, forgetOffline}) {
   if(typeof forgetLocalFiles!=='function')throw TypeError('Local-file deletion API required for global Forget');
   let forgetting=false;
   const details = document.createElement('details');
@@ -47,10 +47,10 @@ export function installPreferences(parent, {edit, selection, forgetLocalFiles}) 
       on focus and before saves; inactive tabs may display old entries until focused.</p>
     <p id="preference-status" role="status" aria-live="polite"></p>
     <a id="preference-route" hidden>Open remembered route / revision</a>
-    <button id="preference-forget" type="button">Forget all local data: rider values, preferences &amp; files</button>
+    <button id="preference-forget" type="button">Forget all local data: rider values, preferences, files &amp; offline packs</button>
     <p id="preference-forget-status" role="status" aria-live="polite"></p>
     <p>Forget resets active rider calculations and local file views, revokes pending saves and removes this app’s stored
-      rider settings, route/UI preferences and local originals. Unrelated site data and official routes are unaffected. No offline pack is installed.
+      rider settings, route/UI preferences, local originals and optional offline packs. Unrelated site data is unaffected.
       Browser site-data settings can also remove HTTP cache. Personal-settings import/export is not approved.</p>`;
   parent.append(details);
   const el = id => details.querySelector(`#${id}`);
@@ -69,18 +69,19 @@ export function installPreferences(parent, {edit, selection, forgetLocalFiles}) 
     if(forgetting)return;
     forgetting=true;
     el('preference-forget').disabled=true;
-    el('preference-forget-status').textContent='Clearing all app-owned local data… Both storage categories must confirm deletion.';
+    el('preference-forget-status').textContent='Clearing all app-owned local data… Every storage category must confirm deletion.';
     // Both APIs invalidate memory/pending work synchronously before their first
     // await. Neither category borrows the other's consent or deletion authority.
     const invoke=operation=>{
       try {return operation();}
       catch(error) {return Promise.reject(error);}
     };
-    const results=await Promise.allSettled([invoke(()=>riderState.forget()),invoke(forgetLocalFiles)]);
-    const labels=['Rider values/preferences','Local files'];
+    const results=await Promise.allSettled([invoke(()=>riderState.forget()),invoke(forgetLocalFiles),
+      invoke(forgetOffline??(()=>({confirmed:true})))]);
+    const labels=['Rider values/preferences','Local files','Offline packs'];
     const confirmed=results.map(r=>r.status==='fulfilled' && r.value?.confirmed===true);
     el('preference-forget-status').textContent=confirmed.every(Boolean) ?
-      'All app-owned local data removed: rider values, preferences and local files. Memory cleared; consent revoked.' :
+      'All app-owned local data removed: rider values, preferences, local files and offline packs. Memory cleared; consent revoked.' :
       'Forget incomplete. '+results.map((r,i)=>`${labels[i]}: ${confirmed[i] ? 'removed' :
         `deletion NOT confirmed (${r.status==='fulfilled' ? r.value?.message : r.reason?.message})`}.`).join(' ')+
         ' Stored data may remain. Retry Forget or use browser site-data controls.';

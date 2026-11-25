@@ -1,6 +1,7 @@
 import { emptyItinerary, itineraryRows, chooseRoute, tripTotals } from './itinerary.mjs';
 import { plannerAnalysis, routeSourceLink, downloadRoutes, browserDownload } from './trip-planner.mjs';
 import { routePace, paceScenarios, formatDuration } from './route-pace.mjs';
+import { createCatalog } from './route-catalog.mjs';
 
 const node = (tag, text, parent) => {
   const e = document.createElement(tag); e.textContent = text; parent.append(e); return e;
@@ -155,5 +156,13 @@ export function installTripPlanner(parent, {pack, catalog, read, preferences, pr
       analysisFor(route.id, route.currentRevisionId) : plannerAnalysis(pack, read, route))); }
     catch { errors.add(route.id); }
   })).then(() => { pending = false; render(); });
-  return {root, ready};
+  return {root, ready, withdraw(ids) {
+    const data=structuredClone(catalog.data);
+    for(const route of data.routes) if(ids.includes(route.id)) {
+      for(const revision of route.revisions) analyses.delete(revision.id);
+      route.status='withdrawn';route.currentRevisionId=null;route.revisions=[];
+    }
+    data.annotations=data.annotations.filter(a=>!ids.includes(a.routeId));
+    catalog=createCatalog(data);generation++;render();
+  }};
 }

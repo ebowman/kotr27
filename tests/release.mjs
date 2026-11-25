@@ -96,7 +96,7 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   const packPointerName = 'assets/route-pack.' +
     createHash('sha256').update(routePack.pointerBytes).digest('hex').slice(0,24) + '.json';
   const routeFiles = [...routePack.files.keys(),packPointerName];
-  const expected = ['assets','js','.nojekyll','index.html','explore.html','assets/flyover.js',
+  const expected = ['assets','js','.nojekyll','index.html','explore.html','offline-release.json','offline-worker.js','assets/flyover.js',
     'assets/terrain.js','assets/semonzo.gpx','assets/site.css','js/config.js',...['ascent-estimator','chapter-reveal',
       'climb-sensitivity','climb-sensitivity-view','plan-comparison','ride-clock',
       'rider-controls','rider-scenario','rider-preferences','preference-storage','preferences-view',
@@ -105,7 +105,8 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
       'route-session','route-briefing','route-briefing-view','route-flyover','route-flyover-view','route-terrain-view','route-comparison','route-comparison-view',
       'route-pace','route-pace-view','local-route-parser','local-route-worker','local-route-import',
       'local-route-storage','local-routes-view','recorded-replay','recorded-replay-view',
-      'event-guide','event-guide-view','route-weather','route-weather-view'].map(n=>`js/${n}.mjs`)];
+      'event-guide','event-guide-view','route-weather','route-weather-view',
+      'offline-contract','offline-storage','offline-client','offline-view'].map(n=>`js/${n}.mjs`)];
   expected.push(...routeFiles.map(n=>n.replace(/\.[0-9a-f]{24}\./,'.')));
   assert.deepEqual(names.map(n=>n.replace(/\.[0-9a-f]{24}\./,'.')).sort(),expected.sort());
   for (const n of names.filter(n=>n.includes('/'))) {
@@ -116,7 +117,7 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   assert.ok(!names.some(n=>/relief|\.svg$|\.webp$/.test(n)));
   assert.doesNotMatch(await readFile(join(a,'index.html'),'utf8'), /grappa-relief|ascent\.svg|relief-beacon/);
   assert.ok(!names.includes('assets/private.txt'));
-  assert.deepEqual(names.filter(n=>n.endsWith('.json')).sort(),routeFiles.filter(n=>n.endsWith('.json')).sort());
+  assert.deepEqual(names.filter(n=>n.endsWith('.json')).sort(),[...routeFiles.filter(n=>n.endsWith('.json')),'offline-release.json'].sort());
   // Check static AND dynamic local imports against the final hashed inventory.
   for (const name of names.filter(n=>/\.(mjs|js)$/.test(n))) {
     const text = await readFile(join(a,name),'utf8');
@@ -158,9 +159,11 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
     const affected = n => changed.some(m=>n.startsWith(`js/${m}.`));
     assert.deepEqual(beforeNames.filter(n=>!afterNames.includes(n)).sort(),beforeNames.filter(affected).sort());
     assert.deepEqual(afterNames.filter(n=>!beforeNames.includes(n)).sort(),afterNames.filter(affected).sort());
-    for (const name of beforeNames.filter(n=>extname(n) && !['explore.html','index.html'].includes(n) && !affected(n))) {
+    for (const name of beforeNames.filter(n=>extname(n) && !['explore.html','index.html','offline-release.json'].includes(n) && !affected(n))) {
       assert.deepEqual(await readFile(join(previous,name)),await readFile(join(next,name)),name);
     }
+    assert.notDeepEqual(await readFile(join(previous,'offline-release.json')),await readFile(join(next,'offline-release.json')),
+      'offline manifest binds the whole changed release');
     assert.notEqual(await marker(previous),await marker(next));
     assert.notEqual(await indexMarker(previous),await indexMarker(next));
     previous = next;
@@ -170,7 +173,7 @@ test('ordinary warm Pages URL switches releases; unchanged and failed probes sta
   await edit('js/route-catalog.mjs', 'export function createCatalog', '/* release fixture */ export function createCatalog');
   await build(src,validatorRelease);
   const beforeValidator = await files(previous), afterValidator = await files(validatorRelease);
-  const catalogDependents = /\/(?:route-catalog|route-pack-contract|route-analysis-loader|trip-planner|trip-planner-view|example-catalog|semonzo-profile|route-playback-adapters|rider-controls|flyover|site-shell)\./;
+  const catalogDependents = /\/(?:route-catalog|route-pack-contract|route-analysis-loader|trip-planner|trip-planner-view|example-catalog|semonzo-profile|route-playback-adapters|rider-controls|flyover|site-shell|offline-contract|offline-client|offline-view)\./;
   assert.deepEqual(beforeValidator.filter(n=>!afterValidator.includes(n)).sort(),
     beforeValidator.filter(n=>catalogDependents.test(n)).sort());
   for (const entry of ['index.html','explore.html'])
