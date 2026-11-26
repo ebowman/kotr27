@@ -61,6 +61,210 @@ async function screenshot(b,name) {
   await writeFile(join(dir,name+'.png'),Buffer.from(data,'base64'));
 }
 
+test('built baseline: first Grappa what-if loop in 2D and terrain, coherent clocks, phone and enlarged hit targets',async t=>{
+  const f=await fixture(t);
+  assert.ok(JSON.parse(f.files.get('offline-release.json')).common.some(p=>/^js\/ride-comparison\.[a-f0-9]{24}\.mjs$/.test(p)));
+  for (const terrain of [false,true]) for (const [width,height] of [[1440,900],[375,812]]) {
+    const outside=[],b=await f.chrome(m=>{
+      if (m.method==='Network.requestWillBeSent' && /^https?:/.test(m.params.request.url) &&
+          !m.params.request.url.startsWith(f.base)) outside.push(m.params.request.url);
+    });
+    await b.cmd('Page.enable');await b.cmd('Network.enable');
+    await b.cmd('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
+    await b.cmd('Page.addScriptToEvaluateOnNewDocument',{source:`
+      Object.defineProperty(window,'mapboxgl',{configurable:true,set(gl){
+        Object.defineProperty(window,'mapboxgl',{value:gl,configurable:true});
+        gl.Map=new Proxy(gl.Map,{construct(T,args){return window.observedTerrain=new T(...args);}});
+      }});`});
+    await b.cmd('Page.navigate',{url:f.base+(terrain?'':'?terrain=off')});await ready(b);
+    const pointer=async(selector,scroll=false)=>{
+      if (scroll) await b.js(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'center'})`);
+      const p=await b.js(`(()=>{
+        const el=document.querySelector(${JSON.stringify(selector)}),r=el.getBoundingClientRect();
+        const x=r.left+r.width/2,y=r.top+r.height/2;
+        return {x,y,hit:el.contains(document.elementFromPoint(x,y)),width:r.width,height:r.height};
+      })()`);
+      assert.ok(p.hit && p.width>=44 && p.height>=44,JSON.stringify({selector,...p}));
+      await b.cmd('Input.dispatchMouseEvent',{type:'mousePressed',x:p.x,y:p.y,button:'left',clickCount:1});
+      await b.cmd('Input.dispatchMouseEvent',{type:'mouseReleased',x:p.x,y:p.y,button:'left',clickCount:1});
+    };
+    const state=()=>b.js(`({
+      ...document.getElementById('comparison-hud').dataset,
+      active:!document.getElementById('comparison-hud').hidden,
+      distance:Number(document.getElementById('cockpit').dataset.distance),
+      elapsed:Number(document.getElementById('cockpit').dataset.seconds),
+      origin:Number(document.getElementById('cockpit').dataset.origin),
+      motion:document.getElementById('cockpit').dataset.motion,
+      notice:document.getElementById('comparison-notice').textContent,
+      speed:document.getElementById('ride-speed').textContent,
+      cadence:document.getElementById('ride-cadence').textContent
+    })`);
+    const readyTerrain=async()=>{
+      if (!terrain) return;
+      for (let i=0;i<34;i++) {
+        const s=await b.js(`({
+          proof:JSON.parse(document.getElementById('terrain').dataset.frame||'{}'),
+          online:document.getElementById('player').classList.contains('online'),
+          status:document.getElementById('terrain-status').textContent
+        })`);
+        if (s.online && s.proof.ok && s.proof.current) return;
+        assert.ok(!s.status.includes('unavailable'),JSON.stringify(s));await sleep(500);
+      }
+      assert.fail('Baseline journey terrain did not verify');
+    };
+    await pointer('#fly');await readyTerrain();
+    const storageBefore=await b.js(`[Object.keys(localStorage).sort(),Object.keys(sessionStorage).sort(),document.cookie]`);
+    await pointer('#profile-toggle');await pointer('#main-climb',true);
+    await pointer('#pin-baseline',true);
+    let s=await state();
+    assert.equal(s.origin,10750);assert.equal(s.elapsed,0);assert.equal(s.active,true);
+    assert.equal(Number(s.distanceDelta),0);assert.match(s.notice,/Pending commands are excluded/);
+    await pointer('#profile-close',true);await readyTerrain();
+    const spatial=await b.js(`document.querySelector('.player-bottom').getBoundingClientRect().top-
+      document.querySelector('.player-status').getBoundingClientRect().bottom`);
+    assert.ok(spatial>=height/2,JSON.stringify({width,height,terrain,spatial}));
+    await screenshot(b,`baseline-${width}-${terrain?'terrain':'2d'}-pinned`);
+    await pointer('#play');
+    await until(async()=>Number((await state()).seconds)>5);
+    assert.ok(Math.abs(Number((await state()).distanceDelta))<.02,'Identical presented trials coincide');
+    await pointer('[data-effort="0.9"]');
+    await until(async()=>Number((await state()).distanceDelta)>2);
+    // Measure rendered poses with the ghost active, not only RAF cadence.
+    await b.js(`(()=>{
+      window.ghostMotion={renders:[],hidden:0,mismatch:0,status:0};
+      const el=document.getElementById('terrain'),hud=document.getElementById('comparison-hud');
+      const observer=new MutationObserver(records=>ghostMotion.status+=records.length);
+      for(const id of ['terrain-status','ride-notice'])observer.observe(document.getElementById(id),{childList:true});
+      const sample=()=>{
+        ghostMotion.renders.push(performance.now());
+        if(${terrain} && getComputedStyle(el).visibility!=='visible')ghostMotion.hidden++;
+        if(${terrain} && Number(el.dataset.distance)!==Number(document.getElementById('cockpit').dataset.distance))ghostMotion.mismatch++;
+        const ghost=document.querySelector(${JSON.stringify(terrain?'.route-ghost':'#outline-ghost')});
+        if(Math.abs(Number(ghost.dataset.distance)-Number(hud.dataset.baselineDistance))>3)ghostMotion.mismatch++;
+      };
+      if(${terrain})observedTerrain.on('render',sample);
+      else {let handle;const frame=()=>{sample();handle=requestAnimationFrame(frame)};handle=requestAnimationFrame(frame);
+        ghostMotion.stopFrame=()=>cancelAnimationFrame(handle);}
+      ghostMotion.dispose=()=>{observer.disconnect();if(${terrain})observedTerrain.off('render',sample);else ghostMotion.stopFrame();};
+    })()`);
+    await sleep(terrain?12000:2000);
+    const motion=await b.js(`ghostMotion.dispose();({...ghostMotion,dispose:undefined,stopFrame:undefined})`);
+    const intervals=motion.renders.slice(1).map((at,i)=>at-motion.renders[i]).sort((a,b)=>a-b);
+    assert.ok(motion.renders.length>(terrain?300:60));
+    assert.ok(intervals[Math.floor(intervals.length*.95)]<50);
+    assert.equal(motion.hidden,0);assert.equal(motion.mismatch,0);assert.equal(motion.status,0);
+    await pointer('#play');s=await state();
+    assert.ok(Number(s.distanceDelta)>2);assert.ok(Number(s.arrivalDelta)<0);assert.ok(Number(s.workDelta)>0);
+    if (terrain) {
+      assert.equal(await b.js(`observedTerrain.getPitch()`),45);
+      assert.equal(await b.js(`document.querySelector('.route-ghost').hidden`),false);
+      assert.equal(await b.js(`!!(document.querySelector('.route-ghost').compareDocumentPosition(
+        document.querySelector('.route-rider')) & Node.DOCUMENT_POSITION_FOLLOWING)`),true,
+      'Live rider paints above an overlapping hollow ghost');
+    }
+    await screenshot(b,`baseline-${width}-${terrain?'terrain':'2d'}-hard-gap`);
+    const paused=s;
+    await sleep(120);
+    assert.equal((await state()).distance,paused.distance);
+    assert.equal((await state()).baselineDistance,paused.baselineDistance);
+    await pointer('#gear-easier');await pointer('#play');
+    await until(async()=>(await state()).cadence!==paused.cadence);
+    await pointer('#play');
+    assert.equal((await state()).speed,paused.speed,'Gear changes cadence, not speed on the same window');
+    if (!terrain) {
+      const beforeRate=await state();
+      await select(b,'playback-rate','4');
+      assert.equal((await state()).seconds,beforeRate.seconds);
+      assert.equal((await state()).baselineDistance,beforeRate.baselineDistance);
+      await select(b,'playback-rate','16');await pointer('#play');
+      const {targetInfo}=await b.cmd('Target.getTargetInfo');
+      const other=await b.cmd('Target.createTarget',{url:'about:blank'});
+      try {
+        await until(()=>b.js(`document.hidden`));
+        const hidden=await state();await sleep(200);
+        assert.equal((await state()).baselineDistance,hidden.baselineDistance);
+        assert.equal((await state()).distance,hidden.distance);
+        await b.cmd('Target.activateTarget',{targetId:targetInfo.targetId});
+        await until(()=>b.js(`!document.hidden`));
+        assert.equal((await state()).seconds,hidden.seconds);
+      } finally {await b.cmd('Target.closeTarget',{targetId:other.targetId});}
+      await pointer('#play');
+      await b.cmd('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
+      await until(()=>b.js(`document.getElementById('play').getAttribute('aria-label')==='Play route preview'`));
+      const reduced=await state();await sleep(100);
+      assert.equal((await state()).baselineDistance,reduced.baselineDistance);
+      await b.cmd('Emulation.setEmulatedMedia',{features:[]});
+      // Media changes dispatch asynchronously. Wait for the pause/rebase on
+      // restoring the preference before the next deliberate Play.
+      await b.cmd('Runtime.evaluate',{expression:`new Promise(resolve=>
+        requestAnimationFrame(()=>requestAnimationFrame(resolve)))`,awaitPromise:true});
+    }
+    await pointer('#coast');
+    assert.match(await b.js(`document.getElementById('ride-notice').textContent`),/Pending/);
+    await pointer('#play');await until(async()=>(await state()).motion==='stalled');
+    const stalled=await state();await sleep(500);s=await state();
+    assert.equal(s.distance,stalled.distance);assert.ok(Number(s.baselineDistance)>Number(stalled.baselineDistance));
+    await pointer('[data-effort="0.75"]');await until(async()=>(await state()).distance>stalled.distance);
+    await pointer('#play');await pointer('#profile-toggle');await pointer('#repin-baseline',true);
+    assert.ok(Math.abs(Number((await state()).distanceDelta))<.02);
+    await pointer('#remove-baseline',true);assert.equal((await state()).active,false);
+    await pointer('#pin-baseline',true);await pointer('#retry-section',true);
+    s=await state();assert.equal(s.active,false);assert.equal(s.elapsed,0);assert.match(s.notice,/Seek/);
+    await pointer('#pin-baseline',true);await pointer('#profile-close',true);
+    await pointer('#tools-toggle');await pointer('#restart',true);
+    assert.equal((await state()).active,false);assert.match((await state()).notice,/Restart/);
+    await pointer('#tools-close');await pointer('#profile-toggle');await pointer('#pin-baseline',true);
+    await pointer('#profile-close',true);
+    // Model/rider edits cannot keep a misaligned pin to fake mass comparison.
+    await pointer('#tools-toggle');await b.js(`document.getElementById('rider-mass').value='90';
+      document.getElementById('rider-mass').dispatchEvent(new Event('input'))`);
+    assert.equal((await state()).active,false);assert.match((await state()).notice,/Rider or model/);
+    await pointer('#tools-close');await pointer('#profile-toggle');await pointer('#pin-baseline',true);
+    await pointer('#profile-close',true);await select(b,'player-route','rwgps-57873112');await ready(b);
+    assert.equal((await state()).active,false);assert.match((await state()).notice,/Route changed/);
+    if (!terrain) {
+      await pointer('#profile-toggle');await pointer('#pin-baseline',true);await pointer('#profile-close',true);
+      await select(b,'player-route','rwgps-57874050');await ready(b);
+      assert.equal((await state()).active,false);
+      assert.equal(await b.js(`document.getElementById('cockpit').dataset.status`),'unavailable');
+      assert.equal(await b.js(`document.getElementById('outline-ghost').getAttribute('visibility')`),'hidden');
+      await select(b,'player-route','rwgps-57873112');await ready(b);
+    }
+    if (width===375 && !terrain) {
+      await b.js(`document.documentElement.style.fontSize='200%'`);
+      await pointer('#profile-toggle');await pointer('#pin-baseline',true);
+      await pointer('#profile-close',true);
+      await pointer('#tools-toggle');
+      for (const selector of ['#back','#player-route','#play','#tools-toggle','#tools-close']) {
+        const ok=await b.js(`(()=>{
+          const el=document.querySelector(${JSON.stringify(selector)}),r=el.getBoundingClientRect();
+          return el.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2));
+        })()`);
+        assert.ok(ok,`200% Setup: ${selector}`);
+      }
+      await screenshot(b,'baseline-375-text-200-setup');
+      await pointer('#tools-close');await pointer('#profile-toggle');
+      for (const selector of ['#back','#player-route','#play','#profile-toggle']) {
+        const ok=await b.js(`(()=>{
+          const el=document.querySelector(${JSON.stringify(selector)}),r=el.getBoundingClientRect();
+          return el.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2));
+        })()`);
+        assert.ok(ok,`200% Profile: ${selector}`);
+      }
+      await pointer('#remove-baseline',true);
+      await screenshot(b,'baseline-375-text-200-profile');
+    }
+    assert.equal(await b.js(`document.documentElement.scrollWidth`),width);
+    if (!terrain) assert.deepEqual(outside,[]);
+    assert.deepEqual(await b.js(`[Object.keys(localStorage).sort(),Object.keys(sessionStorage).sort(),document.cookie]`),storageBefore,
+      'No baseline storage beyond the already loaded terrain SDK');
+    assert.deepEqual(b.exceptions,[]);
+    t.diagnostic(JSON.stringify({width,height,terrain,spatial,frames:motion.renders.length,
+      p95:intervals[Math.floor(intervals.length*.95)],hidden:motion.hidden,statusChanges:motion.status}));
+    await click(b,'back');
+  }
+});
+
 test('built sections: actual profile pointer/keyboard, shared paused trials, seven identities and bounded phone disclosure',async t=>{
   const f=await fixture(t),b=await f.chrome();
   await b.cmd('Page.enable');

@@ -83,6 +83,7 @@ async function writeRelease(root, out, routePack) {
     'js/climb-sensitivity-view.mjs': ['./climb-sensitivity.mjs'],
     'js/ride-clock.mjs': [],
     'js/ride-simulation.mjs': ['./ascent-estimator.mjs','./route-time.mjs','./ride-clock.mjs','./rider-scenario.mjs','./route-analysis.mjs'],
+    'js/ride-comparison.mjs': ['./ride-simulation.mjs'],
     'js/route-playback.mjs': [],
     'js/route-playback-adapters.mjs': ['./route-analysis.mjs','./route-time.mjs'],
     'js/route-session.mjs': ['./route-playback.mjs'],
@@ -109,7 +110,7 @@ async function writeRelease(root, out, routePack) {
     'prototypes/rider-first/style.css': [],
     'prototypes/rider-first/app.mjs': ['../../js/route-analysis-loader.mjs','../../js/route-analysis.mjs',
       '../../js/route-catalog.mjs','../../js/route-pack-contract.mjs','../../js/route-terrain-view.mjs','../../js/ride-simulation.mjs',
-      '../../js/ride-insights.mjs','../../js/route-flyover.mjs'],
+      '../../js/ride-insights.mjs','../../js/route-flyover.mjs','../../js/ride-comparison.mjs'],
     'js/home-entry.mjs': ['../assets/site.css','./site-shell.mjs','../prototypes/rider-first/app.mjs','./offline-view.mjs'],
   };
   for (const [file, deps] of Object.entries(graph)) {

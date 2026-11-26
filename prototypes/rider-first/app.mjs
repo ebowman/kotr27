@@ -5,6 +5,7 @@ import { validatePackPointer, validateRoutePack } from '../../js/route-pack-cont
 import { createRideSimulation, createSimulationScheduler, rideRiderFromInput, exampleDrivetrain } from '../../js/ride-simulation.mjs';
 import { rideInsights, sectionName } from '../../js/ride-insights.mjs';
 import { routeSection } from '../../js/route-flyover.mjs';
+import { createRideComparison } from '../../js/ride-comparison.mjs';
 
 const $ = id => document.getElementById(id);
 const NS = 'http://www.w3.org/2000/svg';
@@ -43,6 +44,7 @@ for (const el of [bar,credit,document.querySelector('.player-header'),
 let pack, selected, analysis, inPlayer = false, playing = false, distance = 0;
 let generation = 0, routeController, terrainController, terrainHandle, frame, projection;
 let simulation, scheduler, pendingGear, pendingHistory, notice = '';
+let comparison, comparisonSample, comparisonHistory, presentedSeconds, comparisonNotice = '';
 let selectedChapterId, highlightedChapterId, insights, lastHUD = -Infinity;
 let mode = 'experiment';
 let terrainReady = false;
@@ -123,6 +125,9 @@ function drawMap(svg, rider = false) {
   }
   if (rider) {
     svg.append(node('path',{id:'outline-section',class:'section-track'}));
+    const ghost = node('g',{id:'outline-ghost','aria-label':'Diamond baseline rider',visibility:'hidden'});
+    ghost.append(node('path',{d:'M0,-20 L20,0 L0,20 L-20,0 Z',class:'ghost-diamond'}));
+    svg.append(ghost);
     const [x,y] = projection(positionAt(analysis,distance));
     svg.append(node('circle',{id:'outline-rider',cx:x,cy:y,r:8,fill:'#dfb767',stroke:'white','stroke-width':4}));
   }
@@ -131,7 +136,9 @@ function drawMap(svg, rider = false) {
 function snapshot() {
   return {...(simulation?.status === 'available' ? simulation.snapshot() : {}),
     identity:analysis.identity,position:positionAt(analysis,distance),distanceM:distance,
-    phase:playing?'playing':'paused',cameraMode:camera,selectedChapterId:highlightedChapterId};
+    phase:playing?'playing':'paused',cameraMode:camera,selectedChapterId:highlightedChapterId,
+    baseline:comparisonSample?.status === 'available' ?
+      {distanceM:comparisonSample.ghost.distanceM,position:positionAt(analysis,comparisonSample.ghost.distanceM)} : null};
 }
 const text = (id, value) => {if ($(id).textContent !== value) $(id).textContent = value;};
 const pressed = (button, value) => {
@@ -232,6 +239,7 @@ function seekTo(target, chapterId) {
   selectedChapterId = chapterId;
   pendingHistory = undefined;pendingGear = undefined;
   notice = mode === 'experiment' ? 'New trial · time/work reset · paused.' : 'Steady arrival time · paused.';
+  clearComparison('Seek starts a new trial.');
   renderInsights();
   frameRoute(chapterId ? 'section' : 'follow');
   renderCockpit();
@@ -285,8 +293,79 @@ function renderCockpit() {
     s.motion === 'finished' ? 'Finished · exact route endpoint. Restart trial or seek.' :
     s.motion === 'stalled' ? 'Stalled · choose an effort to resume. No-momentum model.' :
     notice || (playing ? 'Playing' : 'Paused'));
+  renderComparison();
 }
+const signed = (n,decimals=0) => {
+  const rounded = Number(n.toFixed(decimals));
+  return `${rounded>0?'+':''}${rounded.toFixed(decimals)}`;
+};
+function clearComparison(reason) {
+  if (comparison) {
+    comparisonNotice = `Baseline cleared · ${reason}`;
+    notice = comparisonNotice;
+  }
+  comparison = undefined;comparisonSample = undefined;comparisonHistory = undefined;
+  $('outline-ghost')?.setAttribute('visibility','hidden');
+  for (const key of ['distanceDelta','seconds','baselineDistance','commonM','arrivalDelta','workDelta'])
+    delete $('comparison-hud').dataset[key];
+}
+function sampleComparison() {
+  if (!comparison || simulation?.status !== 'available') {comparisonSample = undefined;return;}
+  const s = simulation.snapshot();
+  if (comparisonHistory !== s.historyLength) {
+    const result = comparison.sync(simulation.exportTrial());
+    if (result.status !== 'available') {clearComparison(result.reason);return;}
+    comparisonHistory = s.historyLength;
+  }
+  comparisonSample = comparison.sample(s,{seconds:playing ? presentedSeconds : s.simulationSeconds,distanceM:distance});
+  if (comparisonSample.status !== 'available') clearComparison(comparisonSample.reason);
+  if (comparisonSample) {
+    const sample = comparisonSample, hud = $('comparison-hud');
+    hud.dataset.distanceDelta = sample.distanceDeltaM;
+    hud.dataset.seconds = sample.seconds;
+    hud.dataset.baselineDistance = sample.ghost.distanceM;
+    hud.dataset.commonM = sample.commonM;
+    hud.dataset.arrivalDelta = sample.arrivalDeltaSeconds ?? '';
+    hud.dataset.workDelta = sample.pedalWorkDeltaKJ ?? '';
+  }
+}
+function renderComparison() {
+  const enabled = simulation?.status === 'available' && mode === 'experiment';
+  $('pin-baseline').disabled = !enabled || !!comparison;
+  $('repin-baseline').disabled = !enabled || !comparison;
+  $('remove-baseline').disabled = !comparison;
+  $('comparison-hud').hidden = !comparisonSample;
+  text('comparison-notice',comparisonNotice || 'Pin the applied strategy, then change effort. Nothing is saved.');
+  if (!comparisonSample) {
+    text('comparison-detail','No active baseline.');return;
+  }
+  const s = comparisonSample;
+  text('comparison-gap',`◇ Baseline · live ${signed(s.distanceDeltaM)} m at equal trial time`);
+  const detail = s.arrivalDeltaSeconds === null ? 'Common-distance arrival unavailable.' :
+    `${signed(s.arrivalDeltaSeconds,1)} s arrival · ${signed(s.pedalWorkDeltaKJ,2)} kJ pedal work at ${(s.commonM/1000).toFixed(3)} km`;
+  text('comparison-arrival',detail);
+  text('comparison-detail',`Live minus baseline: ${detail}. Negative time = live arrived sooner. ${
+    s.baselineFinishSeconds === null ? 'Baseline has no finish estimate within 24 ride hours (it may be stalled).' :
+    'Baseline holds its position and work after finishing.'}`);
+}
+function pinBaseline() {
+  if (simulation?.status !== 'available' || mode !== 'experiment') return;
+  const next = createRideComparison({analysis,trial:simulation.exportTrial()});
+  if (next.status !== 'available') {
+    comparisonNotice = next.reason;renderComparison();return;
+  }
+  comparison = next;comparisonHistory = simulation.snapshot().historyLength;
+  notice = '';
+  comparisonNotice = 'Pinned applied history; holds its last effort/gear/coast. Pending commands are excluded, even while paused.';
+  sampleComparison();updatePosition();renderCockpit();
+}
+$('pin-baseline').addEventListener('click',pinBaseline);
+$('repin-baseline').addEventListener('click',pinBaseline);
+$('remove-baseline').addEventListener('click',()=>{
+  clearComparison('Removed by you.');updatePosition();renderCockpit();
+});
 function buildModel(originM = distance) {
+  clearComparison('Rider or model changed; comparison needs the same identity.');
   pendingGear = undefined;pendingHistory = undefined;
   scheduler = undefined;simulation = undefined;
   if (!analysis) return;
@@ -321,6 +400,7 @@ function command(action) {
 }
 function updatePosition(force = false) {
   if (!analysis) return;
+  sampleComparison();
   if (force) manual = false;
   returnRider.hidden = !manual && camera === 'follow';
   if (force || !playing || performance.now()-lastHUD >= 100) {
@@ -337,6 +417,15 @@ function updatePosition(force = false) {
   if (mapScale > 0) {
     $('outline-rider')?.setAttribute('r',8/mapScale);
     $('outline-rider')?.setAttribute('stroke-width',4/mapScale);
+  }
+  const ghost = $('outline-ghost');
+  if (ghost) {
+    ghost.setAttribute('visibility',comparisonSample ? 'visible' : 'hidden');
+    if (comparisonSample && mapScale > 0) {
+      const xy = projection(positionAt(analysis,comparisonSample.ghost.distanceM));
+      ghost.setAttribute('transform',`translate(${xy[0]} ${xy[1]}) scale(${1/mapScale})`);
+      ghost.dataset.distance = comparisonSample.ghost.distanceM;
+    }
   }
   const ratio = distance/analysis.distanceM;
   $('seek').value = Math.round(ratio*1000);
@@ -372,6 +461,8 @@ function tick(time) {
   // watts, speed or a second travel clock. All spatial consumers use this value.
   distance = current.phase === 'playing' ?
     previous.distanceM+(current.distanceM-previous.distanceM)*alpha : current.distanceM;
+  presentedSeconds = current.phase === 'playing' ?
+    previous.simulationSeconds+(current.simulationSeconds-previous.simulationSeconds)*alpha : current.simulationSeconds;
   updatePosition();
   if (late) notice = 'Playback paused after a late frame. Press Play to continue; no catch-up.';
   if (current.phase !== 'playing') pause();
@@ -446,6 +537,7 @@ async function terrain() {
 async function choose(id) {
   const request = ++generation;
   pause();stopTerrain();
+  clearComparison('Route changed.');
   routeController?.abort();
   const controller = new AbortController();routeController = controller;
   analysis = null;selected = id;distance = 0;
@@ -543,10 +635,12 @@ $('play').addEventListener('click',()=>{
   if (playing) {pause();return;}
   if (!scheduler) return;
   if (distance >= analysis.distanceM) {
+    clearComparison('Restart starts a new trial.');
     distance = simulation.restart().distanceM;pendingHistory = undefined;pendingGear = undefined;
   }
   if (manual || camera === 'section') followRider();
   notice = '';scheduler.play();
+  presentedSeconds = simulation.snapshot().simulationSeconds;
   playing = true;$('play').innerHTML = 'Ⅱ <span>Pause</span>';
   if (terrainReady) $('terrain-status').textContent = 'Satellite terrain · preview playback';
   $('play').setAttribute('aria-label','Pause route preview');
@@ -594,9 +688,10 @@ $('offline').checked = params.get('terrain') === 'off';
 $('offline').addEventListener('change',()=>{pause();void terrain();});
 $('restart').addEventListener('click',()=>{
   pause();
+  clearComparison('Restart starts a new trial.');
   distance = simulation?.status === 'available' ? simulation.restart().distanceM : 0;
   pendingHistory = undefined;pendingGear = undefined;
-  notice = 'Restarted at trial origin · paused.';updatePosition(true);renderCockpit();
+  notice = `Restarted at trial origin · paused. ${comparisonNotice}`;updatePosition(true);renderCockpit();
 });
 $('playback-rate').addEventListener('change',()=>{
   pause();scheduler?.setRate(Number($('playback-rate').value));

@@ -93,6 +93,16 @@
         <div class="profile-scale"><span>Start</span><output id="position" aria-live="off"></output><span>Finish</span></div>
         <p id="profile-help">Tap the profile to seek paused. Arrow keys: 250 m; Page keys: 1 km; Home / End. Experiment seeks start a new trial.</p>
         <div class="section-actions"><button id="main-climb">Try the main climb</button><button id="profile-close">Close ×</button></div>
+        <div class="section-actions" role="group" aria-label="Baseline strategy">
+          <button id="pin-baseline">Pin baseline</button><button id="repin-baseline" disabled>Repin</button><button id="remove-baseline" disabled>Remove baseline</button>
+        </div>
+        <p id="comparison-notice" role="status"></p>
+        <p id="comparison-detail"></p>
+        <details><summary>About the diamond baseline</summary>
+          <p>◇ Hollow diamond = pinned strategy; ● solid circle = live rider. Distance is live minus baseline at equal elapsed time from this trial’s origin. Arrival seconds and mechanical pedal kJ are live minus baseline at the common distance both have reached, before any stop there. Negative seconds means live arrived sooner, not a ranking.</p>
+          <p>A pin freezes route revision, rider/model, origin, stops, initial controls and applied actions; then holds the last effort/gear/coast. Pending commands are excluded: press Play to apply them before pinning. Seek, restart, route or rider/model changes clear the pin with a reason; live effort/gear choices do not. Repin replaces it without seeking. Nothing is saved or fetched.</p>
+          <p>Estimates in constant conditions, no momentum or fatigue; uphill coasting stalls immediately. No future arrival is promised for a stalled baseline. Bounded to 24 ride hours, 1,024 applied actions, 2,048 windows and 8,192 indexed segments; beyond these limits start a shorter trial. Rider, drivetrain and still-air assumptions are in Setup.</p>
+        </details>
         <div class="section-actions" role="group" aria-label="Route framing">
           <button data-frame="overview">Overview</button><button data-frame="section">Section</button><button data-frame="follow">Follow</button>
         </div>
@@ -104,6 +114,7 @@
         <div class="ride-context"><span id="model-provenance">Example model</span><span id="ride-remaining">ETA unknown · live choices</span></div>
       </section>
       <section id="cockpit" class="glass" aria-label="Modeled riding cockpit">
+        <div id="comparison-hud" aria-label="Live minus pinned baseline" hidden><span id="comparison-gap"></span><span id="comparison-arrival"></span></div>
         <div class="telemetry">
           <div><strong id="ride-speed">—</strong><small id="speed-provenance">km/h · example model</small></div>
           <div><strong id="ride-power">—</strong><small id="ride-effort">75% FTP target</small></div>

@@ -90,6 +90,7 @@ test('manifest binds complete allowlisted release; selected days omit unchosen g
   assert.equal(m.routes.length,7);
   assert.ok(refs.some(r=>r.path.includes('local-route-parser')));
   assert.ok(refs.some(r=>/^js\/ride-insights\.[a-f0-9]{24}\.mjs$/.test(r.path)));
+  assert.ok(refs.some(r=>/^js\/ride-comparison\.[a-f0-9]{24}\.mjs$/.test(r.path)));
   assert.ok(!refs.some(r=>r.path.includes('https:')));
   const d2=m.routes.find(r=>r.day==='kotr-d2');
   assert.ok(d2.paths.every(p=>!refs.some(r=>r.path===p)));

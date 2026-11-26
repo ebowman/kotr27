@@ -18,7 +18,7 @@ export async function mountRouteTerrain({container,analysis,snapshot,onStatus,on
   window.kotrDisposeTerrain?.();
   const imageConcurrency=gl.maxParallelImageRequests;
   gl.maxParallelImageRequests=4;
-  let map, rider, ready=false, presented=false, stopped=false, manual=false, current=snapshot;
+  let map, rider, ghost, ready=false, presented=false, stopped=false, manual=false, current=snapshot;
   let refinements={}, lastPaint=-Infinity, lastProof=-Infinity, timer, requests=0, updating=false;
   let bearing, frame, proofTimer, sequence=0, renderSequence=0, proofSequence=0, proof, status, outageAt;
   let highlighted;
@@ -36,6 +36,10 @@ export async function mountRouteTerrain({container,analysis,snapshot,onStatus,on
   }
   const beacon=document.createElement('div'); beacon.className='route-rider';
   beacon.setAttribute('aria-label','Selected rider position');
+  const ghostBeacon=document.createElement('div');ghostBeacon.className='route-ghost';
+  ghostBeacon.setAttribute('aria-label','Diamond baseline rider');
+  ghostBeacon.hidden=true;
+  ghostBeacon.innerHTML='<svg viewBox="-22 -22 44 44" aria-hidden="true"><path class="ghost-diamond" d="M0,-20 L20,0 L0,20 L-20,0 Z"/></svg>';
   for (const key of ['frame','pose','renderSequence','distance','requests','camera']) delete container.dataset[key];
   function dispose() {
     if (stopped) return;
@@ -139,6 +143,8 @@ export async function mountRouteTerrain({container,analysis,snapshot,onStatus,on
         map.addLayer({id:'terrain-depth-pass',type:'circle',source:'route',
           paint:{'circle-opacity':0}});
         map.setTerrain({source:'dem',exaggeration:1});
+        ghost=new gl.Marker({element:ghostBeacon,anchor:'center'}).setLngLat(cameraPose(analysis,current).center).addTo(map);
+        // Live rider paints last if the hollow ghost crosses its position.
         rider=new gl.Marker({element:beacon,anchor:'center'}).setLngLat(cameraPose(analysis,current).center).addTo(map);
         for(const [point,text,offset] of [[analysis.points[0],'S',[-12,-12]],[analysis.points.at(-1),'F',[12,12]]]) {
           const mark=document.createElement('span');mark.className='route-endpoint';mark.textContent=text;
@@ -217,6 +223,11 @@ export async function mountRouteTerrain({container,analysis,snapshot,onStatus,on
       updating=true;
       const pose=cameraPose(analysis,s,refinements);
       rider.setLngLat(pose.center);
+      ghostBeacon.hidden=!s.baseline?.position;
+      if (s.baseline?.position) {
+        ghost.setLngLat([s.baseline.position.lon,s.baseline.position.lat]);
+        ghostBeacon.dataset.distance=String(s.baseline.distanceM);
+      }
       if (highlighted!==s.selectedChapterId) {
         highlighted=s.selectedChapterId;
         map.getSource('selected-section').setData(highlighted ? {type:'Feature',properties:{},
