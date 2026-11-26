@@ -86,7 +86,7 @@ for (const width of [320,1280]) test(`packaged planner ${width}px: seven choices
   const preferences = f.files.find(file => file.startsWith('js/preferences-view.'));
   const state = expression => evaluate(`import('./${preferences}').then(async ({riderState:s}) => {${expression}})`);
   const choose = (day,id) => js(`(() => {const e=document.getElementById('trip-choice-${day}');e.value='${id}';e.dispatchEvent(new Event('change'));})()`);
-  await cmd('Page.navigate',{url:f.base});
+  await cmd('Page.navigate',{url:f.base+'explore.html?area=plan'});
   await ready();
   assert.equal(await js(`document.querySelectorAll('.trip-route').length`),7);
   assert.match(await js(`document.getElementById('trip-summary').textContent`),/0 of 4/);
@@ -199,7 +199,7 @@ test('packaged planner: storage denial, missing metrics and manifest failure sta
   await cmd('Page.enable');
   await cmd('Page.addScriptToEvaluateOnNewDocument',{source:`
     Object.defineProperty(window,'indexedDB',{get(){throw new DOMException('Denied','SecurityError')}});`});
-  await cmd('Page.navigate',{url:f.base});
+  await cmd('Page.navigate',{url:f.base+'explore.html?area=plan'});
   await until(() => js(`document.querySelector('#trip-planner')?.dataset.ready === 'true'`));
   assert.match(await js(`document.getElementById('preference-status').textContent`),/Memory-only/);
   assert.match(await js(`document.getElementById('trip-planner').textContent`),/Metrics unavailable/);
@@ -228,7 +228,7 @@ test('packaged planner rejects sparse IndexedDB choices and recovers in memory w
   const state = expression => evaluate(`import('./${preferences}').then(async ({riderState:s}) => {${expression}})`);
   const ready = () => until(() => js(`document.querySelector('#trip-planner')?.dataset.ready === 'true' &&
     document.querySelector('#site-shell')?.dataset.ready === 'true'`));
-  await cmd('Page.navigate',{url:f.base});
+  await cmd('Page.navigate',{url:f.base+'explore.html?area=plan'});
   await ready();
   // Real IndexedDB put/get structured-clones the hole; JSON fixtures cannot.
   const sparse = await evaluate(`new Promise((resolve,reject) => {

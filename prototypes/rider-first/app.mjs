@@ -1,6 +1,7 @@
-import { loadRouteAnalysis } from '/js/route-analysis-loader.mjs';
-import { positionAt } from '/js/route-analysis.mjs';
-import { verifyAsset } from '/js/route-catalog.mjs';
+import { loadRouteAnalysis } from '../../js/route-analysis-loader.mjs';
+import { positionAt } from '../../js/route-analysis.mjs';
+import { verifyAsset } from '../../js/route-catalog.mjs';
+import { validatePackPointer, validateRoutePack } from '../../js/route-pack-contract.mjs';
 
 const $ = id => document.getElementById(id);
 const NS = 'http://www.w3.org/2000/svg';
@@ -33,11 +34,22 @@ function followRider() {
 returnRider.addEventListener('click',()=>{pause();followRider();});
 let camera = 'follow';
 const cache = new Map();
+const withdrawn = new Set();
 const format = n => new Intl.NumberFormat('en-GB').format(Math.round(n));
+// Both the finite local preview and the public entry bind an explicit pointer.
+// Release tooling replaces it with the validated content-addressed pointer.
+const pointerURL = new URL(document.querySelector('link[title="Approved route catalog"]').href);
+const assetRoot = new URL('../',pointerURL);
 const readAsset = async path => {
-  const res = await fetch('/'+path);
+  if (!/^assets\/route-(?:pack(?:\.[a-f0-9]{24})?\.json|(?:manifest-|profile-)?[a-f0-9]{64}\.(?:json|gpx))$/.test(path))
+    throw Error('Asset outside public route allowlist');
+  const res = await fetch(new URL(path,assetRoot), {
+    credentials:'omit',referrerPolicy:'no-referrer',redirect:'error',signal:AbortSignal.timeout(15000),
+  });
   if (!res.ok) throw Error('Cleared route asset unavailable');
-  return new Uint8Array(await res.arrayBuffer());
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  if (bytes.byteLength > 20*1024*1024) throw Error('Route asset exceeds limit');
+  return bytes;
 };
 function node(tag, attrs, text) {
   const el = document.createElementNS(NS,tag);
@@ -94,6 +106,7 @@ function snapshot() {
     phase:playing?'playing':'paused',cameraMode:camera};
 }
 function updatePosition(force = false) {
+  if (!analysis) return;
   if (force) {manual = false;returnRider.hidden = true;}
   const p = positionAt(analysis,distance), xy = projection(p);
   $('outline-rider')?.setAttribute('cx',xy[0]);
@@ -152,7 +165,7 @@ async function terrain() {
   },15000);
   controller.signal.addEventListener('abort',()=>clearTimeout(deadline),{once:true});
   try {
-    const { mountRouteTerrain } = await import('/js/route-terrain-view.mjs');
+    const { mountRouteTerrain } = await import('../../js/route-terrain-view.mjs');
     if (controller.signal.aborted) return;
     const handle = await mountRouteTerrain({
       container:$('terrain'),analysis,snapshot:snapshot(),signal:controller.signal,
@@ -189,15 +202,16 @@ async function terrain() {
 async function choose(id) {
   const request = ++generation;
   pause();stopTerrain();
+  analysis = null;selected = id;
   $('fly').disabled = true;$('play').disabled = true;
   $('load-status').textContent = 'Loading the cleared route…';
   if (inPlayer) $('terrain-status').textContent = 'Loading selected route…';
   try {
     const summary = pack.routes.find(r=>r.routeId===id);
-    if (!summary) throw Error('Unknown preview route');
+    if (!summary || withdrawn.has(id)) throw Error('Unavailable preview route');
     if (!cache.has(id)) cache.set(id,loadRouteAnalysis({pack,routeId:id,revisionId:summary.revisionId,readAsset}));
     const next = await cache.get(id);
-    if (request !== generation) return;
+    if (request !== generation || withdrawn.has(id)) return;
     if (next.status !== 'supported') throw Error('Route analysis unavailable');
     selected = id;analysis = next;distance = 0;
     const groupIndex = groups.findIndex(g=>g.routes.includes(id)), group = groups[groupIndex];
@@ -239,6 +253,10 @@ async function choose(id) {
     $('distance').textContent = '—';$('ascent').textContent = '—';
   }
 }
+window.addEventListener('kotr-offline-withdrawn',event=>{
+  for (const id of event.detail) {withdrawn.add(id);cache.delete(id);}
+  if (withdrawn.has(selected)) void choose(selected);
+});
 async function enter() {
   if (!analysis) return;
   inPlayer = true;$('landing').hidden = true;$('player').hidden = false;
@@ -267,6 +285,7 @@ $('play').addEventListener('click',()=>{
   frame = requestAnimationFrame(tick);
 });
 $('seek').addEventListener('input',e=>{
+  if (!analysis) return;
   pause();distance = Number(e.target.value)/1000*analysis.distanceM;updatePosition(true);
 });
 for (const [button,panel,otherButton,otherPanel] of [
@@ -300,16 +319,22 @@ document.querySelectorAll('[data-dialog]').forEach(button=>button.addEventListen
   const [title,copy] = dialogText[button.dataset.dialog];
   $('dialog-title').textContent = title;$('dialog-copy').textContent = copy;$('info-dialog').showModal();
 }));
-$('dialog-close').addEventListener('click',()=>$('info-dialog').close());
+$('dialog-close')?.addEventListener('click',()=>$('info-dialog').close());
 $('routes-nav').addEventListener('click',()=>$('landing-route').focus());
 
 try {
-  const pointer = JSON.parse(new TextDecoder().decode(await readAsset('assets/route-pack.json')));
+  if (pointerURL.origin !== location.origin ||
+      !/^route-pack(?:\.[a-f0-9]{24})?\.json$/.test(pointerURL.pathname.split('/').pop()))
+    throw Error('Invalid public pointer URL');
+  const pointer = JSON.parse(new TextDecoder().decode(await readAsset('assets/'+pointerURL.pathname.split('/').pop())));
+  validatePackPointer(pointer);
   const bytes = await readAsset(pointer.path);
   await verifyAsset(pointer,bytes);
   pack = JSON.parse(new TextDecoder().decode(bytes));
+  await validateRoutePack(pack,{metadataOnly:true});
   for (const [i,g] of groups.entries()) $('landing-route').add(new Option(g.label,String(i)));
   for (const g of groups) for (const id of g.routes) $('player-route').add(new Option(`${names[id]} · ${variant(id)}`,id));
+  $('landing-route').disabled = false;
   await choose(params.get('route') === 'standard-only' ? 'rwgps-57874121' : 'rwgps-57873019');
 } catch {
   $('load-status').textContent = 'Cleared routes unavailable. Reload to try again.';

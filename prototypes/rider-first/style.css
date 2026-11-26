@@ -14,7 +14,12 @@ button:disabled,select:disabled{opacity:.55;cursor:wait}
 .brand{font-size:26px;letter-spacing:-1.4px;font-weight:850;text-decoration:none}
 .brand span{font-weight:400}
 nav{display:flex;gap:24px}
-nav button{padding:10px 0}
+nav button,nav a{padding:10px 0}
+nav a{text-decoration:none;min-height:44px}
+#home-tools{margin:20px 5%;font-size:14px}
+#home-tools summary{cursor:pointer;padding:12px 0}
+#home-tools button{border:1px solid var(--line);margin:4px}
+#home-tools label{display:block}
 .nav-active{border-bottom:2px solid var(--ink)}
 .prototype-tag{font-size:11px;text-transform:uppercase;letter-spacing:1.5px;border:1px solid var(--line);padding:7px 10px}
 .hero{display:grid;grid-template-columns:43% 57%;max-width:1600px;margin:auto;padding:40px 5% 34px;height:calc(100svh - 104px);min-height:740px;gap:0}
@@ -112,7 +117,7 @@ dialog p{margin:18px 0 24px}
   .masthead{height:80px}.hero{padding-top:25px;height:calc(100svh - 80px);min-height:660px}.route-heading{margin-top:24px}h1{font-size:80px}
 }
 @media(max-width:800px){
-  .masthead{margin:0 22px;height:80px;gap:10px}.brand{font-size:21px;white-space:nowrap}.prototype-tag{display:none}nav{gap:17px}nav button{font-size:12px}
+  .masthead{margin:0 22px;height:80px;gap:10px}.brand{font-size:21px;white-space:nowrap}.prototype-tag{display:none}nav{gap:17px}nav button,nav a{font-size:12px}
   .hero{padding:22px;display:grid;grid-template-columns:1fr;height:auto;min-height:auto;position:relative}
   .intro{padding:0;display:contents}
   .intro>.eyebrow{font-size:10px;letter-spacing:1.1px}.dates{font-size:12px;margin:2px 0 0}

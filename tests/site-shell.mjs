@@ -52,7 +52,8 @@ for (const width of [320,375,1280]) test(`packaged shell ${width}px: explicit ch
     for(const type of ['keyDown','keyUp'])await cmd('Input.dispatchKeyEvent',{type,key,code,windowsVirtualKeyCode:n,
       ...(key==='Enter'&&type==='keyDown'&&{text:'\r'})});
   };
-  await cmd('Page.navigate',{url:base});
+  // The companion is secondary; the root's rider UI has its own acceptance.
+  await cmd('Page.navigate',{url:base+'explore.html?area=plan'});
   await until(()=>js(`!!document.querySelector('.site-nav a:nth-child(2)')`));
   await js(`document.querySelector('.site-nav a:nth-child(2)').focus()`);
   gate.resolve();await ready();
@@ -87,12 +88,17 @@ for (const width of [320,375,1280]) test(`packaged shell ${width}px: explicit ch
   await cmd('Page.reload');await ready();
   assert.match(await js('location.href'),new RegExp(`rev=${revision}`));
   for(const entry of ['index.html','explore.html']) {
-    await cmd('Page.navigate',{url:base+entry});await ready();
+    await cmd('Page.navigate',{url:base+entry+(entry==='index.html'?'?area=plan':'')});await ready();
     assert.equal(await js(`document.getElementById('site-route').value`),'');
     assert.match(await js(`document.getElementById('site-notice').textContent`),/Choose a route explicitly/);
     const html=await readFile(join(out,entry),'utf8');
-    assert.match(html,/<a class="skip" href="#site-heading">/);
-    assert.match(html,/<h1 id="site-heading" tabindex="-1">/);
+    if(entry==='explore.html') {
+      assert.match(html,/<a class="skip" href="#site-heading">/);
+      assert.match(html,/<h1 id="site-heading" tabindex="-1">/);
+    } else {
+      assert.match(html,/id="landing"/);
+      assert.match(html,/Fly this route/);
+    }
     assert.doesNotMatch(html,/legacy-explorer|data-flyover-src|Semonzo|id="climb"/);
     for(const suffix of ['?route=semonzo-example&rev=semonzo-example-v1&view=flyover',
       '#seek-9000','#seek-bad','#seek-999999','#seek']) {

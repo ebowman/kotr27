@@ -4,24 +4,107 @@
   <meta charset="utf-8">
   <!-- release entry check -->
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
   <meta http-equiv="x-dns-prefetch-control" content="off">
-  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <meta name="referrer" content="no-referrer">
+  <title>KOTR 2027 · Routes</title>
+  <meta name="description" content="Explore the seven event routes around Bassano del Grappa. Preview a route, fly it, then plan your week explicitly.">
   <link rel="icon" href="data:,">
-  <title>Plan · KOTR 2027 rider companion</title>
-  <meta name="description" content="Plan, explore and prepare with the seven approved provisional event routes. Choose your routes explicitly; no itinerary is inferred.">
-  <script type="module" src="./js/site-shell.mjs"></script>
-  <link rel="stylesheet" href="./assets/site.css">
+  <link rel="alternate" type="application/json" title="Approved route catalog" href="./assets/route-pack.json">
+  <link data-rider-style rel="stylesheet" href="./prototypes/rider-first/style.css">
+  <script type="module" src="./js/home-entry.mjs"></script>
 </head>
 <body>
-<a class="skip" href="#site-heading">Skip to main content</a>
-<main id="main">
-  <div id="site-shell">
-    <header class="site-header"><strong>KOTR / 2027</strong></header>
-    <h1 id="site-heading" tabindex="-1">Plan your ride</h1>
-    <p>Seven approved provisional event routes are available. Source day labels are not calendar assignments.</p>
-    <p>JavaScript enables explicit route selection and the Plan / Explore / Prepare / Ride week companion. No account or FTP needed.</p>
-    <a href="./explore.html">Explore available routes</a>
-  </div>
-</main>
+  <main id="landing">
+    <header class="masthead">
+      <a class="brand" href="./" aria-label="KOTR 2027 Routes">KOTR <span>2027</span></a>
+      <nav aria-label="Main navigation">
+        <button class="nav-active" id="routes-nav" aria-current="page">Routes</button>
+        <a href="./explore.html?area=plan">My week</a>
+        <a href="./explore.html?area=ride-week">Essentials</a>
+      </nav>
+      <span class="prototype-tag">Route preview</span>
+    </header>
+    <section class="hero" aria-labelledby="route-title">
+      <div class="intro">
+        <p class="eyebrow">Bassano del Grappa</p>
+        <p class="dates">May 20–24, 2027</p>
+        <div class="route-heading">
+          <p class="eyebrow">Route preview</p>
+          <h1 id="route-title">D2 Monte<br>Grappa</h1>
+          <p class="preview-note">Route preview</p>
+        </div>
+        <div class="route-picker">
+          <label class="sr-only" for="landing-route">Route group</label>
+          <select id="landing-route" disabled></select>
+          <div id="variants" role="group" aria-label="Route variant"></div>
+        </div>
+        <div class="metrics" aria-label="RWGPS-listed route statistics">
+          <div><strong id="distance">—</strong><span>km</span></div>
+          <div><strong id="ascent">—</strong><span>m ascent</span></div>
+          <small>RWGPS-listed</small>
+        </div>
+        <div class="entry">
+          <button class="primary" id="fly" disabled>Fly this route <span aria-hidden="true">↗</span></button>
+          <p>Opens Mapbox terrain; shares map-area requests.</p>
+        </div>
+      </div>
+      <figure class="geography">
+        <div class="map-heading"><span>Route outline</span><span aria-label="North is up">N ↑</span></div>
+        <svg id="landing-map" class="route-map" viewBox="0 0 640 580" role="img" aria-label="Actual route outline, north up. Not terrain imagery."></svg>
+        <figcaption>Route: Ride with GPS</figcaption>
+        <svg id="landing-profile" class="mini-profile" viewBox="0 0 640 70" role="img" aria-label="Actual route elevation profile"></svg>
+        <div class="map-footer"><span>Elevation</span><span id="peak-label"></span></div>
+      </figure>
+    </section>
+    <p id="load-status" role="status">Loading the cleared route…</p>
+    <details id="home-tools">
+      <summary>Companion &amp; offline tools</summary>
+      <p>Preview selection is not an itinerary. <a href="./explore.html?area=plan">Plan your week</a> explicitly.</p>
+      <p><a href="./explore.html">Explore: pace, comparisons, private imports &amp; replay</a> ·
+        <a href="./explore.html?area=prepare">Prepare</a> ·
+        <a href="./explore.html?area=ride-week">Event guide</a></p>
+    </details>
+    <noscript>JavaScript enables route previews and playback. The companion tools also require JavaScript.</noscript>
+  </main>
+  <section id="player" aria-label="Route player" hidden>
+    <div id="player-surface">
+      <svg id="player-map" class="route-map" viewBox="0 0 640 580" role="img" aria-label="Actual route outline with moving preview position. Not a 3D terrain view."></svg>
+      <div id="terrain" aria-label="Online satellite terrain"></div>
+    </div>
+    <header class="player-header">
+      <button id="back" class="glass" aria-label="Back to Routes">← <span>Routes</span></button>
+      <div class="player-route glass">
+        <label for="player-route">Preview route</label>
+        <select id="player-route"></select>
+      </div>
+    </header>
+    <div class="player-status glass">
+      <span class="status-dot" aria-hidden="true"></span>
+      <span id="terrain-status" role="status">Route outline · 2D preview</span>
+    </div>
+    <div class="player-bottom">
+      <section id="profile-panel" class="glass" aria-label="Elevation profile" hidden>
+        <div class="profile-heading"><span>Elevation <small>source track</small></span><output id="height"></output></div>
+        <svg id="player-profile" viewBox="0 0 640 100" role="img" aria-label="Elevation along the selected route"></svg>
+        <label for="seek" class="sr-only">Position along route</label>
+        <input id="seek" type="range" min="0" max="1000" value="0">
+        <div class="profile-scale"><span>Start</span><output id="position"></output><span>Finish</span></div>
+      </section>
+      <div class="playbar glass">
+        <button id="play" class="primary" aria-label="Play route preview">▶ <span>Play</span></button>
+        <span id="progress">0.0 km</span>
+        <button id="profile-toggle" aria-expanded="false" aria-controls="profile-panel">Profile <span aria-hidden="true">⌃</span></button>
+        <button id="tools-toggle" aria-expanded="false" aria-controls="tools-panel" aria-label="More player options">•••</button>
+      </div>
+      <section id="tools-panel" class="glass" aria-label="Player options" hidden>
+        <p>Illustrative 90-second playback, not a ride-time estimate.</p>
+        <label>Camera <select id="camera"><option value="follow">Follow rider</option><option value="overview">Whole route</option></select></label>
+        <label class="check"><input id="offline" type="checkbox"> Use 2D only (no terrain requests)</label>
+        <button id="restart">Restart preview</button>
+      </section>
+      <p class="player-credit">Route: Ride with GPS · Route preview <span id="provider-credit" hidden>· <a href="https://www.mapbox.com/about/maps/" target="_blank" rel="noopener">© Mapbox</a> · <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© OpenStreetMap</a> · <a href="https://apps.mapbox.com/feedback/" target="_blank" rel="noopener">Improve this map</a></span></p>
+    </div>
+  </section>
 </body>
 </html>

@@ -49,6 +49,12 @@ async function writeRelease(root, out, routePack) {
   const packEntry = `assets/route-pack.${digest(routePack.pointerBytes)}.json`;
   await writeFile(join(out, packEntry), routePack.pointerBytes);
   const names = new Map();
+  // Keep the tested preview as the single rider/player source, but publish only
+  // its runtime and style under public asset names, never the prototype tree.
+  const publicNames = {
+    'prototypes/rider-first/app.mjs':'js/rider-home.mjs',
+    'prototypes/rider-first/style.css':'assets/rider-home.css',
+  };
   // Dependency-first allowlist. Specifiers in modules resolve from that
   // module (including lazy official terrain imports).
   // Catalog asset paths alone are deployment-root-relative.
@@ -98,6 +104,10 @@ async function writeRelease(root, out, routePack) {
     'js/recorded-replay.mjs': ['./route-analysis.mjs','./route-time.mjs','./ride-clock.mjs'],
     'js/recorded-replay-view.mjs': ['./recorded-replay.mjs','./route-session.mjs','./route-pace.mjs','./route-briefing.mjs','./route-analysis.mjs'],
     'js/site-shell.mjs': ['./route-state.mjs','./preferences-view.mjs','./route-catalog.mjs','./trip-planner.mjs','./trip-planner-view.mjs','./route-playback-adapters.mjs','./route-session.mjs','./route-briefing-view.mjs','./route-flyover-view.mjs','./route-pace.mjs','./route-pace-view.mjs','./route-comparison-view.mjs','./route-comparison.mjs','./local-routes-view.mjs','./local-route-storage.mjs','./recorded-replay.mjs','./recorded-replay-view.mjs','./event-guide.mjs','./event-guide-view.mjs','./route-weather-view.mjs','./offline-view.mjs'],
+    'prototypes/rider-first/style.css': [],
+    'prototypes/rider-first/app.mjs': ['../../js/route-analysis-loader.mjs','../../js/route-analysis.mjs',
+      '../../js/route-catalog.mjs','../../js/route-pack-contract.mjs','../../js/route-terrain-view.mjs'],
+    'js/home-entry.mjs': ['../assets/site.css','./site-shell.mjs','../prototypes/rider-first/app.mjs','./offline-view.mjs'],
   };
   for (const [file, deps] of Object.entries(graph)) {
     let data = await readFile(join(root, file));
@@ -105,22 +115,29 @@ async function writeRelease(root, out, routePack) {
       const dir = spec.startsWith('assets/') ? '.' : dirname(file);
       const name = names.get(join(dir, spec));
       if (!name) throw Error(`Unresolved release dependency: ${file} → ${spec}`);
-      data = replace(data.toString(), spec, spec.replace(basename(spec), basename(name)));
+      const rewritten = relative(dirname(publicNames[file] || file),name).split(sep).join('/');
+      data = replace(data.toString(), spec, rewritten.startsWith('.') ? rewritten : './'+rewritten);
     }
     const ext = extname(file);
-    const name = `${file.slice(0, -ext.length)}.${digest(data)}${ext}`;
+    const publicFile = publicNames[file] || file;
+    const name = `${publicFile.slice(0, -ext.length)}.${digest(data)}${ext}`;
     names.set(file, name);
     await mkdir(join(out, dirname(name)), {recursive:true});
     await writeFile(join(out, name), data);
   }
   const check = await readFile(new URL('./entry-check.js', import.meta.url), 'utf8');
   for (const [entry, scripts] of Object.entries({
-    'index.html':['js/site-shell.mjs','assets/site.css'],
+    'index.html':['js/home-entry.mjs','prototypes/rider-first/style.css'],
     'explore.html':['js/site-shell.mjs','assets/site.css'],
   })) {
     let html = await readFile(join(root, entry), 'utf8');
-    html = replace(html, '</head>',
+    if (html.includes('href="./assets/route-pack.json"'))
+      html = replace(html,'href="./assets/route-pack.json"',`href="./${packEntry}"`);
+    else html = replace(html, '</head>',
       `  <link rel="alternate" type="application/json" title="Approved route catalog" href="./${packEntry}">\n</head>`);
+    // Both entry freshness markers bind the whole secondary/home graph, even
+    // when an edited module is reached only after explicit navigation.
+    html = replace(html,'</head>',`  <meta name="kotr-graph" content="${digest(JSON.stringify([...names.values(),packEntry]))}">\n</head>`);
     for (const file of scripts) html = replace(html, './' + file, './' + names.get(file));
     html = replace(html, '<!-- release entry check -->',
       `<meta name="kotr-release" content="RELEASE_ID">\n  <script>${check}</script>`);

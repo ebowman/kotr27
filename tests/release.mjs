@@ -18,6 +18,9 @@ async function source(t) {
   const src=join(tmp,'source');await mkdir(src);
   for(const path of ['assets','js','index.html','explore.html'])
     await cp(new URL('../'+path,import.meta.url),join(src,path),{recursive:true});
+  await mkdir(join(src,'prototypes/rider-first'),{recursive:true});
+  for (const file of ['app.mjs','style.css'])
+    await cp(new URL('../prototypes/rider-first/'+file,import.meta.url),join(src,'prototypes/rider-first',file));
   await writeFile(join(src,'js/config.js'),'window.KOTR_CONFIG = {};');
   return {tmp,src};
 }
@@ -78,6 +81,7 @@ test('every shipped module edit invalidates exactly its transitive graph and bot
   const {tmp,src}=await source(t), out=join(tmp,'baseline');await build(src,out);
   const names=(await readdir(out,{recursive:true})).filter(n=>extname(n));
   const logical=n=>n.replace(/\.[a-f0-9]{24}\./,'.');
+  const sourceFile=n=>n==='js/rider-home.mjs'?'prototypes/rider-first/app.mjs':n;
   const modules=names.filter(n=>/\.(?:mjs|js)$/.test(n)&&n.includes('/'));
   const edges=new Map();
   for(const path of modules) {
@@ -87,10 +91,10 @@ test('every shipped module edit invalidates exactly its transitive graph and bot
   }
   // Include all modules, not just a hand-maintained subset of the dependency tree.
   for(const file of edges.keys()) {
-    const original=await readFile(join(src,file),'utf8'), next=join(tmp,'change-'+file.replaceAll('/','-'));
-    await writeFile(join(src,file),'// release dependency regression\n'+original);
+    const original=await readFile(join(src,sourceFile(file)),'utf8'), next=join(tmp,'change-'+file.replaceAll('/','-'));
+    await writeFile(join(src,sourceFile(file)),'// release dependency regression\n'+original);
     await build(src,next);
-    await writeFile(join(src,file),original);
+    await writeFile(join(src,sourceFile(file)),original);
     const changed=new Set([file]);
     let size;
     do {size=changed.size;for(const [path,deps] of edges)if(deps.some(d=>changed.has(d)))changed.add(path);}
@@ -134,8 +138,8 @@ test('ordinary warm Pages URL switches releases; unchanged, failed and offline p
   t.after(()=>{server.closeAllConnections();server.close();});
   const base=`http://127.0.0.1:${server.address().port}`, {cmd,js,exceptions}=await browser(t);
   await cmd('Network.enable');
-  const ready=()=>until(()=>js(`document.getElementById('site-shell')?.dataset.ready==='true' &&
-    document.getElementById('trip-planner')?.dataset.ready==='true'`));
+  const ready=()=>until(()=>js(`document.getElementById('fly')?.disabled===false &&
+    document.getElementById('offline-packs')?.dataset.ready==='true'`));
   const visit=async(offline=false)=>{
     await cmd('Page.navigate',{url:base+'/away'});
     await until(()=>js(`!!document.querySelector('a')`));
@@ -148,8 +152,9 @@ test('ordinary warm Pages URL switches releases; unchanged, failed and offline p
     }
     await until(()=>js(`document.querySelector('meta[name="kotr-release"]')?.content==='${markers.get(live)}'`));
     await ready();
-    assert.equal(await js(`document.getElementById('site-route').value`),'');
-    assert.equal(await js(`document.getElementById('site-route').options.length`),8);
+    assert.equal(await js(`document.getElementById('route-title').textContent`),'D2 Monte Grappa');
+    assert.equal(await js(`document.getElementById('player-route').options.length`),7);
+    assert.equal(await js(`document.querySelector('#site-shell')`),null);
   };
   await visit();await until(()=>probes===1);
   live=b;gate=Promise.withResolvers();await visit();

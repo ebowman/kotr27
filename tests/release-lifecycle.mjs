@@ -18,6 +18,9 @@ for (const mode of ['obsolete','completed']) test(`held planner Fetch ${mode} ac
   await mkdir(source);
   for (const dir of ['assets','js']) await cp(new URL('../'+dir+'/',import.meta.url),join(source,dir),{recursive:true});
   for (const file of ['index.html','explore.html']) await cp(new URL('../'+file,import.meta.url),join(source,file));
+  await mkdir(join(source,'prototypes/rider-first'),{recursive:true});
+  for (const file of ['app.mjs','style.css'])
+    await cp(new URL('../prototypes/rider-first/'+file,import.meta.url),join(source,'prototypes/rider-first',file));
   await writeFile(join(source,'js/config.js'),'window.KOTR_CONFIG = {};');
   await build(source,a);
   const html = await readFile(join(source,'index.html'),'utf8');
@@ -83,25 +86,23 @@ for (const mode of ['obsolete','completed']) test(`held planner Fetch ${mode} ac
   assert.equal(oldRequest.frameId,oldFrame.id);
   assert.equal(oldRequest.loaderId,oldFrame.loaderId);
   assert.equal(await js(`document.querySelector('meta[name="kotr-release"]').content`),oldMarker);
-  // Complete every OTHER planner profile before allowing freshness navigation:
-  // there is exactly one deliberately outstanding profile in the old context.
-  await until(() => [...network.values()].filter(r => r.loaderId === oldFrame.loaderId &&
-    /\/assets\/route-profile-[a-f0-9]{64}\.json$/.test(r.request.url) &&
-    terminal.get(r.requestId)?.method === 'Network.loadingFinished').length === 6);
+  // The actual Routes homepage loads only its preview, not all planner profiles.
+  assert.equal([...network.values()].filter(r=>r.loaderId===oldFrame.loaderId &&
+    /\/assets\/route-profile-[a-f0-9]{64}\.json$/.test(r.request.url)).length,1);
   assert.equal(terminal.has(held.networkId),false,'held request has not completed');
   if (mode === 'completed') {
     // Positive control / corrected scheduling: finish the intercepted work in
     // its original document before allowing our server's freshness response.
     await cmd('Fetch.continueRequest',{requestId:held.requestId});
     await until(() => terminal.get(held.networkId)?.method === 'Network.loadingFinished');
-    await until(() => js(`document.querySelector('#trip-planner')?.dataset.ready === 'true'`));
+    await until(() => js(`document.querySelector('#fly')?.disabled === false`));
   }
   freshness.resolve();
   await until(() => frames.some(frame => frame.id === oldFrame.id && frame.loaderId !== oldFrame.loaderId));
   const replacement = frames.find(frame => frame.id === oldFrame.id && frame.loaderId !== oldFrame.loaderId);
   assert.equal(new URL(replacement.url).searchParams.get('_kotr'),newMarker);
   await until(() => js(`document.querySelector('meta[name="kotr-release"]')?.content === '${newMarker}' &&
-    document.querySelector('#trip-planner')?.dataset.ready === 'true'`));
+    document.querySelector('#fly')?.disabled === false`));
   // Negative control: sending an old ID AFTER its frame's loader changed must
   // fail. This is the one deliberately asserted protocol error, not filtering
   // unexpected errors from the real warm-release fixture.

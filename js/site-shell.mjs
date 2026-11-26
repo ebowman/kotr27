@@ -115,7 +115,7 @@ const node = (tag, text, parent) => {
 const shell = el('site-shell');
 // All inserted HTML is fixed UI copy. Catalog names and notices use textContent.
 shell.innerHTML = `
-  <header class="site-header"><span class="site-brand">KOTR / 2027</span><nav class="site-nav" aria-label="Main navigation"></nav></header>
+  <header class="site-header"><a class="site-brand" href="./index.html">KOTR / 2027 · Routes</a><nav class="site-nav" aria-label="Main navigation"></nav></header>
   <div class="site-context"><p class="site-label" id="site-catalog-status">Loading approved provisional routes</p>
     <p id="site-selection"></p>
     <p>Source D1–D4 labels are not verified calendar assignments. Departures and logistics are pending; no itinerary is inferred.</p></div>

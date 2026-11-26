@@ -63,8 +63,10 @@ async function fixture(t,scope='/kotr27/') {
   await cmd('Network.setBlockedURLs',{urls:['https://*']});
   await cmd('Browser.setDownloadBehavior',{behavior:'allow',downloadPath:downloads,eventsEnabled:true});
   const base=`http://127.0.0.1:${server.address().port}${scope}`;
-  const ready=()=>until(()=>js(`document.querySelector('#site-shell')?.dataset.ready==='true' &&
-    document.querySelector('#trip-planner')?.dataset.ready==='true' && !!document.querySelector('#offline-check')`));
+  const ready=()=>until(()=>js(`(document.querySelector('#landing') ||
+    (document.querySelector('#site-shell')?.dataset.ready==='true' &&
+    document.querySelector('#trip-planner')?.dataset.ready==='true')) &&
+    !!document.querySelector('#offline-check')`));
   const go=async url=>{
     await cmd('Page.navigate',{url});
     await until(()=>js(`location.href===${JSON.stringify(url)} && document.readyState==='complete'`));
@@ -120,6 +122,22 @@ test('opt-in → truly disconnected reload/profile/export → deletion; no priva
   assert.ok(await f.js(`document.querySelector('svg')!==null`));
   await until(()=>f.js(`document.querySelector('#offline-currentness').textContent.includes('cannot be checked')`));
   assert.equal((await f.status()).active.complete,true);
+  // Saved common assets must actually render the new root while disconnected.
+  // An unsaved default preview stays unavailable, not silently replaced by the
+  // saved day. The rider can explicitly select that saved day's D0 route.
+  await f.go(f.base);
+  await until(()=>f.js(`document.querySelector('#route-title').textContent==='Route unavailable'`));
+  assert.equal(await f.js(`document.querySelector('#fly').disabled`),true);
+  assert.equal(await f.js(`document.querySelector('#landing-route').disabled`),false);
+  await f.js(`document.querySelector('#landing-route').value='0';
+    document.querySelector('#landing-route').dispatchEvent(new Event('change'))`);
+  await until(()=>f.js(`!document.querySelector('#fly').disabled`));
+  assert.equal(await f.js(`document.querySelector('#route-title').textContent`),'D0 Warm-up');
+  await f.js(`document.querySelector('#offline').checked=true;document.querySelector('#fly').click();
+    document.querySelector('#play').click()`);
+  await until(()=>f.js(`parseFloat(document.querySelector('#progress').textContent)>0`));
+  await f.js(`document.querySelector('#back').click()`);
+  await f.go(url);
   const keys=await f.evaluate(`caches.keys().then(async keys=>Promise.all(keys.map(async k=>
     (await (await caches.open(k)).keys()).map(r=>r.url))))`);
   assert.ok(keys.flat().every(u=>u.startsWith(f.base) && !/mapbox|open-meteo|private|\\.fit/.test(u)));
@@ -189,6 +207,11 @@ test('atomic update: hash/fetch/quota failures retain old complete pack; explici
   assert.equal((await f.status()).pinned,b.release);
   assert.equal(await f.js(`document.querySelector('meta[name="kotr-release"]').content`),
     (await readFile(join(f.artifacts,'b','index.html'),'utf8')).match(/name="kotr-release" content="([^"]+)"/)[1]);
+  // The actual root belongs to the new saved graph too, not the old planner.
+  await f.go(f.base);
+  assert.equal(await f.js(`!!document.querySelector('#landing') && !document.querySelector('#site-shell')`),true);
+  assert.equal((await f.status()).pinned,b.release);
+  assert.equal(await f.js(`document.querySelector('#player-route').options.length`),7);
   const oldRoute=f.manifests[0].routes.find(r=>r.day==='kotr-d1');
   await f.go(f.base+`index.html?area=explore&route=${oldRoute.id}&rev=${oldRoute.revision}`);
   assert.match(await f.js(`document.querySelector('#site-notice').textContent`),/revision unavailable/);
@@ -270,6 +293,24 @@ test('network withdrawal creates durable tombstone, blocks old exports and clear
   await until(()=>f.js(`document.querySelector('#site-shell')?.dataset.ready==='true'`));
   await until(()=>f.js(`document.querySelector('#site-notice').textContent.includes('withdrawn')`));
   assert.equal(await f.js(`!!document.querySelector('#trip-gpx-${route.id}')`),false);
+});
+
+test('homepage withdrawal clears the already loaded preview and does not substitute another route',async t=>{
+  const f=await fixture(t);
+  await f.go(f.base);
+  assert.deepEqual(await f.save(),{ok:true});
+  await f.go(f.base);
+  await f.js(`document.querySelector('#landing-route').value='0';
+    document.querySelector('#landing-route').dispatchEvent(new Event('change'))`);
+  await until(()=>f.js(`!document.querySelector('#fly').disabled &&
+    document.querySelector('#route-title').textContent==='D0 Warm-up'`));
+  f.fault.release=join(f.artifacts,'withdrawn');
+  await f.check();
+  await until(()=>f.js(`document.querySelector('#route-title').textContent==='Route unavailable'`));
+  assert.equal(await f.js(`document.querySelector('#fly').disabled`),true);
+  assert.equal(await f.js(`document.querySelectorAll('#landing-map path').length`),0);
+  assert.equal(await f.js(`document.querySelector('#distance').textContent`),'—');
+  assert.equal(await f.js(`document.querySelector('#landing-route').value`),'0');
 });
 
 test('first-ever offline cannot load shell; storage denial leaves online core usable',async t=>{

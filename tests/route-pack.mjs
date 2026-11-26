@@ -87,6 +87,9 @@ test('source private originals/provenance and arbitrary extra assets never ship'
   await mkdir(src);
   for (const path of ['js','assets']) await cp(join(root,path),join(src,path),{recursive:true});
   for (const path of ['index.html','explore.html']) await cp(join(root,path),join(src,path));
+  await mkdir(join(src,'prototypes/rider-first'),{recursive:true});
+  for (const file of ['app.mjs','style.css'])
+    await cp(join(root,'prototypes/rider-first',file),join(src,'prototypes/rider-first',file));
   await mkdir(join(src,'.private'));
   const canary='PRIVATE-ROUTE-ORIGINAL-CANARY';
   await writeFile(join(src,'.private','secret.fit'),canary);
@@ -121,6 +124,9 @@ test('release rejects tampering/symlinks before output; changing pointer invalid
   await mkdir(src);
   for (const path of ['js','assets']) await cp(join(root,path),join(src,path),{recursive:true});
   for (const path of ['index.html','explore.html']) await cp(join(root,path),join(src,path));
+  await mkdir(join(src,'prototypes/rider-first'),{recursive:true});
+  for (const file of ['app.mjs','style.css'])
+    await cp(join(root,'prototypes/rider-first',file),join(src,'prototypes/rider-first',file));
   const [path,bytes]=[...source.files][0];
   await writeFile(join(src,path),'bad');
   await assert.rejects(build(src,join(tmp,'bad')),/bytes do not match/);

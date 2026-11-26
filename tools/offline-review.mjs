@@ -21,6 +21,9 @@ export async function buildOfflineRehearsal(out) {
   try {
     for(const name of ['index.html','explore.html','assets','js'])
       await cp(join(source,name),join(src,name),{recursive:true});
+    await mkdir(join(src,'prototypes/rider-first'),{recursive:true});
+    for (const file of ['app.mjs','style.css'])
+      await cp(join(source,'prototypes/rider-first',file),join(src,'prototypes/rider-first',file));
     await build(src,join(out,'a'));
     const original=await readRoutePack(src),pack=structuredClone(original.pack);
     const route=pack.catalog.routes.find(r=>pack.catalog.variants.find(v=>v.id===r.variantId)?.dayId==='kotr-d1');
