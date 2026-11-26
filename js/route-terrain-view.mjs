@@ -1,4 +1,4 @@
-import { cameraPose, createRoutePresentation, followBearing, routeBounds, routeLine, frameEvidence, flyoverLimits as limits } from './route-flyover.mjs';
+import { cameraPose, createRoutePresentation, followBearing, routeBounds, routeLine, routeSection, frameEvidence, flyoverLimits as limits } from './route-flyover.mjs';
 
 // One lazy map, no preloading/retries or independent playback clock.
 // Only approved, already verified geometry may reach this adapter.
@@ -21,6 +21,7 @@ export async function mountRouteTerrain({container,analysis,snapshot,onStatus,on
   let map, rider, ready=false, presented=false, stopped=false, manual=false, current=snapshot;
   let refinements={}, lastPaint=-Infinity, lastProof=-Infinity, timer, requests=0, updating=false;
   let bearing, frame, proofTimer, sequence=0, renderSequence=0, proofSequence=0, proof, status, outageAt;
+  let highlighted;
   const presentation=createRoutePresentation(analysis);
   function announce(name,message) {
     const key=name+message;
@@ -128,6 +129,10 @@ export async function mountRouteTerrain({container,analysis,snapshot,onStatus,on
           properties:{},geometry:{type:'LineString',coordinates:routeLine(analysis)}}});
         map.addLayer({id:'route',type:'line',source:'route',
           paint:{'line-color':'#ff932e','line-width':5}});
+        map.addSource('selected-section',{type:'geojson',tolerance:0,
+          data:{type:'FeatureCollection',features:[]}});
+        map.addLayer({id:'selected-section',type:'line',source:'selected-section',
+          paint:{'line-color':'#ffe097','line-width':7,'line-opacity':0.9}});
         // 2.15 produces its terrain depth texture for circle/symbol layers.
         // No visible geometry or extra source/request: this enables the SDK's
         // own current-frame occlusion pass, read by frameEvidence on render.
@@ -212,15 +217,26 @@ export async function mountRouteTerrain({container,analysis,snapshot,onStatus,on
       updating=true;
       const pose=cameraPose(analysis,s,refinements);
       rider.setLngLat(pose.center);
+      if (highlighted!==s.selectedChapterId) {
+        highlighted=s.selectedChapterId;
+        map.getSource('selected-section').setData(highlighted ? {type:'Feature',properties:{},
+          geometry:{type:'LineString',coordinates:routeSection(analysis,highlighted)}} :
+          {type:'FeatureCollection',features:[]});
+        container.dataset.section=highlighted || '';
+      }
       if (!manual || force) {
         manual=false;
         if (reset) bearing=undefined;
         if (s.cameraMode==='follow') pose.bearing=followBearing(pose.bearing,bearing,elapsed);
         bearing=pose.bearing;
         container.dataset.camera=JSON.stringify({bearing:pose.bearing,pitch:pose.pitch});
-        if (s.cameraMode==='overview' && (reset || sequence===0)) map.fitBounds(routeBounds(analysis),{
-          padding:40,duration:0,bearing:0,pitch:0,maxZoom:limits.maxZoom});
-        else if (s.cameraMode!=='overview') map.jumpTo(pose);
+        if (['overview','section'].includes(s.cameraMode) && (reset || sequence===0)) map.fitBounds(routeBounds(analysis,
+          s.cameraMode==='section' ? s.selectedChapterId : undefined),{
+          padding:s.cameraMode==='section' ? refinements.sectionPadding ?? 40 : 40,
+          duration:0,bearing:0,pitch:0,maxZoom:limits.maxZoom});
+        // Section padding keeps the start/end out from under the cockpit.
+        // Explicit Return must not carry that asymmetric framing into Follow.
+        else if (!['overview','section'].includes(s.cameraMode)) map.jumpTo({...pose,...(reset ? {padding:0} : {})});
       }
       sequence++;
       container.dataset.pose=JSON.stringify({sequence,at:now,distanceM:s.distanceM,manual});

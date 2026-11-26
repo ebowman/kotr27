@@ -89,6 +89,7 @@ test('manifest binds complete allowlisted release; selected days omit unchosen g
   const refs=selectedResources(m,['kotr-d1']);
   assert.equal(m.routes.length,7);
   assert.ok(refs.some(r=>r.path.includes('local-route-parser')));
+  assert.ok(refs.some(r=>/^js\/ride-insights\.[a-f0-9]{24}\.mjs$/.test(r.path)));
   assert.ok(!refs.some(r=>r.path.includes('https:')));
   const d2=m.routes.find(r=>r.day==='kotr-d2');
   assert.ok(d2.paths.every(p=>!refs.some(r=>r.path===p)));
@@ -134,7 +135,14 @@ test('opt-in → truly disconnected reload/profile/export → deletion; no priva
   await until(()=>f.js(`!document.querySelector('#fly').disabled`));
   assert.equal(await f.js(`document.querySelector('#route-title').textContent`),'D0 Warm-up');
   await f.js(`document.querySelector('#offline').checked=true;document.querySelector('#fly').click();
-    document.querySelector('#play').click()`);
+    document.querySelector('#profile-toggle').click();
+    document.querySelectorAll('#section-list button')[1].click()`);
+  assert.equal(await f.js(`document.querySelector('#road-card').dataset.status`),'available');
+  assert.equal(await f.js(`document.querySelector('#profile-range').dataset.chapterId`),'chapter-2');
+  assert.equal(await f.js(`document.querySelector('#outline-section').dataset.chapterId`),'chapter-2');
+  assert.equal(await f.js(`document.querySelector('#cockpit').dataset.seconds`),'0');
+  assert.equal(await f.js(`document.querySelector('#play').getAttribute('aria-label')`),'Play route preview');
+  await f.js(`document.querySelector('#profile-close').click();document.querySelector('#play').click()`);
   await until(()=>f.js(`parseFloat(document.querySelector('#progress').textContent)>0`));
   await f.js(`document.querySelector('#back').click()`);
   await f.go(url);

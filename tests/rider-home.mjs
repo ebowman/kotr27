@@ -61,6 +61,121 @@ async function screenshot(b,name) {
   await writeFile(join(dir,name+'.png'),Buffer.from(data,'base64'));
 }
 
+test('built sections: actual profile pointer/keyboard, shared paused trials, seven identities and bounded phone disclosure',async t=>{
+  const f=await fixture(t),b=await f.chrome();
+  await b.cmd('Page.enable');
+  const manifest=JSON.parse(f.files.get('offline-release.json'));
+  assert.ok(manifest.common.some(p=>/^js\/ride-insights\.[a-f0-9]{24}\.mjs$/.test(p)));
+  const state=()=>b.js(`({
+    ...document.getElementById('road-card').dataset,
+    distance:Number(document.getElementById('cockpit').dataset.distance),
+    seconds:Number(document.getElementById('cockpit').dataset.seconds),
+    history:Number(document.getElementById('cockpit').dataset.history),
+    current:document.getElementById('road-current').textContent,
+    ahead:document.getElementById('road-ahead').textContent,
+    detail:document.getElementById('section-detail').textContent,
+    profile:document.getElementById('profile-range').dataset.chapterId,
+    map:document.getElementById('outline-section').dataset.chapterId,
+    play:document.getElementById('play').getAttribute('aria-label')
+  })`);
+  const pointer=async(selector,fraction=.5,scroll=true)=>{
+    if (scroll) await b.js(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'center'})`);
+    const p=await b.js(`(()=>{
+      const el=document.querySelector(${JSON.stringify(selector)}),r=el.getBoundingClientRect();
+      const x=r.left+r.width*${fraction},y=r.top+r.height/2;
+      return {x,y,hit:el.contains(document.elementFromPoint(x,y)),width:r.width,height:r.height};
+    })()`);
+    assert.ok(p.hit,JSON.stringify({selector,...p}));
+    assert.ok(p.width>=44 && p.height>=44,JSON.stringify({selector,...p}));
+    await b.cmd('Input.dispatchMouseEvent',{type:'mousePressed',x:p.x,y:p.y,button:'left',clickCount:1});
+    await b.cmd('Input.dispatchMouseEvent',{type:'mouseReleased',x:p.x,y:p.y,button:'left',clickCount:1});
+  };
+  const key=async key=>{
+    await b.cmd('Input.dispatchKeyEvent',{type:'keyDown',key});
+    await b.cmd('Input.dispatchKeyEvent',{type:'keyUp',key});
+  };
+  for (const [width,height] of [[1440,900],[375,812]]) {
+    await b.cmd('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
+    await b.cmd('Page.navigate',{url:f.base+'?terrain=off'});await ready(b);
+    await pointer('#fly');await pointer('#profile-toggle');await pointer('#main-climb');
+    let s=await state();
+    assert.equal(s.distance,10750);assert.equal(s.seconds,0);assert.equal(s.history,0);
+    assert.equal(s.play,'Play route preview');assert.equal(s.selected,'chapter-22');
+    assert.equal(s.map,s.selected);assert.equal(s.profile,s.selected);
+    assert.match(s.current,/Climb 22.*9.8 km.*853 m left/);
+    assert.match(s.ahead,/processed \+7.0% to \+9.4%/);
+    assert.match(s.detail,/8.7% processed average/);
+    assert.equal(await b.js(`document.getElementById('camera').value`),'section');
+    await pointer('#profile-close');await sleep(50);
+    await screenshot(b,`sections-${width}-main-climb-2d`);
+    const spatial=await b.js(`document.querySelector('.player-bottom').getBoundingClientRect().top-
+      document.querySelector('.player-status').getBoundingClientRect().bottom`);
+    assert.ok(spatial>=height/2,JSON.stringify({width,height,spatial}));
+    await pointer('#return-rider');
+    assert.equal((await state()).distance,s.distance);
+    await pointer('#profile-toggle');await pointer('#player-profile',.25);
+    s=await state();
+    assert.equal(s.seconds,0);assert.equal(s.history,0);assert.equal(s.play,'Play route preview');
+    assert.equal(await b.js(`document.activeElement.id`),'player-profile');
+    const pointerDistance=s.distance;
+    await key('ArrowRight');assert.ok(Math.abs((await state()).distance-pointerDistance-250)<1e-6);
+    assert.ok(await b.js(`document.activeElement.matches(':focus-visible')`));
+    await key('End');s=await state();
+    assert.match(s.current,/Route complete/);assert.match(s.detail,/section complete/);
+    assert.match(await b.js(`document.getElementById('road-transition').textContent`),/No next section/);
+    assert.equal(s.profile,'chapter-55');assert.equal(s.map,'chapter-55');
+    await key('Home');assert.equal((await state()).distance,0);
+    if (width===375) {
+      await b.cmd('Emulation.setTouchEmulationEnabled',{enabled:true,maxTouchPoints:1});
+      const point=await b.js(`(()=>{
+        const r=document.getElementById('player-profile').getBoundingClientRect();
+        return {x:r.left+r.width*.4,y:r.top+r.height/2};
+      })()`);
+      await b.cmd('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[point]});
+      await b.cmd('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+      s=await state();
+      assert.ok(s.distance>0);assert.equal(s.seconds,0);assert.equal(s.play,'Play route preview');
+      await b.cmd('Emulation.setTouchEmulationEnabled',{enabled:false});
+    }
+    await pointer('#sections summary');
+    await pointer('[data-chapter-id="chapter-22"]');
+    await screenshot(b,`sections-${width}-survey-2d`);
+    // A real short derived descent completes without resetting the chosen trial
+    // or changing its selection/history. No simulation clock is faked.
+    const short=await b.js(`[...document.querySelectorAll('#section-list button')].find(e=>
+      e.textContent.startsWith('Descent') && Number(e.dataset.endM)-Number(e.dataset.startM)<=500)?.dataset.chapterId`);
+    assert.ok(short);
+    await pointer(`[data-chapter-id="${short}"]`);
+    await pointer('#profile-close');await select(b,'playback-rate','60');await pointer('#play');
+    await until(async()=>!(await state()).current.startsWith(`Descent ${short.split('-')[1]} ·`));
+    await pointer('#play');s=await state();
+    assert.equal(s.selected,short);assert.equal(s.profile,short);assert.equal(s.map,short);
+    assert.match(s.detail,/section complete; Play continues without resetting this trial/);
+    assert.ok(s.seconds>0);assert.equal(s.history,0);
+    await pointer('#back');await pointer('#fly');
+    assert.equal((await state()).distance,s.distance);
+    const revisions=[];
+    for (const [id] of routes) {
+      await select(b,'player-route',id);await ready(b);
+      s=await state();revisions.push(s.revision);
+      assert.equal(s.distance,0);assert.match(s.revision,new RegExp('^'+id+'-'));
+      assert.equal(s.profile,'chapter-1');assert.equal(s.map,'chapter-1');
+      if (id==='rwgps-57874050') {
+        await click(b,'profile-toggle');
+        await b.js(`document.querySelector('[data-chapter-id="chapter-68"]').click()`);
+        assert.match((await state()).current,/input anomaly/);
+        assert.match((await state()).ahead,/unverified grade/);
+        assert.equal(await b.js(`document.getElementById('play').disabled`),true);
+        await click(b,'profile-close');
+      }
+    }
+    assert.equal(new Set(revisions).size,7);
+    assert.equal(await b.js(`document.documentElement.scrollWidth`),width);
+    t.diagnostic(JSON.stringify({width,height,selectedSectionSpatial:spatial}));
+  }
+  assert.deepEqual(b.exceptions,[]);
+});
+
 test('built 375px enlarged Profile keeps navigation, seek and playback actual hit targets accessible',async t=>{
   const f=await fixture(t),b=await f.chrome();
   await b.cmd('Page.enable');
@@ -425,13 +540,34 @@ test('built root live Chrome: Grappa play, off-rider manual pan/zoom/return, rou
     const terrainReady=async()=>{
       for (let i=0;i<34;i++) {
         const s=await state();
-        if (s.proof.ok && s.online) return s;
+        if (s.proof.ok && s.proof.current && s.proof.distanceM===s.distance && s.online) return s;
         assert.ok(!s.status.includes('unavailable'),JSON.stringify(s));
         await sleep(500);
       }
       assert.fail('Live built entry terrain did not verify');
     };
     await click(b,'fly');await terrainReady();
+    await click(b,'profile-toggle');await click(b,'main-climb');
+    await until(()=>b.js(`document.getElementById('terrain').dataset.section==='chapter-22'`));
+    await terrainReady();
+    assert.equal((await state()).distance,10750);
+    assert.ok(await b.js(`observedTerrain.getSource('selected-section')._data.geometry.coordinates.every(p=>
+      observedTerrain.getBounds().contains(p))`));
+    assert.equal(await b.js(`observedTerrain.getSource('selected-section')._data.geometry.coordinates.length>2`),true);
+    await screenshot(b,`sections-${width}-main-climb-terrain`);
+    await click(b,'profile-close');
+    await screenshot(b,`sections-${width}-main-climb-terrain-closed`);
+    const sectionLayout=await b.js(`(()=>{
+      const marker=document.querySelector('#terrain .route-rider').getBoundingClientRect();
+      const top=document.querySelector('.player-status').getBoundingClientRect().bottom;
+      const bottom=document.querySelector('.player-bottom').getBoundingClientRect().top;
+      return {top,bottom,marker:marker.toJSON(),spatial:bottom-top};
+    })()`);
+    assert.ok(sectionLayout.marker.top>=sectionLayout.top && sectionLayout.marker.bottom<=sectionLayout.bottom,JSON.stringify(sectionLayout));
+    assert.ok(sectionLayout.spatial>=height/2,JSON.stringify(sectionLayout));
+    t.diagnostic(JSON.stringify({width,height,sectionLayout}));
+    await click(b,'return-rider');await terrainReady();
+    assert.equal((await state()).distance,10750);
     await seek(b,200);await terrainReady();
     assert.ok(await b.js(`parseFloat(document.getElementById('ride-grade').textContent)>5`));
     await b.js(`(()=>{
@@ -470,17 +606,26 @@ test('built root live Chrome: Grappa play, off-rider manual pan/zoom/return, rou
     const beforeDrag=(await state()).distance;
     await click(b,'play');
     await until(async()=>(await state()).distance>beforeDrag);
-    // Real DOM drag input, no camera/proof/timing overrides.
-    await b.js(`observedTerrain.getCanvas().dispatchEvent(new MouseEvent('mousedown',{
-      bubbles:true,clientX:${width/2},clientY:${height/2},button:0,buttons:1}))`);
-    for (let i=1;i<=16;i++) {
-      await b.js(`document.dispatchEvent(new MouseEvent('mousemove',{
-        bubbles:true,clientX:${width/2+i*60},clientY:${height/2},button:0,buttons:1}))`);
-      await sleep(40);
+    // Browser input, not untrusted synthetic DOM events. Two in-viewport drags
+    // move the rider off screen without relying on pointer delivery beyond the
+    // browser window. No camera/proof/timing overrides.
+    for (let drag=0;drag<2;drag++) {
+      await b.cmd('Input.dispatchMouseEvent',{type:'mouseMoved',x:width/2,y:height/2});
+      await b.cmd('Input.dispatchMouseEvent',{type:'mousePressed',x:width/2,y:height/2,button:'left',buttons:1,clickCount:1});
+      for (let i=1;i<=8;i++) {
+        await b.cmd('Input.dispatchMouseEvent',{type:'mouseMoved',
+          x:width/2+i*width*.35/8,y:height/2,button:'left',buttons:1});
+        await sleep(40);
+      }
+      await b.cmd('Input.dispatchMouseEvent',{type:'mouseReleased',x:width*.85,y:height/2,button:'left',clickCount:1});
     }
-    await b.js(`document.dispatchEvent(new MouseEvent('mouseup',{
-      bubbles:true,clientX:${width/2+960},clientY:${height/2},button:0}))`);
     await sleep(3500);
+    t.diagnostic(JSON.stringify({manualProbe:await state(),viewport:await b.js(`({
+      hit:document.elementFromPoint(innerWidth/2,innerHeight/2)?.outerHTML?.slice(0,200),
+      canvas:observedTerrain.getCanvas().getBoundingClientRect().toJSON(),
+      dragEnabled:observedTerrain.dragPan.isEnabled(),dragging:observedTerrain.isMoving(),
+      profileHidden:document.getElementById('profile-panel').hidden
+    })`)}));
     const manual=await terrainReady();
     assert.equal(manual.proof.mode,'manual',JSON.stringify(manual));assert.equal(manual.playing,false);
     assert.equal(await b.js(`(()=>{
@@ -505,6 +650,11 @@ test('built root live Chrome: Grappa play, off-rider manual pan/zoom/return, rou
     assert.equal(await b.js(`observedTerrain.getPitch()`),45);
     await select(b,'player-route','rwgps-57873112');await ready(b);await terrainReady();
     assert.equal(await b.js(`maps.length===2 && maps[0]._removed`),true);
+    await click(b,'profile-toggle');await click(b,'main-climb');await terrainReady();
+    assert.notEqual((await state()).distance,10750);
+    assert.equal(await b.js(`document.getElementById('terrain').dataset.section`),
+      await b.js(`document.getElementById('profile-range').dataset.chapterId`));
+    await screenshot(b,`sections-${width}-asolo-terrain`);
     await click(b,'back');
     assert.equal(await b.js(`document.querySelectorAll('#terrain canvas').length`),0);
     assert.equal(await b.js(`document.activeElement.id`),'fly');

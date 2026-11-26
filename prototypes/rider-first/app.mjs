@@ -3,6 +3,8 @@ import { positionAt } from '../../js/route-analysis.mjs';
 import { verifyAsset } from '../../js/route-catalog.mjs';
 import { validatePackPointer, validateRoutePack } from '../../js/route-pack-contract.mjs';
 import { createRideSimulation, createSimulationScheduler, rideRiderFromInput, exampleDrivetrain } from '../../js/ride-simulation.mjs';
+import { rideInsights, sectionName } from '../../js/ride-insights.mjs';
+import { routeSection } from '../../js/route-flyover.mjs';
 
 const $ = id => document.getElementById(id);
 const NS = 'http://www.w3.org/2000/svg';
@@ -41,6 +43,7 @@ for (const el of [bar,credit,document.querySelector('.player-header'),
 let pack, selected, analysis, inPlayer = false, playing = false, distance = 0;
 let generation = 0, routeController, terrainController, terrainHandle, frame, projection;
 let simulation, scheduler, pendingGear, pendingHistory, notice = '';
+let selectedChapterId, highlightedChapterId, insights, lastHUD = -Infinity;
 let mode = 'experiment';
 let terrainReady = false;
 let manual = false;
@@ -48,8 +51,7 @@ const returnRider = document.createElement('button');
 returnRider.id = 'return-rider';returnRider.textContent = 'Return to rider';returnRider.hidden = true;
 $('terrain-status').parentElement.append(returnRider);
 function followRider() {
-  manual = false;returnRider.hidden = true;
-  camera = 'follow';$('camera').value = camera;updatePosition(true);
+  frameRoute('follow');
 }
 returnRider.addEventListener('click',()=>{pause();followRider();});
 let camera = 'follow';
@@ -94,7 +96,10 @@ function profile(svg, height) {
     node('path',{d:line+` L640,${height} L0,${height} Z`,class:'profile-fill'}),
     node('path',{d:line,class:'profile-line'}),
   );
-  if (svg.id === 'player-profile') svg.append(node('line',{id:'profile-cursor',x1:0,x2:0,y1:0,y2:height,stroke:'#f2efe5','stroke-width':2}));
+  if (svg.id === 'player-profile') {
+    svg.prepend(node('rect',{id:'profile-range',class:'profile-range',x:0,y:0,width:0,height}));
+    svg.append(node('line',{id:'profile-cursor',x1:0,x2:0,y1:0,y2:height,stroke:'#f2efe5','stroke-width':2}));
+  }
 }
 function drawMap(svg, rider = false) {
   const points = analysis.points;
@@ -117,6 +122,7 @@ function drawMap(svg, rider = false) {
       node('text',{x:x+12,y:y-10},label));
   }
   if (rider) {
+    svg.append(node('path',{id:'outline-section',class:'section-track'}));
     const [x,y] = projection(positionAt(analysis,distance));
     svg.append(node('circle',{id:'outline-rider',cx:x,cy:y,r:8,fill:'#dfb767',stroke:'white','stroke-width':4}));
   }
@@ -125,7 +131,7 @@ function drawMap(svg, rider = false) {
 function snapshot() {
   return {...(simulation?.status === 'available' ? simulation.snapshot() : {}),
     identity:analysis.identity,position:positionAt(analysis,distance),distanceM:distance,
-    phase:playing?'playing':'paused',cameraMode:camera};
+    phase:playing?'playing':'paused',cameraMode:camera,selectedChapterId:highlightedChapterId};
 }
 const text = (id, value) => {if ($(id).textContent !== value) $(id).textContent = value;};
 const pressed = (button, value) => {
@@ -137,6 +143,103 @@ const duration = seconds => {
   const minutes = Math.floor(seconds/60);
   return `${Math.floor(minutes/60)}:${String(minutes%60).padStart(2,'0')}:${String(Math.floor(seconds%60)).padStart(2,'0')}`;
 };
+const km = m => `${(m/1000).toFixed(1)} km`;
+const grade = n => `${n>0?'+':''}${n.toFixed(1)}%`;
+function renderSections() {
+  $('section-list').replaceChildren();
+  text('section-count',`(${analysis.chapters.length})`);
+  for (const chapter of analysis.chapters) {
+    const li = document.createElement('li'),button = document.createElement('button');
+    const info = rideInsights(analysis,chapter.startM,chapter.id);
+    button.dataset.chapterId = chapter.id;
+    button.dataset.startM = chapter.startM;button.dataset.endM = chapter.endM;
+    button.textContent = `${sectionName(analysis,chapter)} · ${km(chapter.startM)}–${km(chapter.endM)}`;
+    const detail = document.createElement('small');
+    detail.textContent = info.selectedSummary.inputAnomaly ? 'Processed input anomaly · unverified grade' :
+      `${km(chapter.distanceM)} · +${format(chapter.ascentM)} m gain · ${grade(chapter.gradePercent)} processed average`;
+    button.append(detail);
+    button.addEventListener('click',()=>selectSection(chapter.id));
+    li.append(button);$('section-list').append(li);
+  }
+}
+function highlightSection(chapter) {
+  if (highlightedChapterId === chapter.id) return;
+  highlightedChapterId = chapter.id;
+  const path = routeSection(analysis,chapter.id).map(([lon,lat])=>projection({lon,lat}));
+  $('outline-section').setAttribute('d','M'+path.map(p=>p.join(',')).join(' L'));
+  $('outline-section').dataset.chapterId = chapter.id;
+  $('profile-range').setAttribute('x',chapter.startM/analysis.distanceM*640);
+  $('profile-range').setAttribute('width',(chapter.endM-chapter.startM)/analysis.distanceM*640);
+  $('profile-range').dataset.chapterId = chapter.id;
+  for (const button of $('section-list').querySelectorAll('button'))
+    pressed(button,button.dataset.chapterId === chapter.id);
+}
+function renderInsights() {
+  insights = rideInsights(analysis,distance,selectedChapterId);
+  $('road-card').dataset.status = insights.status;
+  for (const button of document.querySelectorAll('[data-frame]')) button.disabled = insights.status !== 'available';
+  if (insights.status !== 'available') {
+    text('road-current','Section unavailable');text('road-ahead','');
+    text('section-detail','Selected route unavailable.');text('road-transition','');
+    $('main-climb').disabled = true;$('retry-section').disabled = true;
+    $('player-profile').setAttribute('aria-disabled','true');
+    for (const key of ['revision','current','selected']) delete $('road-card').dataset[key];
+    return;
+  }
+  const {current,next,selected:section,remaining,ahead,selectedRemaining,selectedSummary,finished,mainClimb} = insights;
+  $('road-card').dataset.revision = analysis.identity.revisionId;
+  $('road-card').dataset.current = current.id;
+  $('road-card').dataset.selected = section.id;
+  $('main-climb').disabled = !mainClimb;
+  $('retry-section').disabled = false;
+  $('player-profile').setAttribute('aria-disabled','false');
+  text('road-current',finished ? 'Route complete · 0.0 km / +0 m left' :
+    remaining.inputAnomaly ? `${sectionName(analysis,current)} · processed input anomaly` :
+    `${sectionName(analysis,current)} · ${km(remaining.distanceM)} / +${format(remaining.ascentM)} m left`);
+  text('road-ahead',finished ? 'End of processed route · seek to explore again' :
+    ahead.inputAnomaly ? 'Ahead: processed input anomaly · unverified grade' :
+    `Next ${km(ahead.distanceM)} · processed ${grade(ahead.minGradePercent)} to ${grade(ahead.maxGradePercent)}`);
+  text('section-detail',`${sectionName(analysis,section)} selected · ${
+    selectedRemaining.distanceM === 0 ? 'section complete; Play continues without resetting this trial.' :
+    `${km(selectedRemaining.distanceM)} / +${format(selectedRemaining.ascentM)} m left.`} ${
+    selectedSummary.inputAnomaly ? 'Processed input anomaly; not a verified road grade.' :
+    `${grade(section.gradePercent)} processed average.`}`);
+  text('road-transition',next ? `Next: ${sectionName(analysis,next)} in ${km(remaining.distanceM)} · ${
+    rideInsights(analysis,next.startM,next.id).selectedSummary.inputAnomaly ? 'unverified input anomaly' :
+    `${grade(next.gradePercent)} processed average, +${format(next.ascentM)} m over ${km(next.distanceM)}`}.` :
+    finished ? 'No next section.' : 'Last section · no further section after the finish.');
+  highlightSection(section);
+}
+function frameRoute(value) {
+  if (!analysis) return;
+  camera = value;$('camera').value = value;
+  $('player-map').dataset.framing = value;
+  manual = false;
+  $('player-map').setAttribute('viewBox','0 0 640 580');
+  if (camera === 'section' && highlightedChapterId) {
+    const points = routeSection(analysis,highlightedChapterId).map(([lon,lat])=>projection({lon,lat}));
+    const xs=points.map(p=>p[0]),ys=points.map(p=>p[1]);
+    $('player-map').setAttribute('viewBox',
+      `${Math.min(...xs)-25} ${Math.min(...ys)-25} ${Math.max(...xs)-Math.min(...xs)+50} ${Math.max(...ys)-Math.min(...ys)+50}`);
+  }
+  for (const button of document.querySelectorAll('[data-frame]')) pressed(button,button.dataset.frame === camera);
+  updatePosition(true);
+}
+function seekTo(target, chapterId) {
+  if (!analysis) return;
+  pause();distance = Math.max(0,Math.min(analysis.distanceM,target));
+  if (simulation?.status === 'available') simulation.seek(distance);
+  selectedChapterId = chapterId;
+  pendingHistory = undefined;pendingGear = undefined;
+  notice = mode === 'experiment' ? 'New trial · time/work reset · paused.' : 'Steady arrival time · paused.';
+  renderInsights();
+  frameRoute(chapterId ? 'section' : 'follow');
+  renderCockpit();
+}
+function selectSection(id) {
+  const chapter = analysis?.chapters.find(c=>c.id === id);
+  if (chapter) seekTo(chapter.startM,id);
+}
 function renderCockpit() {
   const available = simulation?.status === 'available';
   const s = available ? simulation.snapshot() : null;
@@ -154,6 +257,7 @@ function renderCockpit() {
   $('cockpit').dataset.origin = s?.trialOriginM ?? '';
   $('cockpit').dataset.history = s?.historyLength ?? '';
   text('ride-speed', s ? (s.speedMps*3.6).toFixed(1) : '—');
+  text('speed-provenance',s ? `km/h · ${s.provenance.telemetry === 'example-model' ? 'example' : 'personal'} model` : 'km/h · unavailable');
   text('ride-power', s ? `${Math.round(s.pedalPowerW)} W` : '—');
   text('ride-effort', s ? `${Math.round(s.effortFraction*100)}% FTP target` : 'Unavailable');
   text('ride-grade', s ? `${(s.grade*100).toFixed(1)}%` : '—');
@@ -217,10 +321,23 @@ function command(action) {
 }
 function updatePosition(force = false) {
   if (!analysis) return;
-  if (force) {manual = false;returnRider.hidden = true;}
+  if (force) manual = false;
+  returnRider.hidden = !manual && camera === 'follow';
+  if (force || !playing || performance.now()-lastHUD >= 100) {
+    renderInsights();renderCockpit();lastHUD = performance.now();
+    $('player-profile').setAttribute('aria-valuenow',String(Math.round(distance/analysis.distanceM*1000)));
+    $('player-profile').setAttribute('aria-valuetext',`${km(distance)} · ${sectionName(analysis,insights.current)} · seek pauses`);
+  }
   const p = positionAt(analysis,distance), xy = projection(p);
   $('outline-rider')?.setAttribute('cx',xy[0]);
   $('outline-rider')?.setAttribute('cy',xy[1]);
+  // Keep the rider a legible point, not a giant symbol when inspecting a short
+  // section in the same SVG projection.
+  const mapScale = $('player-map').getScreenCTM()?.a;
+  if (mapScale > 0) {
+    $('outline-rider')?.setAttribute('r',8/mapScale);
+    $('outline-rider')?.setAttribute('stroke-width',4/mapScale);
+  }
   const ratio = distance/analysis.distanceM;
   $('seek').value = Math.round(ratio*1000);
   $('profile-cursor')?.setAttribute('x1',ratio*640);
@@ -229,7 +346,13 @@ function updatePosition(force = false) {
   $('height').value = `${format(p.rawElevationM)} m`;
   $('progress').textContent = `${(distance/1000).toFixed(1)} km`;
   $('cockpit').dataset.distance = String(distance);
-  terrainHandle?.update(snapshot(),force);
+  const sectionPadding = camera === 'section' ? {
+    top:Math.max(document.querySelector('.player-header').getBoundingClientRect().bottom,
+      document.querySelector('.player-status').getBoundingClientRect().bottom)+16,
+    bottom:innerHeight-document.querySelector('.player-bottom').getBoundingClientRect().top+16,
+    left:24,right:24,
+  } : undefined;
+  terrainHandle?.update(snapshot(),force,{sectionPadding});
 }
 function pause() {
   scheduler?.pause();
@@ -249,15 +372,15 @@ function tick(time) {
   // watts, speed or a second travel clock. All spatial consumers use this value.
   distance = current.phase === 'playing' ?
     previous.distanceM+(current.distanceM-previous.distanceM)*alpha : current.distanceM;
-  updatePosition();renderCockpit();
+  updatePosition();
   if (late) notice = 'Playback paused after a late frame. Press Play to continue; no catch-up.';
   if (current.phase !== 'playing') pause();
   else frame = requestAnimationFrame(tick);
 }
 function stopTerrain() {
   terrainReady = false;
-  $('camera').disabled = true;
-  manual = false;returnRider.hidden = true;
+  $('camera').disabled = !analysis;
+  manual = false;returnRider.hidden = camera === 'follow';
   $('player').classList.remove('online');
   terrainController?.abort();terrainController = undefined;
   terrainHandle?.dispose();terrainHandle = undefined;
@@ -306,14 +429,14 @@ async function terrain() {
         if (state === 'unavailable') {
           clearTimeout(deadline);
           terrainReady = false;$('player').classList.remove('online');
-          $('camera').disabled = true;
-          manual = false;returnRider.hidden = true;
+          $('camera').disabled = !analysis;
+          manual = false;returnRider.hidden = camera === 'follow';
           status(`Terrain unavailable · ${reason} · 2D route preview`);
         }
       },
     });
     if (controller.signal.aborted) handle?.dispose();
-    else terrainHandle = handle;
+    else {terrainHandle = handle;updatePosition(true);}
   } catch {
     if (controller.signal.aborted || terrainController !== controller) return;
     status('Terrain unavailable · 2D route preview');
@@ -326,6 +449,15 @@ async function choose(id) {
   routeController?.abort();
   const controller = new AbortController();routeController = controller;
   analysis = null;selected = id;distance = 0;
+  $('camera').disabled = true;
+  selectedChapterId = undefined;highlightedChapterId = undefined;insights = undefined;
+  camera = 'follow';$('camera').value = camera;
+  $('player-map').dataset.framing = camera;
+  $('section-list').replaceChildren();text('section-count','');
+  $('sections').open = false;
+  for (const id of ['landing-map','player-map','player-profile','landing-profile']) $(id).replaceChildren();
+  $('player-map').setAttribute('viewBox','0 0 640 580');
+  renderInsights();
   simulation = undefined;scheduler = undefined;
   renderCockpit();
   text('progress','—');
@@ -365,7 +497,8 @@ async function choose(id) {
     }
     drawMap($('landing-map'));drawMap($('player-map'),true);
     profile($('landing-profile'),70);profile($('player-profile'),100);
-    updatePosition();
+    renderSections();$('camera').disabled = false;
+    frameRoute('follow');
     $('load-status').textContent = '';
     $('fly').disabled = false;$('landing-route').disabled = false;
     if (inPlayer) void terrain();
@@ -412,7 +545,7 @@ $('play').addEventListener('click',()=>{
   if (distance >= analysis.distanceM) {
     distance = simulation.restart().distanceM;pendingHistory = undefined;pendingGear = undefined;
   }
-  if (manual) followRider();
+  if (manual || camera === 'section') followRider();
   notice = '';scheduler.play();
   playing = true;$('play').innerHTML = 'Ⅱ <span>Pause</span>';
   if (terrainReady) $('terrain-status').textContent = 'Satellite terrain · preview playback';
@@ -421,13 +554,28 @@ $('play').addEventListener('click',()=>{
 });
 $('seek').addEventListener('input',e=>{
   if (!analysis) return;
-  const target = Number(e.target.value)/1000*analysis.distanceM;
-  pause();distance = target;
-  if (simulation?.status === 'available') simulation.seek(distance);
-  pendingHistory = undefined;pendingGear = undefined;
-  notice = mode === 'experiment' ? 'New trial here · elapsed and work reset. Paused.' : 'Steady arrival time · paused.';
-  updatePosition(true);renderCockpit();
+  seekTo(Number(e.target.value)/1000*analysis.distanceM);
 });
+$('player-profile').addEventListener('pointerdown',e=>{
+  if (!analysis || e.button !== 0) return;
+  const box = e.currentTarget.getBoundingClientRect();
+  seekTo((e.clientX-box.left)/box.width*analysis.distanceM);
+  e.currentTarget.focus({preventScroll:true});
+});
+$('player-profile').addEventListener('keydown',e=>{
+  if (!analysis) return;
+  const targets = {ArrowLeft:distance-250,ArrowDown:distance-250,ArrowRight:distance+250,ArrowUp:distance+250,
+    PageDown:distance-1000,PageUp:distance+1000,Home:0,End:analysis.distanceM};
+  if (!(e.key in targets)) return;
+  e.preventDefault();seekTo(targets[e.key]);
+});
+$('main-climb').addEventListener('click',()=>selectSection(insights?.mainClimb?.id));
+$('retry-section').addEventListener('click',()=>selectSection(insights?.selected?.id));
+$('profile-close').addEventListener('click',()=>{
+  $('profile-panel').hidden = true;$('profile-toggle').setAttribute('aria-expanded','false');$('profile-toggle').focus();
+});
+for (const button of document.querySelectorAll('[data-frame]'))
+  button.addEventListener('click',()=>{pause();frameRoute(button.dataset.frame);});
 for (const [button,panel,otherButton,otherPanel] of [
   ['profile-toggle','profile-panel','tools-toggle','tools-panel'],
   ['tools-toggle','tools-panel','profile-toggle','profile-panel'],
@@ -441,7 +589,7 @@ for (const [button,panel,otherButton,otherPanel] of [
 $('tools-close').addEventListener('click',()=>{
   $('tools-panel').hidden = true;$('tools-toggle').setAttribute('aria-expanded','false');$('tools-toggle').focus();
 });
-$('camera').addEventListener('change',e=>{pause();camera=e.target.value;updatePosition(true);});
+$('camera').addEventListener('change',e=>{pause();frameRoute(e.target.value);});
 $('offline').checked = params.get('terrain') === 'off';
 $('offline').addEventListener('change',()=>{pause();void terrain();});
 $('restart').addEventListener('click',()=>{

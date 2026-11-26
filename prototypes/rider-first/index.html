@@ -76,19 +76,32 @@
     <div class="player-bottom">
       <section id="profile-panel" class="glass" aria-label="Elevation profile" hidden>
         <div class="profile-heading"><span>Elevation <small>source track</small></span><output id="height" aria-live="off"></output></div>
-        <svg id="player-profile" viewBox="0 0 640 100" role="img" aria-label="Elevation along the selected route"></svg>
+        <svg id="player-profile" viewBox="0 0 640 100" preserveAspectRatio="none" role="slider" tabindex="0" aria-label="Seek on elevation profile" aria-valuemin="0" aria-valuemax="1000" aria-valuenow="0" aria-describedby="profile-help"></svg>
         <label for="seek" class="sr-only">Position along route</label>
         <input id="seek" type="range" min="0" max="1000" value="0">
         <div class="profile-scale"><span>Start</span><output id="position" aria-live="off"></output><span>Finish</span></div>
+        <p id="profile-help">Tap the profile to seek paused. Arrow keys: 250 m; Page keys: 1 km; Home / End. Experiment seeks start a new trial.</p>
+        <div class="section-actions"><button id="main-climb">Try the main climb</button><button id="profile-close">Close ×</button></div>
+        <div class="section-actions" role="group" aria-label="Route framing">
+          <button data-frame="overview">Overview</button><button data-frame="section">Section</button><button data-frame="follow">Follow</button>
+        </div>
+        <p id="section-detail"></p>
+        <p id="road-transition"></p>
+        <button id="retry-section">Retry selected section</button>
+        <details id="sections"><summary>Survey sections <span id="section-count"></span></summary><ol id="section-list"></ol></details>
+        <p>Algorithmic sections · processed averages from 250 m windows (the final window may be longer), not measured road gradients. Elevation errors can affect gain and grade. No surface, hazards or recovery guarantees.</p>
+        <div class="ride-context"><span id="model-provenance">Example model</span><span id="ride-remaining">ETA unknown · live choices</span></div>
       </section>
       <section id="cockpit" class="glass" aria-label="Modeled riding cockpit">
         <div class="telemetry">
-          <div><strong id="ride-speed">—</strong><small>km/h · modeled</small></div>
+          <div><strong id="ride-speed">—</strong><small id="speed-provenance">km/h · example model</small></div>
           <div><strong id="ride-power">—</strong><small id="ride-effort">75% FTP target</small></div>
           <div><strong id="ride-grade">—</strong><small>processed grade</small></div>
         </div>
-        <div class="ride-context"><span id="model-provenance">Example model</span><span id="progress">0.0 km</span></div>
-        <div class="ride-context"><span id="ride-elapsed">Trial 0:00:00</span><span id="ride-remaining">ETA unknown · live choices</span></div>
+        <div id="road-card" aria-label="Processed road ahead">
+          <div class="road-line"><span id="road-current"></span><span id="ride-elapsed">Trial 0:00:00</span></div>
+          <div class="road-line"><span id="road-ahead"></span><span id="progress">0.0 km</span></div>
+        </div>
         <div class="ride-actions">
           <div class="gears" role="group" aria-label="Gearing changes cadence, not speed">
             <button id="gear-easier" aria-label="Easier gear">− Easier</button>
@@ -113,8 +126,8 @@
         <div class="sheet-heading"><h2>Ride setup</h2><button id="tools-close" aria-label="Close ride setup">Close ×</button></div>
         <label>Mode <select id="ride-mode"><option value="experiment">Experiment · live choices</option><option value="explore">Explore · steady 75%</option></select></label>
         <p>Experiment: seek starts a new trial here, with elapsed/work reset. Restart returns to its origin. Explore: seek shows steady arrival time. Changes pause.</p>
-        <label>Camera <select id="camera" disabled><option value="follow">Follow rider</option><option value="overview">Whole route</option></select></label>
-        <p>Camera framing is for terrain. 2D always shows the route overview.</p>
+        <label>Camera <select id="camera" disabled><option value="follow">Follow rider</option><option value="overview">Whole route</option><option value="section">Selected section</option></select></label>
+        <p>2D Follow shows the route overview with the current rider. Section highlights use the selected route geometry.</p>
         <label class="check"><input id="offline" type="checkbox"> Use 2D only (no terrain requests)</label>
         <button id="restart">Restart trial</button>
         <fieldset><legend>Rider · optional, never auto-saved</legend>

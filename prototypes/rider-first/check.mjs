@@ -22,6 +22,7 @@ test('isolated rider-first preview: native Chrome desktop and phone', async t =>
   const server = await previewServer(0);
   t.after(() => {server.closeAllConnections();server.close();});
   const base = `http://127.0.0.1:${server.address().port}`;
+  assert.equal((await fetch(base+'/js/ride-insights.mjs')).status,200,'Fresh isolated preview includes the direct runtime module');
   for (const path of ['/.private/','/AGENTS.md','/index.html','/js/site-shell.mjs',
     '/prototypes/rider-first/serve.mjs','/prototypes/rider-first/check.mjs','/docs/rider-first-design.md',
     '/worktrees/','/assets/semonzo.gpx','/prototypes/rider-first/%2e%2e/%2e%2e/.private/']) {

@@ -56,9 +56,19 @@ export function officialFlyover(resolved) {
     !b.route.id.startsWith('user:') && a?.status==='supported' &&
     a.identity?.routeId===b.route.id && a.identity?.revisionId===b.revision.id;
 }
-export function routeBounds(a) {
-  const xs=a.points.map(p=>p.lon), ys=a.points.map(p=>p.lat);
+export function routeBounds(a, chapterId) {
+  const points=chapterId ? sectionPoints(a,chapterId) : a.points;
+  const xs=points.map(p=>p.lon), ys=points.map(p=>p.lat);
   return [[Math.min(...xs),Math.min(...ys)],[Math.max(...xs),Math.max(...ys)]];
+}
+function sectionPoints(a,chapterId) {
+  const c=a.chapters.find(c=>c.id===chapterId);
+  if (!c) throw Error('Section outside selected revision');
+  return [positionAt(a,c.startM),...a.points.filter(p=>p.distanceM>c.startM && p.distanceM<c.endM),
+    positionAt(a,c.endM)];
+}
+export function routeSection(a,chapterId) {
+  return routeLine({points:sectionPoints(a,chapterId)});
 }
 export function routeLine(a) {
   const step=Math.max(1,Math.ceil((a.points.length-1)/(flyoverLimits.vertices-1)));

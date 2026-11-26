@@ -63,6 +63,11 @@ figcaption,.map-footer{display:flex;justify-content:space-between;padding:0 28px
 .mini-profile{height:60px;width:calc(100% - 56px);margin:18px 28px 0;overflow:visible}
 .profile-fill{fill:#dfb76722;stroke:none}
 .profile-line{fill:none;stroke:var(--ochre);stroke-width:1.5}
+.profile-range{fill:#ffe09733;stroke:#ffe097;stroke-width:1}
+.route-map .section-track{fill:none;stroke:#ffe097;stroke-width:7;stroke-linecap:round;stroke-linejoin:round}
+.route-map path{vector-effect:non-scaling-stroke}
+.route-map .grid{vector-effect:non-scaling-stroke}
+#player-map[data-framing=section] text,#player-map[data-framing=section] .point{display:none}
 .map-footer{padding:8px 28px 23px}
 #load-status{font-size:13px;margin:0 5% 10px}
 #load-status:empty{display:none}
@@ -164,6 +169,8 @@ dialog p{margin:18px 0 24px}
 .player-status .status-dot{grid-row:1/3;align-self:center}
 #ride-notice{grid-column:2;font-size:.75rem;overflow-wrap:anywhere}
 #return-rider{grid-column:2;justify-self:start}
+.player-status:has(#return-rider:not([hidden])){grid-template-columns:6px minmax(0,1fr) auto}
+.player-status #return-rider{grid-column:3;grid-row:1/3;width:80px;padding:4px;font-size:.7rem;align-self:center}
 .player-bottom{position:relative;inset:auto;transform:none;align-self:center;margin: auto 0 12px;flex-shrink:0;width:min(720px,calc(100% - 48px))}
 #cockpit{padding:8px 12px 0;border-radius:4px 4px 0 0}
 .telemetry{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));text-align:center;gap:8px;font-variant-numeric:tabular-nums}
@@ -185,6 +192,20 @@ dialog p{margin:18px 0 24px}
 .playback-rate select{min-width:62px;padding:8px}
 #tools-toggle{letter-spacing:0}
 #profile-panel{position:absolute;bottom:var(--playbar-clearance,88px);width:100%;margin:0;max-height:min(40dvh,var(--sheet-max-height,40dvh));overflow-y:auto;background:#12352e;z-index:2}
+#profile-panel{font-size:.8rem;overscroll-behavior:contain}
+#profile-panel p{margin:8px 0}
+#profile-panel button{border:1px solid #688575}
+#profile-panel summary{cursor:pointer;min-height:44px;padding:12px 0}
+#player-profile{cursor:crosshair;touch-action:pan-y}
+.section-actions{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+#section-list{list-style:none;padding:0;margin:0}
+#section-list button{display:block;width:100%;text-align:left;margin:4px 0}
+#section-list small{display:block}
+#section-list [aria-pressed=true]{border-color:#ffe097;background:#dfb76719}
+#road-card{font-size:.7rem;line-height:1.45;color:#d0dace;margin-top:3px}
+#road-current{color:#ffe097}
+.road-line{display:flex;justify-content:space-between;gap:8px}
+.road-line #ride-elapsed,.road-line #progress{flex-shrink:0}
 #seek{height:44px}
 #tools-panel{bottom:var(--playbar-clearance,88px);max-height:var(--sheet-max-height,calc(100dvh - 220px));overflow-y:auto;overscroll-behavior:contain;font-size:.85rem;z-index:2;background:#12352e}
 .sheet-heading{display:flex;justify-content:space-between;align-items:center;gap:8px;position:sticky;top:-16px;background:#12352e;z-index:1}
@@ -206,17 +227,19 @@ dialog p{margin:18px 0 24px}
 @media(max-width:800px){
   .player-header{margin:8px 12px 0}
   .player-route{padding:2px 8px}
+  .player-route label{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
   .player-route select{font-size:.8125rem}
-  #back{height:65px;min-width:44px}
+  #back{height:50px;min-width:44px}
   .player-status{margin:6px 12px 0;max-width:calc(100% - 24px);font-size:.65rem;padding:5px 8px}
   #ride-notice{font-size:.7rem}
   .player-bottom,.online .player-bottom{bottom:auto;width:calc(100% - 24px);margin-bottom:8px}
   .online .player-bottom{margin-bottom:22px}
-  #cockpit{padding:6px 8px 0}
+  #cockpit{padding:2px 8px 0}
   .ride-actions{display:flex;flex-direction:column;gap:0;align-items:stretch}
   .telemetry strong{font-size:1.35rem}
   .telemetry small{font-size:.65rem}
   .ride-context{font-size:.65rem}
+  #road-card{font-size:.65rem}
   .gears{font-size:.75rem}
   .gears button{padding:4px 8px}
   .efforts button{font-size:.75rem}
