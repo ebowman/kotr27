@@ -8,58 +8,8 @@
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <link rel="icon" href="data:,">
   <title>Plan · KOTR 2027 rider companion</title>
-  <meta name="description" content="Plan, explore and prepare. Official 2027 routes await approval; the cleared Semonzo example is available.">
+  <meta name="description" content="Plan, explore and prepare with the seven approved provisional event routes. Choose your routes explicitly; no itinerary is inferred.">
   <script type="module" src="./js/site-shell.mjs"></script>
-  <script type="application/json" data-flyover-src="./js/config.js"></script>
-  <script type="application/json" data-flyover-src="./assets/terrain.js"></script>
-  <script type="application/json" data-flyover-src="./assets/flyover.js"></script>
-  <style>
-    :root { color-scheme: light; --paper:#f9f6ec; --ink:#163c34; --line:#b6c3b4; --rust:#8a3c22 }
-    * { box-sizing:border-box }
-    body { margin:0; color:var(--ink); background:var(--paper); font:1.04rem/1.6 system-ui,sans-serif }
-    main { max-width:66rem; margin:auto; padding:1.5rem clamp(1rem,5vw,4rem) 4rem }
-    header { display:flex; flex-wrap:wrap; justify-content:space-between; gap:.3rem 1rem; border-bottom:2px solid; padding-bottom:.75rem }
-    header, .label { font:bold .78rem/1.5 ui-monospace,monospace; text-transform:uppercase; letter-spacing:.09em }
-    .label { color:var(--rust); margin:0 }
-    h1,h2,h3 { font-family:Georgia,serif; font-weight:normal; line-height:1.08; margin:.4rem 0 1rem }
-    h1 { font-size:clamp(3.2rem,10vw,7.6rem); letter-spacing:-.055em }
-    h2 { font-size:clamp(2rem,5vw,3.8rem); letter-spacing:-.04em }
-    h3 { font-size:1.6rem }
-    p { max-width:64ch; margin:.7rem 0 }
-    a { color:inherit; text-underline-offset:.2em }
-    section { padding-top:1.4rem }
-    .panel { background:#fffdf6; padding:clamp(1rem,3vw,1.8rem) }
-    .viewport { position:relative; aspect-ratio:610/455; background:#e2e8d8 }
-    #map { position:absolute; inset:0 }
-    #map[aria-busy=true] { visibility:hidden }
-    .orbit-hold,.mesh-dissolve { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; visibility:visible }
-    #map:has(.orbit-hold) .mapboxgl-control-container { visibility:visible }
-    .viewport.departing::after { content:"Preparing rider view…"; position:absolute; bottom:2rem; left:.75rem;
-      padding:.35rem .65rem; border-radius:.25rem; color:white; background:#163c34; pointer-events:none }
-    /* Keep the pending camera's dimensions while giving the profile the
-       space. A late texture must prove the same lens before it is revealed. */
-    .viewport.satellite-standby { width:100%; height:0; overflow:hidden }
-    .satellite-standby #map { inset:0 0 auto; width:100%; aspect-ratio:inherit }
-    #message { margin:0; padding:.3rem 1rem; font-size:.88rem }
-    @media (max-width:36rem) { .viewport { aspect-ratio:1 } }
-    .rider-beacon { width:20px; height:20px; border-radius:50%; background:#ffdc56;
-      border:3px solid #163c34; box-shadow:0 0 0 2px white }
-    figure { margin:1.2rem 0 0; border:1px solid var(--line) }
-    .ribbon { display:flex; justify-content:space-between; gap:.5rem; padding:.6rem 1rem; background:var(--ink); color:white; font:600 .85rem/1.5 ui-monospace,monospace }
-    @media (max-width:36rem) { .ribbon { min-height:calc(3em + 1.2rem); align-items:center } }
-    .controls { display:flex; flex-wrap:wrap; align-items:center; gap:.7rem; margin:.8rem 0 }
-    button,select { color:var(--ink); font:inherit; border:1px solid; background:white; min-height:44px; padding:.4rem .8rem; cursor:pointer }
-    #play { color:white; background:var(--ink); min-width:6rem }
-    .numbers { font-variant-numeric:tabular-nums; font-weight:650 }
-    .chart { position:relative; height:84px; background:#f0f3e7; border-bottom:2px solid var(--ink) }
-    .chart svg { width:100%; height:100%; display:block }
-    .chart input { position:absolute; inset:0; width:100%; height:100%; margin:0; opacity:0; cursor:crosshair }
-    .chart:focus-within { outline:3px solid var(--rust); outline-offset:3px }
-    .scale { display:flex; justify-content:space-between; font: .85rem/1.6 ui-monospace,monospace }
-    .small { font-size:.88rem }
-    :focus-visible { outline:3px solid #aa4320; outline-offset:3px }
-    @media (hover:hover) { a:hover,summary:hover { text-decoration:underline; text-decoration-thickness:2px } }
-  </style>
   <link rel="stylesheet" href="./assets/site.css">
 </head>
 <body>
@@ -68,45 +18,10 @@
   <div id="site-shell">
     <header class="site-header"><strong>KOTR / 2027</strong></header>
     <h1 id="site-heading" tabindex="-1">Plan your ride</h1>
-    <p>Official 2027 route details await verification and publication approval.</p>
-    <p>JavaScript enables route selection and the Plan / Explore / Prepare / Ride week companion. No account or FTP needed.</p>
-    <a href="./explore.html">Semonzo example ride clock</a>
+    <p>Seven approved provisional event routes are available. Source day labels are not calendar assignments.</p>
+    <p>JavaScript enables explicit route selection and the Plan / Explore / Prepare / Ride week companion. No account or FTP needed.</p>
+    <a href="./explore.html">Explore available routes</a>
   </div>
-  <section id="climb" aria-labelledby="profile-title" hidden>
-    <p class="label">Example ascent · Not an official event route</p>
-    <h2 id="profile-title">Semonzo example ascent · Optional flyover</h2>
-    <p>An example ascent from Semonzo to Monte Grappa, not an official event route or group assignment.</p>
-    <p><a data-site-clock href="./explore.html">Try the ride clock: scrub through an hour on Monte Grappa and compare two plans.</a></p>
-    <figure>
-      <div class="ribbon"><span>SEMONZO / ASCENT STUDY</span><span id="mode">Route overview</span></div>
-      <p id="message" role="status">Loading satellite terrain…</p>
-      <div class="viewport">
-        <div id="map" aria-busy="true" aria-label="Satellite terrain view of the Semonzo ascent"></div>
-      </div>
-      <figcaption class="panel">
-        <p class="label">Provisional preview · Not for navigation</p>
-        <div id="deck" hidden>
-          <p id="flyover-ride-time">Estimated ride time uses the shared pace scenario, not animation rate.</p>
-          <div class="controls">
-            <button type="button" id="play">Play flyover</button>
-            <button type="button" id="preview-motion" aria-controls="map" hidden>Pause preview</button>
-            <button type="button" id="retry" hidden>Retry satellite view</button>
-            <label>Animation rate <select id="speed"><option value=".5">½×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label>
-            <button type="button" id="reset">Restart at route overview</button>
-          </div>
-          <p class="numbers" id="stats"></p>
-          <label for="seek"><strong>Elevation profile</strong> · Seek along the climb</label>
-          <div class="chart">
-            <svg viewBox="0 0 1000 100" preserveAspectRatio="none" aria-hidden="true"><path id="profile" fill="#adc4ae" stroke="#42624f" stroke-width="2"/><line id="cursor" y1="0" y2="100" stroke="#802f12" stroke-width="5"/></svg>
-            <input id="seek" type="range" min="0" value="0" step="1" aria-describedby="hint">
-          </div>
-          <div class="scale"><span>0 km</span><span id="length"></span></div>
-          <p class="small" id="hint">Tap or drag across the profile. With the profile focused, use ← / → to move 100 m or Home / End to jump.</p>
-        </div>
-        <p class="small">Approximate route and elevations: <a href="https://brouter.de/">BRouter</a> using © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors (ODbL)</a>.</p>
-      </figcaption>
-    </figure>
-  </section>
 </main>
 </body>
 </html>

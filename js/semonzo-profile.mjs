@@ -1,4 +1,5 @@
-// First-party interpretation of the existing flyover trace. No elevation
+// Historical test fixture only; not an app route or release dependency.
+// First-party interpretation of the retired flyover trace. No elevation
 // table is bundled. Match the distance-window contract in docs/semonzo-chapters.md.
 import { exampleCatalog, exampleRouteId, loadExampleGPX } from './example-catalog.mjs';
 import { distanceWindows, horizontalDistanceM } from './route-analysis.mjs';

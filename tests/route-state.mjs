@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createCatalog } from '../js/route-catalog.mjs';
-import { exampleCatalog } from '../js/example-catalog.mjs';
 import { readSelection, selectionLink, changeSelection } from '../js/route-state.mjs';
 
 // Only synthetic multiday/variant records. Never included in the release.
@@ -30,7 +29,7 @@ const catalog = createCatalog({
   ],
 });
 const profile = {distanceM:20000, chapters:[{id:'section-a',startM:1200}]};
-const profiles = Object.fromEntries(['rev-old','rev-new','rev-b','semonzo-example-v1'].map(id=>[id,profile]));
+const profiles = Object.fromEntries(['rev-old','rev-new','rev-b'].map(id=>[id,profile]));
 const read = input => readSelection(input,catalog,profiles);
 
 test('public multiroute/day/variant/chapter/view selection round trips without private fields', () => {
@@ -69,7 +68,7 @@ test('missing, withdrawn, unavailable and mismatched links never substitute a ro
   assert.equal(read(selectionLink(unsafe.state)).bundle,null);
 });
 test('old revisions warn, route-only resolves visibly, invalid chapter recovers paused to briefing', () => {
-  const pending = readSelection('/?route=route-a&rev=rev-new&chapter=section-a&at=12',catalog,{},'semonzo-example',{loading:true});
+  const pending = readSelection('/?route=route-a&rev=rev-new&chapter=section-a&at=12',catalog,{},{loading:true});
   assert.equal(pending.code,'loading');
   assert.equal(pending.state.chapterId,'section-a');
   assert.doesNotMatch(pending.notices.join(' '),/unavailable/);
@@ -112,16 +111,20 @@ test('history entries validate exact revisions, switching route resets sections,
   assert.deepEqual(read(history[0]).state,first);
   assert.equal(read('/?day=day-a&variant=long-a').bundle,null);
 });
-test('bare explorer, legacy seek and sensitivity refer only to the cleared example', () => {
-  const readExample = url => readSelection(url,exampleCatalog,profiles);
-  assert.equal(readExample('/explore.html').state.view,'clock');
-  assert.equal(readExample('/explore.html#sensitivity').state.view,'sensitivity');
-  const legacy = readExample('/index.html#seek-9000');
-  assert.equal(legacy.state.routeId,'semonzo-example');
-  assert.deepEqual([legacy.state.distanceM,legacy.state.view],[9000,'flyover']);
-  for (const fragment of ['#seek','#seek-nope','#seek-999999']) {
-    const result = readExample('/index.html'+fragment);
-    assert.equal(result.state.view,'briefing');
-    assert.match(result.notices.join(' '),/legacy|Legacy/);
+test('bare pages require explicit choice; retired links never resolve or load geometry', () => {
+  for (const path of ['/index.html','/explore.html','/explore.html#sensitivity']) {
+    const result=read(path);
+    assert.equal(result.code,'choose');
+    assert.equal(result.state.routeId,null);
+    assert.equal(result.bundle,null);
+  }
+  for (const path of ['/?route=semonzo-example','/?route=semonzo-example&rev=semonzo-example-v1',
+    '/index.html#seek-9000','/index.html#seek','/explore.html#seek-nope','/#seek-999999']) {
+    const result=readSelection(path,catalog,{},{loading:true});
+    assert.equal(result.code,'retired');
+    assert.equal(result.bundle,null);
+    assert.equal(result.profile,null);
+    assert.equal(result.state.distanceM,0);
+    assert.match(result.message,/retired.*explicitly/);
   }
 });

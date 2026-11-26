@@ -41,10 +41,13 @@ function fixture() {
 }
 const mutate = fn => { const data = fixture(); fn(data, data.routes[0], data.routes[0].revisions[0]); return data; };
 
-test('legacy example entry makes no official group assignment', async () => {
-  const html = await readFile(new URL('../index.html', import.meta.url), 'utf8');
-  assert.match(html, /Example ascent · Not an official event route/);
-  assert.doesNotMatch(html, /Long groups only|for KOTR 2027 Long groups/i);
+test('entry pages retire the placeholder without inventing official group/calendar assignments', async () => {
+  for(const entry of ['index.html','explore.html']) {
+    const html = await readFile(new URL('../'+entry, import.meta.url), 'utf8');
+    assert.match(html, /Seven approved provisional event routes/);
+    assert.match(html, /Source day labels are not calendar assignments/);
+    assert.doesNotMatch(html, /Semonzo|example ascent|await approval|Long groups only|for KOTR 2027 Long groups/i);
+  }
 });
 
 test('add, rename, replace and withdraw without changing identity or inventing substitutes', () => {

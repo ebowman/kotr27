@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { createRoutePlayback, playbackFrameSeconds } from '../js/route-playback.mjs';
-import { createAnalysisPlaybackRoute, createSemonzoPlaybackRoute,
-  createLegacyFlyoverAdapter } from '../js/route-playback-adapters.mjs';
+import { createAnalysisPlaybackRoute } from '../js/route-playback-adapters.mjs';
+import { createSemonzoPlaybackRoute, createLegacyFlyoverAdapter } from './fixtures/legacy-playback-adapters.mjs';
 import { analyzeRoute } from '../js/route-analysis.mjs';
 import { estimateRouteTime, routeTimeAtDistance } from '../js/route-time.mjs';
 import { createRideClock, createRouteClock } from '../js/ride-clock.mjs';
@@ -324,13 +324,16 @@ async function example() {
   return {profile, points, route: createSemonzoPlaybackRoute(points, profile)};
 }
 
-test('real Semonzo adapter preserves old paused seek, arrow, reset, replay and pinned legacy link', async () => {
+test('historical geometry fixture preserves interpolation; retired links cannot open it', async () => {
   const ex = await example();
   const c = createRoutePlayback({loadRoute: async () => ex.route});
   const legacy = createLegacyFlyoverAdapter(c);
   const resolved = readSelection('index.html#seek-9000', exampleCatalog,
     {'semonzo-example-v1': ex.profile});
   await legacy.selection(resolved);
+  assert.equal(c.getSnapshot().phase, 'idle');
+  assert.equal(resolved.code, 'retired');
+  await c.selectRoute({...ex.route.identity,distanceM:9000});
   assert.equal(c.getSnapshot().phase, 'paused');
   assert.equal(c.getSnapshot().distanceM, 9000);
   assert.equal(c.getSnapshot().chapterId, 'half-step');
@@ -401,7 +404,7 @@ test('integrated legacy flyover uses the sole session clock for seek, reset, rep
   };
   // Execute the real session scheduler and flyover, substituting module loading
   // in memory. Compare rendered camera input to an independent pure controller.
-  const source = await readFile(new URL('../assets/flyover.js', import.meta.url), 'utf8');
+  const source = await readFile(new URL('./fixtures/legacy-flyover.js', import.meta.url), 'utf8');
   const seam = "import('../js/semonzo-profile.mjs')";
   assert.equal(source.split(seam).length, 2);
   const context = vm.createContext({

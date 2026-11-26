@@ -14,7 +14,7 @@ export function installRoutePace(parent, preferences, onSeek) {
   node('p','Explore with fictional 75 kg / 220 W assumptions; no FTP required. Bike/kit stays 12 kg. ' +
     'Optional entries share Preferences & privacy; memory only unless you explicitly remember rider data there. ' +
     'Scenario and chapter stops are document-memory only, never shared links or saved preferences. ' +
-    'Reload or opening a legacy example engine in the other HTML document loses unsaved choices; ' +
+    'Reload or opening the other HTML document loses unsaved choices; ' +
     'ordinary route, revision and Plan/Explore changes keep them.',root);
   const inputs = node('div','',root); inputs.className = 'site-choices';
   const input = (label,id,type='text') => {
@@ -39,8 +39,7 @@ export function installRoutePace(parent, preferences, onSeek) {
     '75% moving-duration seed and duration bands, not fitness prediction. No peak-power inference. ' +
     'Still air, fixed drag/rolling resistance, 45 km/h cap; no heat, fatigue, traffic or cornering. ' +
     'Mechanical pedal work is not food calories. Source gains are not processed elevation truth.',root);
-  node('p','Intentional legacy differences: Semonzo comparison clock uses 70/80%; ascent API defaults 60/75%. ' +
-    'This shared route clock defaults to Steady 75%. Sensitivity is independently 70–90%, default 80%, with no stops.',root);
+  node('p','The shared route clock defaults to Steady 75%. Sensitivity is independently 70–90%, default 80%, with no stops.',root);
   const stopChapter=node('select','',node('label','Optional stop at section entry',root),'pace-stop-chapter');
   const stop=input('Stop minutes at this section (0–1440)','pace-stop','number');
   stop.min=0; stop.max=1440; stop.step='any'; stop.value='0';
@@ -226,8 +225,8 @@ export function installRoutePace(parent, preferences, onSeek) {
     refreshSensitivity();
   });
   subscribePlayback(draw);
-  return {root, show(resolved, exampleAnalysis) {
-    const next=resolved.profile?.identity ? resolved.profile : exampleAnalysis;
+  return {root, show(resolved) {
+    const next=resolved.profile?.identity ? resolved.profile : null;
     root.hidden=resolved.code!=='ready' || resolved.state.area!=='explore' ||
       ['compare','skyline','radial'].includes(resolved.state.view) || !next;
     if (root.hidden) {

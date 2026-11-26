@@ -1,5 +1,5 @@
 // Document-memory scenario owner. No I/O, storage, scheduler or position clock.
-import { estimateRouteTime, estimateExampleTime } from './route-time.mjs';
+import { estimateRouteTime } from './route-time.mjs';
 import { estimateEffort } from './ascent-estimator.mjs';
 
 export const paceScenarios = Object.freeze({easy:'Easy · 60%', steady:'Steady · 75%',
@@ -16,8 +16,7 @@ export function createRoutePace() {
     const options = {...rider, scenario:choice, stops:stops.get(identityKey(a)) ?? []};
     const key = JSON.stringify([a.identity, options]);
     if (!cache.has(key)) {
-      cache.set(key, a.exampleProfile ? estimateExampleTime(a.exampleProfile, a.identity, options) :
-        estimateRouteTime(a, options));
+      cache.set(key, estimateRouteTime(a, options));
       if (cache.size > 32) cache.delete(cache.keys().next().value);
     }
     return cache.get(key);
@@ -72,7 +71,7 @@ export const routePace = createRoutePace();
 // Exact selected chapter or whole route; no grade repair, truncation or new
 // detection. Shift the distance origin only, retaining original signed rises.
 export function sensitivityProfile(a, chapterId = null) {
-  const source = a?.exampleProfile ?? a;
+  const source = a;
   const segments = source?.segments ?? source?.windows;
   const chapters = chapterId ? source?.chapters.filter(c=>c.id===chapterId) : source?.chapters;
   if (!segments || !chapters?.length) return unavailable('Selected profile unavailable');

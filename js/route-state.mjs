@@ -12,15 +12,14 @@ export function readPractice(query) {
   }));
 }
 
-export function readSelection(input, catalog, profiles = {}, exampleId = 'semonzo-example', {loading = false} = {}) {
+export function readSelection(input, catalog, profiles = {}, {loading = false} = {}) {
   const url = new URL(input, 'https://navigation.invalid/');
   const q = url.searchParams;
-  const legacySeek = /^#seek-(\d{1,6})$/.exec(url.hash);
   const legacy = /^#seek(?:-|$)/.test(url.hash);
   const bareExplorer = url.pathname.endsWith('/explore.html');
   const state = {
     area:q.get('area') ?? (bareExplorer || legacy ? 'explore' : 'plan'),
-    view:q.get('view') ?? (legacy ? 'flyover' : url.hash === '#sensitivity' ? 'sensitivity' : bareExplorer ? 'clock' : 'briefing'),
+    view:q.get('view') ?? (url.hash === '#sensitivity' ? 'sensitivity' : 'briefing'),
     dayId:q.get('day') || null, variantId:q.get('variant') || null,
     routeId:q.get('route') || null, revisionId:q.get('rev'),
     chapterId:q.get('chapter') || null, distanceM:0,
@@ -41,12 +40,10 @@ export function readSelection(input, catalog, profiles = {}, exampleId = 'semonz
   if (!areas.includes(state.area) || !views.includes(state.view))
     return fail('invalid', 'This route link cannot be opened: unknown area or view.');
   if (legacy && !q.has('route')) {
-    state.routeId = exampleId;
-    if (!legacySeek) {
-      state.view = 'briefing';
-      notices.push('This legacy section link is invalid. The Semonzo example briefing is available; no official route was selected.');
-    } else state.distanceM = Number(legacySeek[1]);
+    return fail('retired', 'This placeholder section link is retired. Choose an official route explicitly; no replacement has been selected.');
   }
+  if (state.routeId === 'semonzo-example')
+    return fail('retired', 'This placeholder route is retired. Choose an official route explicitly; no replacement has been selected.');
   if (state.routeId?.startsWith('user:'))
     return fail('local', 'Available only in this browser. Open the local library in Explore or import again; this link cannot be shared or replaced with an official route.');
   for (const field of ['dayId','variantId','routeId','revisionId']) {
@@ -60,8 +57,7 @@ export function readSelection(input, catalog, profiles = {}, exampleId = 'semonz
   if (!state.routeId) {
     if (state.revisionId || state.chapterId || q.has('at'))
       return fail('invalid', 'This route link cannot be opened: select the route for this revision or section.');
-    if (day || variant) return fail('choose', 'Choose a route explicitly. No variant has been selected for your trip.');
-    state.routeId = exampleId;
+    return fail('choose', 'Choose a route explicitly. No route or itinerary has been selected for your trip.');
   }
   const route = catalog.data.routes.find(r => r.id === state.routeId);
   if (!route) return fail('missing', 'This route link cannot be opened: route not found. Choose a route; nothing has been substituted.');
@@ -100,10 +96,7 @@ export function readSelection(input, catalog, profiles = {}, exampleId = 'semonz
   }
   if (!Number.isFinite(state.distanceM) || state.distanceM < 0 ||
       profile && state.distanceM > profile.distanceM || !profile && state.distanceM > 0) {
-    if (legacy && !q.has('route')) {
-      state.distanceM = 0; state.view = 'briefing';
-      notices.push('Legacy seek is outside the available example profile. Showing its briefing, not a substituted section.');
-    } else return fail('invalid', 'This route link cannot be opened: distance unavailable in this revision.');
+    return fail('invalid', 'This route link cannot be opened: distance unavailable in this revision.');
   }
   return {state, code:'ready', message:'', notices, bundle, profile};
 }

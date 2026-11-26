@@ -78,7 +78,7 @@ async function fixture(t) {
   return {...b,base,pack,files,gates,network,navigate,ready,evaluate,snapshot,select,set,key,session,shell};
 }
 
-test('packaged 375px keyboard/no-map: shared times, stops, factors, bounded meshes, privacy and legacy HUD',async t=>{
+test('packaged 375px keyboard/no-map: shared times, stops, factors, bounded meshes, privacy and retired links',async t=>{
   const f=await fixture(t), route=f.pack.catalog.routes[0], {js}=f;
   await f.cmd('Emulation.setDeviceMetricsOverride',{width:375,height:900,deviceScaleFactor:1,mobile:true});
   await f.navigate(`${f.base}index.html?area=explore&view=briefing&route=${route.id}&rev=${route.currentRevisionId}`);
@@ -198,13 +198,12 @@ test('packaged 375px keyboard/no-map: shared times, stops, factors, bounded mesh
   assert.deepEqual(await f.evaluate('indexedDB.databases()'),[]);
   assert.equal(await js('localStorage.length'),0);
   assert.ok(!await js(`/ftp|mass|weight|220|260/.test(location.search)`));
-  // Actual legacy flyover HUD receives precisely the same shared projection.
+  // Retired selections clear the controller, rather than substituting a route.
   await f.evaluate(`import('./${f.shell}').then(m=>m.navigateSelection({area:'explore',view:'flyover',
     routeId:'semonzo-example',revisionId:null,dayId:null,variantId:null}))`);
-  await until(()=>js(`document.getElementById('flyover-ride-time')?.dataset.elapsedSeconds!==undefined`));
-  const example=await f.snapshot();
-  assert.equal(Number(await js(`document.getElementById('flyover-ride-time').dataset.elapsedSeconds`)),example.estimatedRide.elapsedSeconds);
-  assert.equal(Number(await js(`document.getElementById('pace-position').dataset.elapsedSeconds`)),example.estimatedRide.elapsedSeconds);
+  await until(()=>js(`document.getElementById('site-notice')?.textContent.includes('retired')`));
+  assert.equal((await f.snapshot()).phase,'idle');
+  assert.ok(await js(`document.getElementById('route-pace').hidden && !document.getElementById('flyover-ride-time')`));
   assert.deepEqual(f.exceptions,[]);
 });
 

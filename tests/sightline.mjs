@@ -3,7 +3,17 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {runInNewContext} from 'node:vm';
 
-const source = await readFile(new URL('../assets/terrain.js',import.meta.url),'utf8');
+const source = await readFile(new URL('./fixtures/legacy-terrain.js',import.meta.url),'utf8');
+const shared = await readFile(new URL('../assets/terrain.js',import.meta.url),'utf8');
+test('retirement retains exact SDK loader and raster coverage functions, without legacy renderer',()=>{
+  assert.equal(shared.slice(shared.indexOf('const terrainSDK'),shared.indexOf('\nfunction visibleRasterTiles')).trim(),
+    source.slice(source.indexOf('const terrainSDK'),source.indexOf('window.prepareTerrain')).trim());
+  for(const name of ['visibleRasterTiles','rasterCoverage']) {
+    assert.equal(runInNewContext(shared+`\n${name}.toString()`,{window:{}}),
+      runInNewContext(source+`\n${name}.toString()`,{window:{}}));
+  }
+  assert.doesNotMatch(shared,/startTerrain|prepareTerrain|terrainPose|Semonzo/);
+});
 const solve = runInNewContext(source+'\nterrainPose', {window:{}});
 const focus = {lon:11.76,lat:45.8,height:500};
 // A smoothed switchback cuts inside the actual route by 120 metres.
@@ -42,7 +52,7 @@ test('one missing sample on the ridge shot requires independent mesh proof, not 
 });
 
 test('flat raster accepts the union of drawn textures, not loaded neighbours or a missing quadrant',()=>{
-  const coverage=runInNewContext(source+'\nrasterCoverage',{window:{}});
+  const coverage=runInNewContext(shared+'\nrasterCoverage',{window:{}});
   const id=(z,x,y)=>({canonical:{z,x,y},wrap:0});
   const west=id(12,2,4),east=id(12,3,4),sat=[],cover=[];
   const cache=ids=>({getSource:()=>({}),getRenderableIds:()=>ids,getTileByID:tileID=>({tileID,texture:!tileID.missing})});
@@ -61,7 +71,7 @@ test('flat raster accepts the union of drawn textures, not loaded neighbours or 
 });
 
 test('draped raster follows textured proxy bindings, not an ideal flat selection',()=>{
-  const coverage=runInNewContext(source+'\nrasterCoverage',{window:{}});
+  const coverage=runInNewContext(shared+'\nrasterCoverage',{window:{}});
   const id=(z,x,y,texture=true)=>({canonical:{z,x,y},wrap:0,texture});
   const proxy={...id(12,2,4),key:17};
   const bound={sat:[],cover:[]};

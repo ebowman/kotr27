@@ -148,16 +148,6 @@ export function estimateRouteTime(analysis, options = {}) {
   return estimateProfileTime(analysis, profile, options);
 }
 
-// Explicit legacy adapter: retain the verified example's authored chapters and
-// millimetre-rounded windows, NOT an organizer analysis or resampled geometry.
-export function estimateExampleTime(profile, identity, options = {}) {
-  if (identity?.routeId !== 'semonzo-example' || identity?.recipe !== 'semonzo-chapters-v1' ||
-      !text(identity.revisionId) || !/^[a-f0-9]{64}$/.test(identity.geometrySha256) ||
-      !text(identity.annotationRevisionId))
-    return unavailable('invalid-example', 'Verified Semonzo example identity required');
-  return estimateProfileTime({...profile, identity, recipe: identity.recipe}, profile, options);
-}
-
 function estimateProfileTime(analysis, profile, options) {
   let resolved, stops;
   try { resolved = optionsFrom(options); }

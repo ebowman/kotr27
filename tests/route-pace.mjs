@@ -6,7 +6,7 @@ import { readRoutePack } from '../tools/route-pack.mjs';
 import { loadRouteAnalysis } from '../js/route-analysis-loader.mjs';
 import { createRoutePace, sensitivityProfile, paceScenarios } from '../js/route-pace.mjs';
 import { createRouteClock } from '../js/ride-clock.mjs';
-import { routeTimeAtDistance, estimateExampleTime } from '../js/route-time.mjs';
+import { routeTimeAtDistance, estimateRouteTime } from '../js/route-time.mjs';
 import { createRoutePlayback } from '../js/route-playback.mjs';
 import { createAnalysisPlaybackRoute } from '../js/route-playback-adapters.mjs';
 import { validateRider } from '../js/rider-scenario.mjs';
@@ -122,18 +122,15 @@ test('scenario replacement pauses without resetting position, camera or renderer
   assert.throws(()=>engine.replaceRoute({...make(),identity:{...a.identity,revisionId:'different'}}));
 });
 
-test('explicit Semonzo adapter preserves authored units and exact solver totals at every named fraction',async()=>{
-  const profile=JSON.parse(await readFile(new URL('../assets/semonzo-chapters.v1.json',import.meta.url)));
-  const identity={routeId:'semonzo-example',revisionId:'semonzo-example-v1',geometrySha256:'a'.repeat(64),
-    recipe:'semonzo-chapters-v1',annotationRevisionId:'none'};
+test('official route adapter preserves units and exact solver totals at every named fraction',()=>{
+  const analysis=analyses[0], identity=analysis.identity;
+  const profile={schemaVersion:1,chapters:analysis.chapters,segments:analysis.windows};
   for (const [scenario,fraction] of [['easy',.6],['steady',.75],['hard',.9]]) {
-    const result=estimateExampleTime(profile,identity,{scenario});
+    const result=estimateRouteTime(analysis,{scenario});
     assert.equal(result.status,'available');
-    assert.equal(result.elevationBasis,'semonzo-chapters-v1');
     assert.equal(result.total.movingSeconds,estimateEffort(profile,{fraction}).total.movingSeconds);
-    assert.equal(createRouteClock(result).atSecond(result.total.elapsedSeconds).distanceM,profile.distanceM);
-    assert.deepEqual(routeTimeAtDistance(result,profile.distanceM),
-      {status:'available',identity,distanceM:profile.distanceM,...result.total});
+    assert.equal(createRouteClock(result).atSecond(result.total.elapsedSeconds).distanceM,analysis.distanceM);
+    assert.deepEqual(routeTimeAtDistance(result,analysis.distanceM),
+      {status:'available',identity,distanceM:analysis.distanceM,...result.total});
   }
-  assert.equal(estimateExampleTime(profile,{...identity,routeId:'other'}).status,'unavailable');
 });

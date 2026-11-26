@@ -31,10 +31,6 @@ a { color:inherit; text-underline-offset:.2em }
 .site-choices { display:flex; flex-wrap:wrap; gap:.75rem }
 .site-choices label { flex:1 1 12rem; min-width:0 }
 .site-choices select { width:100% }
-#site-chapters { display:grid; gap:.6rem; padding-left:1.4rem }
-#site-chapters a { display:block; padding:.55rem; min-height:44px }
-#site-chapters a[aria-current] { font-weight:750; border-left:4px solid var(--rust) }
-#site-profile { width:100%; height:8rem; display:block; background:#eff1df }
 #site-shell summary { min-height:44px; padding:.6rem; cursor:pointer }
 #site-shell details { margin:1rem 0 }
 #site-preferences { font-size:1rem; letter-spacing:normal; text-transform:none }
@@ -132,8 +128,6 @@ a { color:inherit; text-underline-offset:.2em }
   #event-guide a { color:black; text-decoration:none }
   #event-briefing a::after { content:" (" attr(href) ")"; overflow-wrap:anywhere }
 }
-#legacy-explorer, #climb { margin-top:1.5rem }
-#legacy-explorer h2 { font-size:clamp(1.7rem,4vw,2.4rem) }
 @media (prefers-reduced-motion:reduce) {
   *, *::before, *::after { scroll-behavior:auto !important; animation:none !important; transition:none !important }
 }

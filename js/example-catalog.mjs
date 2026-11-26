@@ -1,3 +1,4 @@
+// Historical test fixture only. Not imported by the app or included in releases.
 import { createCatalog, verifyAsset } from './route-catalog.mjs';
 
 const provenance = {

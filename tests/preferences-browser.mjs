@@ -9,6 +9,8 @@ import { fileURLToPath } from 'node:url';
 import { build } from '../tools/build-release.mjs';
 import { browser, until } from './browser.mjs';
 
+// Explicit test selection; the production bare entry deliberately has no route.
+const explorer='explore.html?area=explore&view=clock&route=rwgps-57874121';
 function assertRevoked(record, category = 'rider') {
   assert.equal(record[category].consent, 'revoked');
   assert.equal(record[category].value, null);
@@ -113,7 +115,14 @@ async function fixture(t, {beforeRead = async () => {}} = {}) {
   const b = await browser({after: cleanup => browserCleanup.push(cleanup)}, m => {
     if (m.method === 'Network.requestWillBeSent') network.push(m.params.request);
   });
-  const {cmd, js} = b;
+  const {cmd} = b;
+  // Short, local test-driver names for the current shared controls, not browser
+  // globals from the removed example document.
+  const js=expression=>b.js(`{
+    const mass=document.getElementById('pace-mass'), unit=document.getElementById('pace-unit'),
+      ftp=document.getElementById('pace-ftp'), result=document.getElementById('preference-profile');
+    ${expression}
+  }`);
   await cmd('Page.enable');
   await cmd('Network.enable');
   await cmd('Network.setBlockedURLs', {urls:['https://*']});
@@ -124,10 +133,13 @@ async function fixture(t, {beforeRead = async () => {}} = {}) {
   };
   const base = `http://127.0.0.1:${server.address().port}/kotr27/`;
   const module = files.find(f => f.startsWith('js/preferences-view.'));
-  const ready = () => until(() => js(`document.querySelector('#controls')?.disabled === false`));
+  const ready = () => until(() => js(`document.querySelector('#route-pace')?.hidden === false`));
   const settle = () => evaluate(`import('./${module}').then(async m => { await m.riderState.settled(); return m.riderState.snapshot(); })`);
-  const input = (id, value, event = 'input') =>
-    js(`{const el=document.getElementById('${id}'); el.value=${JSON.stringify(value)}; el.dispatchEvent(new Event('${event}'));}`);
+  const input = (id, value, event = 'input') => id==='effort' ?
+    // The historical saved effort field remains schema-compatible. It is not
+    // the official pace scenario (which intentionally stays document-memory).
+    evaluate(`void import('./${module}').then(m=>m.riderState.update({effort:${JSON.stringify(value)}}))`) :
+    js(`{const el=document.getElementById('pace-${id}'); el.value=${JSON.stringify(value)}; el.dispatchEvent(new Event('${event}'));}`);
   const consent = async category => {
     await js(`document.getElementById('remember-${category}').click()`);
     // onchange crosses an await before scheduling its transaction.
@@ -141,7 +153,7 @@ async function fixture(t, {beforeRead = async () => {}} = {}) {
       const q=tx.objectStore('settings').get('current'); q.onsuccess=()=>resolve(q.result);
       tx.oncomplete=()=>db.close(); };
   })`);
-  return {...b, evaluate, base, ready, settle, input, consent, stored, network, requests, files,
+  return {...b, js, evaluate, base, ready, settle, input, consent, stored, network, requests, files,
     close, out, inFlight, get shutdownPhase() { return shutdownPhase; }};
 }
 
@@ -155,8 +167,8 @@ test('preferences fixture drains an in-flight planner read before removing its a
     }
   }});
   try {
-    await f.cmd('Page.navigate', {url:f.base + 'explore.html'});
-    await f.ready(); // Legacy controls do not imply background planner completion.
+    await f.cmd('Page.navigate', {url:f.base + explorer});
+    await until(()=>f.js(`document.getElementById('site-shell')?.dataset.ready==='true'`));
     await until(() => heldFile);
     assert.ok(f.inFlight.size > 0);
     const closing = f.close();
@@ -177,15 +189,14 @@ test('preferences fixture drains an in-flight planner read before removing its a
 test('packaged opt-in preferences: no default persistence/network, reload, shared consumers, revoke, forget and two tabs', async t => {
   const f = await fixture(t), {cmd, js, evaluate, base, ready, settle, input, consent, stored} = f;
   await cmd('Emulation.setDeviceMetricsOverride', {width:320, height:800, deviceScaleFactor:1, mobile:true});
-  await cmd('Page.navigate', {url:base + 'explore.html'});
+  await cmd('Page.navigate', {url:base + explorer});
   await ready();
-  await js(`document.getElementById('site-preferences').open=true; personal.open=true; sensitivity.open=true`);
+  await js(`document.getElementById('site-preferences').open=true; document.getElementById('pace-sensitivity').open=true`);
   assert.ok(await js('document.documentElement.scrollWidth <= innerWidth'));
   assert.deepEqual((await settle()).consent, {rider:false, preferences:false});
   await input('unit', 'lb', 'change'); await input('mass', '180.123456700'); await input('ftp', '287');
-  await until(() => js(`document.getElementById('sensitivity-baseline').textContent.includes('287 W FTP')`));
-  assert.match(await js('result.textContent'), /using your weight and FTP/);
-  assert.match(await js(`document.getElementById('shared-assumptions').textContent`), /287 W FTP \(entered\)/);
+  await until(() => js(`document.getElementById('pace-sens-baseline').textContent.includes('287 W FTP')`));
+  assert.match(await js('result.textContent'), /Personal scenario/);
   assert.match(await js(`document.getElementById('preference-profile').textContent`), /Personal scenario.*supplied.*supplied/);
   assert.deepEqual(await evaluate('indexedDB.databases()'), []);
   assert.deepEqual(await js('[localStorage.length,sessionStorage.length,document.cookie]'), [0,0,'']);
@@ -200,7 +211,7 @@ test('packaged opt-in preferences: no default persistence/network, reload, share
   assert.equal(await js('result.textContent'), baseline);
   await cmd('Page.reload'); await ready();
   assert.deepEqual(await js('[mass.value,unit.value,ftp.value]'), ['180.123456700','lb','287']);
-  assert.match(await js('result.textContent'), /using your weight and FTP/);
+  assert.match(await js('result.textContent'), /Personal scenario/);
   await input('unit', 'kg', 'change'); await input('effort', 'faster', 'change');
   await consent('preferences');
   let record = await stored();
@@ -220,12 +231,15 @@ test('packaged opt-in preferences: no default persistence/network, reload, share
   await key(); await settle();
   assert.ok((await stored()).preferences);
   await cmd('Page.reload'); await ready();
-  assert.deepEqual(await js('[unit.value,effort.value,ftp.value]'), ['kg','faster','287']);
+  assert.deepEqual(await js('[unit.value,ftp.value]'), ['kg','287']);
+  assert.equal((await settle()).input.effort,'faster');
+  await js(`document.getElementById('pace-sensitivity').open=true`);
+  await until(()=>js(`document.getElementById('pace-sens-content').hidden===false`));
   const before = f.network.length;
   await input('ftp', 'oops'); await settle();
   assert.equal((await stored()).rider.value, null);
-  assert.ok(await js(`ride.hidden && ftp.getAttribute('aria-invalid') === 'true'`));
-  assert.match(await js(`document.getElementById('sensitivity-error').textContent`), /Correct or clear/);
+  assert.ok(await js(`ftp.getAttribute('aria-invalid') === 'true'`));
+  await until(()=>js(`document.getElementById('pace-sens-error').textContent.includes('Correct or clear')`));
   await input('ftp', '287'); await settle();
   await consent('rider');
   assertRevoked(await stored());
@@ -233,7 +247,8 @@ test('packaged opt-in preferences: no default persistence/network, reload, share
   assert.equal(await js('ftp.value'), '287');
   assert.deepEqual(f.network.slice(before), [], 'personal edits, opt-in and revoke make no network request');
   await cmd('Page.reload'); await ready();
-  assert.deepEqual(await js('[mass.value,ftp.value,unit.value,effort.value]'), ['','','kg','faster']);
+  assert.deepEqual(await js('[mass.value,ftp.value,unit.value]'), ['','','kg']);
+  assert.equal((await settle()).input.effort,'faster');
   assert.match(await js('result.textContent'), /fictional example/);
   // Invalid and stale revisions are remembered verbatim, but never substituted.
   await cmd('Page.navigate', {url:base + 'explore.html?area=explore&view=clock&route=semonzo-example&rev='});
@@ -245,17 +260,17 @@ test('packaged opt-in preferences: no default persistence/network, reload, share
   await cmd('Page.reload');
   await until(() => js(`document.getElementById('site-notice')?.textContent.includes('revision unavailable')`));
   await settle();
-  assert.ok(await js(`document.getElementById('legacy-explorer').hidden`));
+  assert.ok(await js(`!document.getElementById('legacy-explorer')`));
   assert.match(await js(`document.getElementById('preference-route').getAttribute('href')`), /rev=(?:&|$)/);
-  await cmd('Page.navigate', {url:base + 'explore.html'});
+  await cmd('Page.navigate', {url:base + explorer});
   await ready();
   await input('ftp', '319'); await consent('rider');
   await js(`localStorage.setItem('unrelated-app','keep'); sessionStorage.setItem('unrelated-session','keep')`);
   // Same-origin popup is a real second document/tab, not a synthetic event.
-  await cmd('Runtime.evaluate', {expression:`window.peer=window.open(${JSON.stringify(base + 'explore.html')});`, userGesture:true});
-  await until(() => js(`peer?.document.querySelector('#controls')?.disabled === false`));
+  await cmd('Runtime.evaluate', {expression:`window.peer=window.open(${JSON.stringify(base + explorer)});`, userGesture:true});
+  await until(() => js(`peer?.document.querySelector('#route-pace')?.hidden === false`));
   await until(() => js(`!document.getElementById('remember-rider').checked && ftp.value === ''`));
-  assert.equal(await js(`peer.document.getElementById('ftp').value`), '319');
+  assert.equal(await js(`peer.document.getElementById('pace-ftp').value`), '319');
   await js(`peer.document.getElementById('preference-forget').click()`);
   await until(() => js(`peer.document.getElementById('preference-status').textContent.includes('All app-owned')`));
   await until(() => js(`document.getElementById('preference-status').textContent.includes('another tab')`));
@@ -264,7 +279,8 @@ test('packaged opt-in preferences: no default persistence/network, reload, share
   assertRevoked(record); assertRevoked(record, 'preferences');
   await js('peer.close()');
   await js(`document.getElementById('preference-forget').click()`); await settle();
-  assert.deepEqual(await js('[mass.value,ftp.value,unit.value,effort.value]'), ['','','kg','slower']);
+  assert.deepEqual(await js('[mass.value,ftp.value,unit.value]'), ['','','kg']);
+  assert.equal((await settle()).input.effort,'slower');
   assert.equal(await js(`localStorage.getItem('unrelated-app')`), 'keep');
   assert.equal(await js(`sessionStorage.getItem('unrelated-session')`), 'keep');
   await cmd('Page.reload'); await ready();
@@ -289,7 +305,7 @@ for (const category of ['all','rider','preferences'])
   test(`packaged two-tab ${category} removal survives a delayed renewal broadcast behind a focus read`, async t => {
     const f = await fixture(t), {cmd, js, base, ready, settle, input, consent, stored} = f;
     await installMessageGate(cmd);
-    await cmd('Page.navigate', {url:base + 'explore.html'});
+    await cmd('Page.navigate', {url:base + explorer});
     await ready();
     await input('ftp', '300');
     await consent('rider'); await consent('preferences');
@@ -298,11 +314,11 @@ for (const category of ['all','rider','preferences'])
     // The parent controller's read is pending, but no IDB transaction is held:
     // the real peer can restore and commit a same-grant renewal.
     await cmd('Runtime.evaluate', {
-      expression:`window.peer=window.open(${JSON.stringify(base + 'explore.html')});`, userGesture:true,
+      expression:`window.peer=window.open(${JSON.stringify(base + explorer)});`, userGesture:true,
     });
-    await until(() => js(`peer?.document.querySelector('#controls')?.disabled === false`));
+    await until(() => js(`peer?.document.querySelector('#route-pace')?.hidden === false`));
     await until(() => js('heldPreferenceMessages.length > 0'));
-    assert.equal(await js(`peer.document.getElementById('ftp').value`), '300');
+    assert.equal(await js(`peer.document.getElementById('pace-ftp').value`), '300');
     const renewed = await stored();
     assert.equal(renewed.rider.consentVersion, before.rider.consentVersion);
     assert.ok(renewed.rider.savedAt > before.rider.savedAt);
@@ -329,7 +345,7 @@ for (const category of ['all','rider','preferences'])
     assert.deepEqual(await js(`['rider','preferences'].map(key=>document.getElementById('remember-'+key).checked)`),
       [false,false]);
     await until(() => js(`peer.document.getElementById('preference-status').textContent.includes('another tab')`));
-    assert.equal(await js(`peer.document.getElementById('ftp').value`), '');
+    assert.equal(await js(`peer.document.getElementById('pace-ftp').value`), '');
     await js('peer.close()');
     await cmd('Page.reload'); await ready();
     const reloaded = await settle();
@@ -345,17 +361,17 @@ for (const removed of ['rider','preferences'])
     const f = await fixture(t), {cmd, js, base, ready, settle, input, consent, stored} = f;
     const other = removed === 'rider' ? 'preferences' : 'rider';
     await installMessageGate(cmd);
-    await cmd('Page.navigate', {url:base + 'explore.html'});
+    await cmd('Page.navigate', {url:base + explorer});
     await ready();
     await input('ftp', '300');
     await consent('rider'); await consent('preferences');
     await holdFocusRead(js);
     await cmd('Runtime.evaluate', {
-      expression:`window.peer=window.open(${JSON.stringify(base + 'explore.html')});`, userGesture:true,
+      expression:`window.peer=window.open(${JSON.stringify(base + explorer)});`, userGesture:true,
     });
-    await until(() => js(`peer?.document.querySelector('#controls')?.disabled === false`));
+    await until(() => js(`peer?.document.querySelector('#route-pace')?.hidden === false`));
     await until(() => js('heldPreferenceMessages.length > 0'));
-    assert.equal(await js(`peer.document.getElementById('ftp').value`), '300');
+    assert.equal(await js(`peer.document.getElementById('pace-ftp').value`), '300');
     await js(`peer.document.getElementById('preference-forget').click()`);
     await until(() => js(`peer.document.getElementById('preference-status').textContent.includes('All app-owned')`));
     const forgotten = await stored();
@@ -401,7 +417,7 @@ for (const removed of ['rider','preferences'])
 for (const category of ['rider','preferences']) for (const fault of ['none','discovery','cleanup'])
   test(`packaged consent recovery for ${category} after superseded discovery: ${fault}`, async t => {
     const f = await fixture(t), {cmd, js, evaluate, base, ready, settle, input, consent, stored} = f;
-    await cmd('Page.navigate', {url:base + 'explore.html'});
+    await cmd('Page.navigate', {url:base + explorer});
     await ready();
     await input('ftp', '311'); await input('effort', 'faster', 'change');
     await consent('rider'); await consent('preferences');
@@ -477,7 +493,7 @@ for (const category of ['rider','preferences']) for (const fault of ['none','dis
 for (const category of ['rider','preferences']) for (const denied of [false,true])
   test(`packaged first ${category} grant then direct revocation: cleanup ${denied ? 'aborts honestly' : 'wins'}`, async t => {
     const f = await fixture(t), {cmd, js, evaluate, base, ready, settle, input, stored} = f;
-    await cmd('Page.navigate', {url:base + 'explore.html'});
+    await cmd('Page.navigate', {url:base + explorer});
     await ready();
     await input('ftp', '311');
     await input('unit', 'lb', 'change'); await input('effort', 'faster', 'change');
@@ -542,7 +558,7 @@ for (const category of ['rider','preferences']) for (const kind of ['save','gran
   test(`packaged queued ${category} ${kind} cannot pass peer revocation`, async t => {
     const f = await fixture(t), {cmd, js, base, ready, settle, input, consent, stored} = f;
     await installMessageGate(cmd);
-    await cmd('Page.navigate', {url:base + 'explore.html'});
+    await cmd('Page.navigate', {url:base + explorer});
     await ready();
     await input('ftp', '300'); await consent('rider'); await consent('preferences');
     if (kind === 'grant') await consent(category);
@@ -557,9 +573,9 @@ for (const category of ['rider','preferences']) for (const kind of ['save','gran
     }
     await until(() => js('window.storageEntered === true'));
     await cmd('Runtime.evaluate', {
-      expression:`window.peer=window.open(${JSON.stringify(base + 'explore.html')});`, userGesture:true,
+      expression:`window.peer=window.open(${JSON.stringify(base + explorer)});`, userGesture:true,
     });
-    await until(() => js(`peer?.document.querySelector('#controls')?.disabled === false`));
+    await until(() => js(`peer?.document.querySelector('#route-pace')?.hidden === false`));
     await until(() => js('heldPreferenceMessages.length > 0'));
     await js(`peer.document.getElementById('${kind === 'grant' ? 'preference-forget' : 'remember-' + category}').click()`);
     await until(() => js(`peer.document.getElementById('preference-status').textContent.includes('${kind === 'grant' ? 'All app-owned' : 'consent revoked'}')`));
@@ -580,7 +596,7 @@ for (const category of ['rider','preferences']) for (const kind of ['save','gran
 test('packaged delayed restore renewal cannot recreate either category after peer Forget', async t => {
   const f = await fixture(t), {cmd, js, base, ready, settle, input, consent, stored} = f;
   await installMessageGate(cmd);
-  await cmd('Page.navigate', {url:base + 'explore.html'});
+  await cmd('Page.navigate', {url:base + explorer});
   await ready();
   await input('ftp', '300'); await consent('rider'); await consent('preferences');
   await cmd('Page.addScriptToEvaluateOnNewDocument', {source:`
@@ -598,9 +614,9 @@ test('packaged delayed restore renewal cannot recreate either category after pee
   await cmd('Page.reload');
   await until(() => js('window.renewalEntered === true'));
   await cmd('Runtime.evaluate', {
-    expression:`window.peer=window.open(${JSON.stringify(base + 'explore.html')});`, userGesture:true,
+    expression:`window.peer=window.open(${JSON.stringify(base + explorer)});`, userGesture:true,
   });
-  await until(() => js(`peer?.document.querySelector('#controls')?.disabled === false`));
+  await until(() => js(`peer?.document.querySelector('#route-pace')?.hidden === false`));
   await until(() => js('heldPreferenceMessages.length > 0'));
   await js(`peer.document.getElementById('preference-forget').click()`);
   await until(() => js(`peer.document.getElementById('preference-status').textContent.includes('All app-owned')`));
@@ -624,7 +640,7 @@ for (const mode of ['blocked','open-blocked','corrupt','legacy','future','expire
       IDBFactory.prototype.open=function(){throw new DOMException('Denied','SecurityError')};`});
     if (mode === 'messaging-blocked') await cmd('Page.addScriptToEvaluateOnNewDocument', {source:`
       window.BroadcastChannel=class {constructor(){throw new DOMException('Denied','SecurityError')}};`});
-    await cmd('Page.navigate', {url:base + 'explore.html'});
+    await cmd('Page.navigate', {url:base + explorer});
     await ready();
     if (mode === 'blocked') assert.equal(await js(`(()=>{try{void indexedDB;return false}catch(e){return e.name==='SecurityError'}})()`), true);
     if (mode === 'open-blocked') {
@@ -668,8 +684,9 @@ for (const mode of ['blocked','open-blocked','corrupt','legacy','future','expire
     assert.deepEqual(state.consent, {rider:false, preferences:false});
     if (mode !== 'write-error') assert.match(await js('result.textContent'), /fictional example/);
     await input('ftp', '240');
-    assert.match(await js('result.textContent'), /Partly assumed.*240 W \(entered\)/);
-    assert.equal(await js(`document.getElementById('ftp-error').textContent`), '');
+    assert.match(await js('result.textContent'), /Partly supplied profile/);
+    assert.equal(await js(`ftp.getAttribute('aria-invalid')`), 'false');
+    assert.equal((await settle()).validation.options.ftpW,240);
     if (['delete-error','delete-abort'].includes(mode)) assert.equal((await stored()).rider.value.ftp, '299', 'failed delete never falsely claims erasure');
     if (mode === 'expired') assertRevoked(await stored());
     if (mode === 'messaging-blocked') {

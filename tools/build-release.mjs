@@ -2,8 +2,7 @@
 import { createHash } from 'node:crypto';
 import { lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-import { createCatalog, verifyAsset } from '../js/route-catalog.mjs';
+import { fileURLToPath } from 'node:url';
 import { readRoutePack } from './route-pack.mjs';
 import { canonical, validateOfflineManifest, offlineRouteInventory } from '../js/offline-contract.mjs';
 
@@ -17,17 +16,7 @@ export async function build(source, destination) {
   // Refuse existing trees (no mixing releases) and keep artifacts out of source.
   const root = await realpath(source);
   // Validate source catalog and pinned bytes before writing any public output.
-  // No discovery or recursive route intake: example + explicit verified pack.
-  const catalogFile = join(root, 'js/example-catalog.mjs');
-  const {exampleCatalog} = await import(pathToFileURL(catalogFile).href + '?' + digest(await readFile(catalogFile)));
-  createCatalog(exampleCatalog.data);
-  for (const route of exampleCatalog.data.routes) for (const revision of route.revisions) {
-    for (const ref of [revision.geometry, revision.profile, revision.climbs, revision.pois, ...(revision.downloads ?? [])]) {
-      if (!ref?.path) continue;
-      if (ref.path !== 'assets/semonzo.gpx') throw Error(`Asset not on public release allowlist: ${ref.path}`);
-      await verifyAsset(ref, await readFile(join(root, ref.path)));
-    }
-  }
+  // No discovery or recursive route intake: only the explicit verified pack.
   const routePack = await readRoutePack(root);
   const target = join(await realpath(dirname(resolve(destination))), basename(resolve(destination)));
   const rel = relative(root, target);
@@ -61,16 +50,14 @@ async function writeRelease(root, out, routePack) {
   await writeFile(join(out, packEntry), routePack.pointerBytes);
   const names = new Map();
   // Dependency-first allowlist. Specifiers in modules resolve from that
-  // module (including dynamic imports in the classic flyover script).
+  // module (including lazy official terrain imports).
   // Catalog asset paths alone are deployment-root-relative.
   const graph = {
-    'assets/semonzo.gpx': [], 'assets/site.css': [], 'js/config.js': [], 'assets/terrain.js': [],
+    'assets/site.css': [], 'js/config.js': [], 'assets/terrain.js': [],
     'js/route-catalog.mjs': [],
-    'js/example-catalog.mjs': ['./route-catalog.mjs','assets/semonzo.gpx'],
     'js/route-analysis.mjs': [],
     'js/route-pack-contract.mjs': ['./route-catalog.mjs'],
     'js/route-analysis-loader.mjs': ['./route-catalog.mjs','./route-analysis.mjs','./route-pack-contract.mjs'],
-    'js/semonzo-profile.mjs': ['./example-catalog.mjs','./route-analysis.mjs'],
     'js/route-state.mjs': [],
     'js/itinerary.mjs': [],
     'js/trip-planner.mjs': ['./route-catalog.mjs','./route-pack-contract.mjs','./route-analysis-loader.mjs','./itinerary.mjs'],
@@ -89,7 +76,7 @@ async function writeRelease(root, out, routePack) {
     'js/climb-sensitivity-view.mjs': ['./climb-sensitivity.mjs'],
     'js/ride-clock.mjs': [],
     'js/route-playback.mjs': [],
-    'js/route-playback-adapters.mjs': ['./route-analysis.mjs','./route-time.mjs','./example-catalog.mjs'],
+    'js/route-playback-adapters.mjs': ['./route-analysis.mjs','./route-time.mjs'],
     'js/route-session.mjs': ['./route-playback.mjs'],
     'js/route-pace-view.mjs': ['./route-pace.mjs','./route-session.mjs','./ride-clock.mjs','./climb-sensitivity-view.mjs'],
     'js/route-briefing.mjs': ['./route-analysis.mjs'],
@@ -110,10 +97,7 @@ async function writeRelease(root, out, routePack) {
     'js/local-routes-view.mjs': ['./local-route-import.mjs','./local-route-storage.mjs','./route-briefing.mjs','./route-analysis.mjs'],
     'js/recorded-replay.mjs': ['./route-analysis.mjs','./route-time.mjs','./ride-clock.mjs'],
     'js/recorded-replay-view.mjs': ['./recorded-replay.mjs','./route-session.mjs','./route-pace.mjs','./route-briefing.mjs','./route-analysis.mjs'],
-    'js/site-shell.mjs': ['./example-catalog.mjs','./semonzo-profile.mjs','./route-state.mjs','./preferences-view.mjs','./route-catalog.mjs','./trip-planner.mjs','./trip-planner-view.mjs','./route-playback-adapters.mjs','./route-session.mjs','./route-briefing-view.mjs','./route-flyover-view.mjs','./route-pace.mjs','./route-pace-view.mjs','./route-comparison-view.mjs','./route-comparison.mjs','./local-routes-view.mjs','./local-route-storage.mjs','./recorded-replay.mjs','./recorded-replay-view.mjs','./event-guide.mjs','./event-guide-view.mjs','./route-weather-view.mjs','./offline-view.mjs'],
-    'assets/flyover.js': ['../js/semonzo-profile.mjs','../js/route-session.mjs','../js/route-playback-adapters.mjs'],
-    'js/chapter-reveal.mjs': [], 'js/plan-comparison.mjs': [],
-    'js/rider-controls.mjs': ['./preferences-view.mjs','./chapter-reveal.mjs','./plan-comparison.mjs','./site-shell.mjs','./ride-clock.mjs','./climb-sensitivity-view.mjs'],
+    'js/site-shell.mjs': ['./route-state.mjs','./preferences-view.mjs','./route-catalog.mjs','./trip-planner.mjs','./trip-planner-view.mjs','./route-playback-adapters.mjs','./route-session.mjs','./route-briefing-view.mjs','./route-flyover-view.mjs','./route-pace.mjs','./route-pace-view.mjs','./route-comparison-view.mjs','./route-comparison.mjs','./local-routes-view.mjs','./local-route-storage.mjs','./recorded-replay.mjs','./recorded-replay-view.mjs','./event-guide.mjs','./event-guide-view.mjs','./route-weather-view.mjs','./offline-view.mjs'],
   };
   for (const [file, deps] of Object.entries(graph)) {
     let data = await readFile(join(root, file));
@@ -131,8 +115,8 @@ async function writeRelease(root, out, routePack) {
   }
   const check = await readFile(new URL('./entry-check.js', import.meta.url), 'utf8');
   for (const [entry, scripts] of Object.entries({
-    'index.html':['js/config.js','assets/terrain.js','assets/flyover.js','js/site-shell.mjs','assets/site.css'],
-    'explore.html':['js/rider-controls.mjs','assets/site.css'],
+    'index.html':['js/site-shell.mjs','assets/site.css'],
+    'explore.html':['js/site-shell.mjs','assets/site.css'],
   })) {
     let html = await readFile(join(root, entry), 'utf8');
     html = replace(html, '</head>',
