@@ -1,8 +1,8 @@
-import { cameraPose, followBearing, routeBounds, routeLine, frameEvidence, flyoverLimits as limits } from './route-flyover.mjs';
+import { cameraPose, createRoutePresentation, followBearing, routeBounds, routeLine, frameEvidence, flyoverLimits as limits } from './route-flyover.mjs';
 
-// One lazy map, no preloading, no automatic retries, no autonomous camera RAF.
+// One lazy map, no preloading/retries or independent playback clock.
 // Only approved, already verified geometry may reach this adapter.
-export async function mountRouteTerrain({container,analysis,snapshot,onStatus,onManual,signal}) {
+export async function mountRouteTerrain({container,analysis,snapshot,onStatus,onManual,onPresent,signal}) {
   await import('../assets/terrain.js');
   if (signal.aborted) return;
   await import('./config.js');
@@ -19,13 +19,30 @@ export async function mountRouteTerrain({container,analysis,snapshot,onStatus,on
   const imageConcurrency=gl.maxParallelImageRequests;
   gl.maxParallelImageRequests=4;
   let map, rider, ready=false, presented=false, stopped=false, manual=false, current=snapshot;
-  let refinements={}, lastPaint=-Infinity, timer, requests=0, updating=false;
-  let bearing;
+  let refinements={}, lastPaint=-Infinity, lastProof=-Infinity, timer, requests=0, updating=false;
+  let bearing, frame, proofTimer, sequence=0, renderSequence=0, proofSequence=0, proof, status, outageAt;
+  const presentation=createRoutePresentation(analysis);
+  function announce(name,message) {
+    const key=name+message;
+    if (status===key) return;
+    status=key;onStatus(name,message);
+  }
+  function invalidate() {
+    if (proof?.current) {
+      proof={...proof,current:false};
+      container.dataset.frame=JSON.stringify(proof);
+    }
+  }
   const beacon=document.createElement('div'); beacon.className='route-rider';
   beacon.setAttribute('aria-label','Selected rider position');
+  for (const key of ['frame','pose','renderSequence','distance','requests','camera']) delete container.dataset[key];
   function dispose() {
     if (stopped) return;
-    stopped=true; clearTimeout(timer); container.style.visibility='hidden'; map?.remove();
+    stopped=true; clearTimeout(timer); clearTimeout(proofTimer); cancelAnimationFrame(frame);
+    document.removeEventListener('visibilitychange',visibility);
+    signal.removeEventListener('abort',dispose);
+    invalidate();
+    container.style.visibility='hidden'; map?.remove();
     gl.maxParallelImageRequests=imageConcurrency;
     if (window.kotrDisposeTerrain===dispose) delete window.kotrDisposeTerrain;
   }
@@ -33,20 +50,31 @@ export async function mountRouteTerrain({container,analysis,snapshot,onStatus,on
   signal.addEventListener('abort',dispose,{once:true});
   function fail(reason) {
     if (stopped) return;
-    dispose(); onStatus('unavailable',reason);
+    dispose(); announce('unavailable',reason);
   }
   function waiting() {
     // Initial proof gates presentation, not every camera/tile refinement.
     // Keep an already presented map during the bounded verification interval;
     // this is NOT a valid-frame claim. Terminal failure still removes it.
     if (!presented) container.style.visibility='hidden';
-    else onStatus('verifying',manual ? 'Manual exploration · verifying viewport terrain.' :
-      'Satellite terrain · verifying the current rider view.');
+    outageAt ??= performance.now();
+    // A single transient missed proof is not a new cockpit/ARIA announcement.
+    if (presented && performance.now()-outageAt>=400)
+      announce('verifying',manual ? 'Manual exploration · verifying viewport terrain.' :
+        'Satellite terrain · verifying the current rider view.');
     // One deadline per coverage outage. Motion/tile traffic cannot extend it.
     timer ??= setTimeout(()=>fail(manual ?
       'Manual viewport imagery, elevation or rendered depth could not be verified.' :
       'Imagery, elevation or an unobstructed rider view could not be verified.'),limits.coverageMs);
   }
+  function visibility() {
+    if (document.hidden) {
+      cancelAnimationFrame(frame);frame=undefined;
+      clearTimeout(proofTimer);proofTimer=undefined;
+      invalidate();
+    }
+  }
+  document.addEventListener('visibilitychange',visibility);
   const withinPixels=()=>container.clientWidth*container.clientHeight*devicePixelRatio**2<=limits.maxPixels;
   if (!withinPixels()) {
     fail('This display exceeds the bounded 3D frame size. Use linked 2D/profile or a smaller window.');return;
@@ -77,9 +105,11 @@ export async function mountRouteTerrain({container,analysis,snapshot,onStatus,on
     map.on('movestart',e=>{
       if (stopped || !e.originalEvent || updating) return;
       manual=true; onManual();
-      delete container.dataset.frame;
+      status=undefined;
+      invalidate();
       waiting();
     });
+    map.on('move',()=>{if (!stopped) invalidate();});
     map.on('moveend',()=>{
       if (manual && !stopped) map.triggerRepaint();
     });
@@ -116,15 +146,37 @@ export async function mountRouteTerrain({container,analysis,snapshot,onStatus,on
           if (stopped || !ready || document.hidden) return;
           try {
             if (!withinPixels()) { fail('This display exceeds the bounded 3D frame size.');return; }
-            const proof=frameEvidence(map,current.position,beacon,container,imageryReady,manual?'manual':'follow');
+            const now=performance.now();
+            container.dataset.renderSequence=String(++renderSequence);
+            invalidate();
+            if (now-lastProof<limits.frameMs) {
+              proofTimer ??= setTimeout(()=>{
+                proofTimer=undefined;
+                if (!stopped && !document.hidden) map.triggerRepaint();
+              },limits.frameMs-(now-lastProof));
+              return;
+            }
+            clearTimeout(proofTimer);proofTimer=undefined;
+            lastProof=now;
+            proof={...frameEvidence(map,current.position,beacon,container,imageryReady,manual?'manual':'follow'),
+              current:true,at:now,sequence,renderSequence,proofSequence:++proofSequence,distanceM:current.distanceM,
+              geometrySha256:analysis.identity.geometrySha256};
             container.dataset.frame=JSON.stringify(proof);
             container.dataset.distance=String(current.distanceM);
             container.dataset.requests=String(requests);
-            if (!proof.ok) { waiting(); return; }
+            if (!proof.ok) {
+              waiting();
+              proofTimer=setTimeout(()=>{
+                proofTimer=undefined;
+                if (!stopped && !document.hidden) map.triggerRepaint();
+              },limits.frameMs);
+              return;
+            }
             clearTimeout(timer); timer=null;
+            outageAt=undefined;
             presented=true;
             container.style.visibility='visible';
-            onStatus('ready',manual ? 'Manual exploration · Return to rider to follow.' :
+            announce('ready',manual ? 'Manual exploration · Return to rider to follow.' :
               'Satellite terrain · orange route, white-ring rider. Compass: north; route direction shown below.');
           } catch { fail('Rendered terrain could not be verified.'); }
         });
@@ -135,16 +187,30 @@ export async function mountRouteTerrain({container,analysis,snapshot,onStatus,on
   function update(s,force=false,options=refinements) {
     refinements=options;
     if (stopped || !ready || !s.position || document.hidden) return;
-    if (!force && s.phase==='playing' && s.distanceM<analysis.distanceM &&
-        performance.now()-lastPaint<limits.frameMs) return;
-    const now=performance.now(), elapsed=now-lastPaint;
+    cancelAnimationFrame(frame);frame=undefined;
+    const now=performance.now();
     const reset=force || current.cameraMode!==s.cameraMode ||
       current.identity?.geometrySha256!==s.identity?.geometrySha256;
+    if (reset) status=undefined;
+    // Both existing owners publish on RAF and their other projections consume
+    // that exact distance. Sparse owners must accept onPresent for their linked
+    // profile too; never introduce a private lag behind an unaware consumer.
+    paint(presentation.push(s,now,reset || !onPresent),now,force,reset);
+    function tick(now) {
+      frame=undefined;
+      if (stopped || document.hidden) return;
+      paint(presentation.sample(now),now);
+      if (presentation.pending(now)) frame=requestAnimationFrame(tick);
+    }
+    if (!stopped && presentation.pending(now)) frame=requestAnimationFrame(tick);
+  }
+  function paint(s,now,force=false,reset=false) {
+    const elapsed=now-lastPaint;
     current=s;
     lastPaint=now;
     try {
       updating=true;
-      const pose=cameraPose(analysis,s,options);
+      const pose=cameraPose(analysis,s,refinements);
       rider.setLngLat(pose.center);
       if (!manual || force) {
         manual=false;
@@ -152,13 +218,15 @@ export async function mountRouteTerrain({container,analysis,snapshot,onStatus,on
         if (s.cameraMode==='follow') pose.bearing=followBearing(pose.bearing,bearing,elapsed);
         bearing=pose.bearing;
         container.dataset.camera=JSON.stringify({bearing:pose.bearing,pitch:pose.pitch});
-        if (s.cameraMode==='overview') map.fitBounds(routeBounds(analysis),{
+        if (s.cameraMode==='overview' && (reset || sequence===0)) map.fitBounds(routeBounds(analysis),{
           padding:40,duration:0,bearing:0,pitch:0,maxZoom:limits.maxZoom});
-        else map.jumpTo(pose);
+        else if (s.cameraMode!=='overview') map.jumpTo(pose);
       }
-      delete container.dataset.frame;
-      delete container.dataset.distance;
-      waiting();
+      sequence++;
+      container.dataset.pose=JSON.stringify({sequence,at:now,distanceM:s.distanceM,manual});
+      container.dataset.distance=String(s.distanceM);
+      invalidate();
+      onPresent?.(s);
       map.triggerRepaint();
     } catch { fail('Selected route position or camera unavailable.'); }
     finally { updating=false; }

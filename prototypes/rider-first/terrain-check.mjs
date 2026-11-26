@@ -4,6 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { cpus, totalmem, platform, release } from 'node:os';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { browser, until } from '../../tests/browser.mjs';
 import { previewServer } from './serve.mjs';
@@ -24,7 +25,7 @@ async function offRiderPan(b,width,height) {
     bubbles:true,clientX:${x}+960,clientY:${y},button:0}))`);
 }
 
-test('Grappa finish then D2 Standard finish then off-rider manual pan zoom and return; phone route switch',async t=>{
+test('Grappa and Asolo full continuous motion then off-rider manual pan zoom and return; desktop and phone',async t=>{
   const server=await previewServer(0);
   t.after(()=>{server.closeAllConnections();server.close();});
   for(const [label,width,height] of [['desktop',1440,900],['phone',375,812]]) {
@@ -32,6 +33,9 @@ test('Grappa finish then D2 Standard finish then off-rider manual pan zoom and r
     const b=await browser({after:fn=>cleanup.push(fn)});
     try {
       await b.cmd('Page.enable');
+      t.diagnostic(JSON.stringify({device:{platform:platform(),release:release(),cpu:cpus()[0]?.model,
+        memoryGiB:Math.round(totalmem()/1024**3)},label,width,height,
+        dpr:1,headless:true,browser:await b.cmd('Browser.getVersion')}));
       await b.cmd('Page.addScriptToEvaluateOnNewDocument',{source:`
         window.maps=[];
         Object.defineProperty(window,'mapboxgl',{configurable:true,set(gl){
@@ -57,7 +61,7 @@ test('Grappa finish then D2 Standard finish then off-rider manual pan zoom and r
       const ready=async()=>{
         for(let i=0;i<34;i++) {
           const s=await state();
-          if(s.proof.ok && s.online)return;
+          if(s.proof.ok && s.proof.current && s.online)return;
           assert.ok(!s.status.includes('unavailable'),JSON.stringify(s));
           await sleep(500);
         }
@@ -74,6 +78,37 @@ test('Grappa finish then D2 Standard finish then off-rider manual pan zoom and r
         }
         await b.js(`(()=>{
           window.sequenceProbe={hidden:0,fallback:0,valid:0,invalid:0,maxRequests:0,minPitch:90,maxPitch:0};
+          const m=observedTerrain,t=document.getElementById('terrain'),start=performance.now();
+          const motion=window.motionProbe={commands:[],renders:[],proofs:[],statusChanges:0};
+          const jump=m.jumpTo;
+          m.jumpTo=function(pose,...args){
+            const at=performance.now();
+            if(at-start<=31000)motion.commands.push({at,center:pose.center,bearing:pose.bearing});
+            return jump.call(this,pose,...args);
+          };
+          let previousProof,previousCenter;
+          const render=()=>{
+            if(performance.now()-start>31000)return;
+            const center=m.getCenter(),key=center.lng+','+center.lat;
+            if(key!==previousCenter){
+              const rider=m._markers.find(m=>m.getElement().classList.contains('route-rider')).getLngLat();
+              const xy=m.project(rider),cxy=m.project(center);
+              motion.renders.push({at:performance.now(),center:[center.lng,center.lat],
+                riderGap:center.distanceTo(rider),riderGapPx:Math.hypot(xy.x-cxy.x,xy.y-cxy.y),
+                distanceM:Number(t.dataset.distance),
+                profileFraction:Number(document.getElementById('profile-cursor').getAttribute('x1'))/640,
+                sequence:JSON.parse(t.dataset.pose||'{}').sequence});
+              previousCenter=key;
+            }
+            queueMicrotask(()=>{
+              const p=JSON.parse(t.dataset.frame||'{}');
+              if(p.proofSequence!==previousProof){motion.proofs.push(p);previousProof=p.proofSequence;}
+            });
+          };
+          m.on('render',render);
+          const observer=new MutationObserver(()=>motion.statusChanges++);
+          observer.observe(document.getElementById('terrain-status'),{childList:true,characterData:true,subtree:true});
+          motion.dispose=()=>{m.jumpTo=jump;m.off('render',render);observer.disconnect();};
           const tick=()=>{
             const p=sequenceProbe,t=document.getElementById('terrain'),proof=JSON.parse(t.dataset.frame||'{}');
             if(getComputedStyle(t).visibility!=='visible')p.hidden++;
@@ -86,7 +121,7 @@ test('Grappa finish then D2 Standard finish then off-rider manual pan zoom and r
           };tick();document.getElementById('play').click();
         })()`);
         const start=Date.now();
-        if(label==='desktop') {
+        {
           while(Date.now()-start<115000) {
             await sleep(250);
             const s=await state();
@@ -94,19 +129,50 @@ test('Grappa finish then D2 Standard finish then off-rider manual pan zoom and r
             if(!s.playing && s.progress==='1000')break;
           }
           assert.equal((await state()).progress,'1000','Full normal-speed route, not a seek');
-        } else {
-          await sleep(3200);
-          await b.js(`document.getElementById('play').click()`);
         }
         await ready();
         const result=await b.js(`cancelAnimationFrame(sequenceProbe.raf);({...sequenceProbe,raf:undefined})`);
+        const motion=await b.js(`motionProbe.dispose();({...motionProbe,dispose:undefined})`);
+        const pacing=samples=>{
+          const intervals=samples.slice(1).map((s,i)=>s.at-samples[i].at).sort((a,b)=>a-b);
+          return {count:samples.length,spanMs:samples.at(-1).at-samples[0].at,
+            median:intervals[Math.floor(intervals.length*.5)],p95:intervals[Math.floor(intervals.length*.95)],
+            max:intervals.at(-1)};
+        };
+        const commands=pacing(motion.commands),renders=pacing(motion.renders);
+        const yaw=motion.commands.slice(1).map((s,i)=>{
+          const prior=motion.commands[i],delta=((s.bearing-prior.bearing+540)%360+360)%360-180;
+          return Math.abs(delta)/((s.at-prior.at)/1000);
+        });
+        const proofIntervals=motion.proofs.slice(1).map((p,i)=>p.at-motion.proofs[i].at);
+        const finalState=await state();
+        const profileGapM=Math.max(...motion.renders.map(r=>Math.abs(r.profileFraction*finalState.distance-r.distanceM)));
+        console.log('ACTUAL MOTION:',JSON.stringify({label,route,commands,renders,
+          maxYawRate:Math.max(...yaw),maxRiderGapM:Math.max(...motion.renders.map(r=>r.riderGap)),
+          maxRiderGapPx:Math.max(...motion.renders.map(r=>r.riderGapPx)),
+          maxProfileGapM:profileGapM,
+          proofs:motion.proofs.length,minProofMs:Math.min(...proofIntervals),statusChanges:motion.statusChanges}));
+        for(const p of [commands,renders]){
+          assert.ok(p.spanMs>=30000,'At least 30s of actual changing camera/rendered centers');
+          assert.ok(p.median<=33,JSON.stringify(p));
+          assert.ok(p.p95<=50,JSON.stringify(p));
+          assert.ok(p.count>900,'Not 5Hz poses on a 60Hz display');
+        }
+        // Terrain-adjusted Mapbox centers are not bit-identical coordinates.
+        // Use the existing visible registration bound, not a new centimetre
+        // requirement; retain metres in the evidence rather than hiding drift.
+        assert.ok(Math.max(...motion.renders.map(r=>r.riderGapPx))<2,'Rider stays registered to rendered center');
+        assert.ok(profileGapM<1e-6,'Actual profile and rendered rider use the same distance, not separate clocks');
+        assert.ok(Math.max(...yaw)<13,'Bounded actual yaw, allowing timestamp instrumentation jitter');
+        assert.ok(Math.min(...proofIntervals)>=199.9,'Proof is throttled, not the pose');
+        assert.ok(motion.proofs.some(p=>p.ok && p.road && p.aligned && p.clear),'Actual road/clearance proof');
+        assert.equal(finalState.proof.current,true);
+        assert.equal(finalState.proof.distanceM,finalState.distance,'Finish proof is for the exact endpoint, not the last moving pose');
+        assert.equal(await b.js(`observedTerrain.getCenter().distanceTo(mapboxgl.LngLat.convert(
+          observedTerrain.getSource('route')._data.geometry.coordinates.at(-1)))<.01`),true,'Exact rendered source endpoint');
         console.log('SEQUENCE ROUTE:',JSON.stringify({label,route,elapsedMs:Date.now()-start,...result,...await state()}));
         assert.equal(result.hidden,0);assert.equal(result.fallback,0);
         assert.equal(result.minPitch,45);assert.equal(result.maxPitch,45);
-      }
-      if(label==='phone') {
-        await b.js(`document.getElementById('play').click()`);
-        await sleep(500);
       }
       await offRiderPan(b,width,height);
       await sleep(3500);
@@ -175,6 +241,7 @@ test('live fractional-DPR terrain remains verified through resize and playback',
     visible:getComputedStyle(document.getElementById('terrain')).visibility,
     pitch:observedTerrain.getPitch()
   })`);
+  await until(async()=>{const s=await state();return s.proof.ok && s.proof.current;});
   const initial=await state();
   assert.deepEqual(initial.painter,[468.75,1015]);
   assert.deepEqual(initial.depth,[469,1015]);
@@ -187,7 +254,7 @@ test('live fractional-DPR terrain remains verified through resize and playback',
     await until(async()=>{
       const s=await state();
       return s.painter[0]===width*dpr && s.painter[1]===height*dpr &&
-        s.depth[0]===Math.ceil(width*dpr) && s.depth[1]===Math.ceil(height*dpr) && s.proof.ok;
+        s.depth[0]===Math.ceil(width*dpr) && s.depth[1]===Math.ceil(height*dpr) && s.proof.ok && s.proof.current;
     });
     const current=await state();
     assert.deepEqual(current.depth,[Math.ceil(width*dpr),Math.ceil(height*dpr)]);
@@ -200,7 +267,7 @@ test('live fractional-DPR terrain remains verified through resize and playback',
   await b.js(`observedTerrain.resize();document.getElementById('play').click();void 0`);
   await sleep(4000); // Longer than the unchanged 2.5s coverage deadline.
   await b.js(`document.getElementById('play').click()`);
-  await until(async()=>(await state()).proof.ok);
+  await until(async()=>{const s=await state();return s.proof.ok && s.proof.current;});
   const final=await state();
   assert.equal(final.visible,'visible');
   assert.equal(final.pitch,45);
@@ -312,7 +379,8 @@ test('complete normal-speed Grappa terrain playback at desktop and phone sizes',
       }
       // Pause flushes the last throttled snapshot. Wait for its actual render,
       // not a stale proof or the interval between invalidation and repaint.
-      await until(()=>b.js(`JSON.parse(document.getElementById('terrain').dataset.frame||'{}').ok===true`));
+      await until(()=>b.js(`JSON.parse(document.getElementById('terrain').dataset.frame||'{}').ok===true &&
+        JSON.parse(document.getElementById('terrain').dataset.frame||'{}').current`));
       await b.js(`cancelAnimationFrame(fullProbe.raf)`);
       const observation=await b.js(`({...fullProbe,raf:undefined,
         progress:document.getElementById('progress').textContent,

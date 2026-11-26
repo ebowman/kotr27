@@ -251,7 +251,8 @@ async function stableCanvas(f) {
     function check() {
       const s=pointerProbe.sample();
       const ready=s.hitCanvas && s.canvas.connected && s.canvas.visibility==='visible' &&
-        s.containerVisibility==='visible' && s.render.status==='ready' && s.render.proof?.ok && !s.render.moving;
+        s.containerVisibility==='visible' && s.render.status==='ready' && s.render.proof?.ok &&
+        s.render.proof.current && !s.render.moving;
       const key=ready?JSON.stringify([s.rect,s.scroll.x,s.scroll.y,s.viewport]):null;
       if(key!==null && key===previous) {clearTimeout(deadline);resolve(s);return;}
       if(s.render.status==='unavailable') {clearTimeout(deadline);resolve({error:'Terrain unavailable',last:s});return;}
@@ -339,7 +340,7 @@ test('native focus refresh retains terrain but invalidates stale proof before a 
   const negative=await f.evaluate(`new Promise((resolve,reject)=>{
     const container=document.getElementById('official-terrain');
     const observer=new MutationObserver(()=>{
-      if(container.dataset.frame)return;
+      if(JSON.parse(container.dataset.frame||'{}').current!==false)return;
       const hit=pointerProbe.sample(${JSON.stringify(old.point)});
       observer.disconnect();clearTimeout(deadline);resolve(hit);
     });
@@ -352,8 +353,8 @@ test('native focus refresh retains terrain but invalidates stale proof before a 
   assert.equal(negative.containerVisibility,'visible');
   assert.deepEqual(negative.rect,old.rect,'Revalidation does not change hit geometry.');
   assert.equal(negative.scroll.y,old.scroll.y);
-  assert.equal(negative.render.status,'verifying','A visible canvas alone cannot authorize verified native input.');
-  assert.equal(negative.render.proof,null,'A previous frame cannot qualify the new camera update.');
+  assert.equal(negative.render.status,'ready','Pose invalidation alone must not chatter ready/verifying.');
+  assert.equal(negative.render.proof.current,false,'A previous frame cannot qualify the new camera update.');
   const updates=await f.js('pointerProbe.updates');
   assert.ok(updates.some(e=>e.stack.includes('local-routes-view') && e.stack.includes('route-terrain-view')));
   assert.equal(await f.js('pointerProbe.events.length'),0,'No mouse input before the actual canvas is hittable.');
@@ -373,7 +374,8 @@ test('native same-preset reselection and refinements reconcile manual UI with th
   await f.js(`window.fixtureHeight=${(await f.snapshot()).position.rawElevationM}`);
   await nativeClick(f,'flyover-enable');
   const painted=()=>until(()=>f.js(`document.getElementById('official-terrain').style.visibility==='visible' &&
-    document.getElementById('route-flyover').dataset.status==='ready' && !nativeMap.isMoving()`));
+    document.getElementById('route-flyover').dataset.status==='ready' &&
+    JSON.parse(document.getElementById('official-terrain').dataset.frame||'{}').current && !nativeMap.isMoving()`));
   await painted();
   const camera=()=>f.js(`({lng:nativeMap.getCenter().lng,lat:nativeMap.getCenter().lat,
     pitch:nativeMap.getPitch(),zoom:nativeMap.getZoom(),bearing:nativeMap.getBearing()})`);
@@ -459,7 +461,8 @@ test('native Chrome real WebGL: cold steep/bendy/long route frames, manual, cont
     for(const mode of ['follow','overview','side','cinematic']) {
       await f.js(`document.getElementById('flyover-${mode}').click()`);
       await until(()=>f.js(`(document.getElementById('route-flyover').dataset.status==='ready' &&
-        JSON.parse(document.getElementById('official-terrain').dataset.frame || '{}').ok === true) ||
+        JSON.parse(document.getElementById('official-terrain').dataset.frame || '{}').ok === true &&
+        JSON.parse(document.getElementById('official-terrain').dataset.frame || '{}').current) ||
         document.getElementById('route-flyover').dataset.status==='unavailable'`));
       assert.equal(await f.js(`document.getElementById('route-flyover').dataset.status`),'ready',
         await f.js(`JSON.stringify({text:document.getElementById('flyover-status').textContent,frame:document.getElementById('official-terrain').dataset.frame,requests:document.getElementById('official-terrain').dataset.requests})`));
@@ -589,7 +592,12 @@ test('native ridge may occlude the rider in manual mode but return restores stri
     document.getElementById('route-flyover').dataset.status==='ready'`));
   await new Promise(resolve=>setTimeout(resolve,3500));
   const manual=await f.js(`JSON.parse(document.getElementById('official-terrain').dataset.frame)`);
-  assert.deepEqual(manual,{mode:'manual',imagery:true,elevation:true,depth:true,ok:true});
+  const {at,sequence,renderSequence,proofSequence,distanceM,geometrySha256,current,...facts}=manual;
+  assert.deepEqual(facts,{mode:'manual',imagery:true,elevation:true,depth:true,ok:true});
+  assert.equal(current,true);
+  assert.ok([at,sequence,renderSequence,proofSequence].every(n=>Number.isFinite(n) && n>0));
+  assert.equal(distanceM,before.distanceM);
+  assert.equal(geometrySha256,before.identity.geometrySha256);
   await f.js(`document.getElementById('flyover-return').click()`);
   await until(()=>f.js(`JSON.parse(document.getElementById('official-terrain').dataset.frame||'{}').mode==='follow'`));
   assert.equal(await f.js(`JSON.parse(document.getElementById('official-terrain').dataset.frame).clear`),false);

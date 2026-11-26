@@ -1,4 +1,5 @@
-// Camera geometry and paint proof. No clock, network or route-state mutation.
+// Camera geometry, bounded presentation interpolation and paint proof.
+// No playback integration, network or route-state mutation.
 import { positionAt } from './route-analysis.mjs';
 
 export const cameraJobs = Object.freeze([
@@ -11,6 +12,36 @@ export const flyoverLimits = Object.freeze({vertices:2048, tileRequests:240, til
   frameMs:200, loadMs:12000, coverageMs:2500, maxZoom:13, maxPitch:55,maxPixels:4000000});
 export const followMotion = Object.freeze({behindM:1500,aheadM:2500,yawDegreesPerSecond:12});
 export const shortestAngle = (from,to)=>((to-from+540)%360+360)%360-180;
+// Dense controllers already supply one route position per frame: preserve that
+// exact shared position. Sparse controllers can present between KNOWN targets,
+// never extrapolate a velocity. onPresent in the adapter exposes this same
+// distance to linked projections. Gaps/commands flush rather than catch up.
+export function createRoutePresentation(analysis) {
+  let target, shown, start, at, duration=0;
+  return {
+    push(snapshot,now,reset=false) {
+      const gap=now-at;
+      const continuous=!reset && target?.phase==='playing' && snapshot.phase==='playing' &&
+        !snapshot.reducedMotion && !snapshot.hidden &&
+        target.cameraMode===snapshot.cameraMode &&
+        target.identity?.revisionId===snapshot.identity?.revisionId &&
+        target.identity?.geometrySha256===snapshot.identity?.geometrySha256 &&
+        snapshot.distanceM>=target.distanceM && snapshot.distanceM<analysis.distanceM &&
+        gap>50 && gap<=250;
+      start=this.sample(now) ?? snapshot;
+      target=snapshot;at=now;duration=continuous ? gap : 0;
+      return this.sample(now);
+    },
+    sample(now) {
+      if (!target) return;
+      const fraction=duration ? Math.max(0,Math.min(1,(now-at)/duration)) : 1;
+      const distanceM=start.distanceM+(target.distanceM-start.distanceM)*fraction;
+      shown=fraction===1 ? target : {...target,distanceM,position:positionAt(analysis,distanceM)};
+      return shown;
+    },
+    pending:now=>duration>0 && now<at+duration,
+  };
+}
 // This is an update filter, not another playback clock. Explicit framing
 // commands reset it; suspended time cannot be accumulated into a large turn.
 export function followBearing(target,prior,elapsedMs) {
