@@ -25,7 +25,20 @@ async function offRiderPan(b,width,height) {
     bubbles:true,clientX:${x}+960,clientY:${y},button:0}))`);
 }
 
-test('Grappa and Asolo full continuous motion then off-rider manual pan zoom and return; desktop and phone',async t=>{
+async function steadyTraversal(b) {
+  // Real reviewed model at the supported 60× rate, not the retired 90s movie.
+  await b.js(`document.getElementById('ride-mode').value='explore';
+    document.getElementById('ride-mode').dispatchEvent(new Event('change'));
+    document.getElementById('playback-rate').value='60';
+    document.getElementById('playback-rate').dispatchEvent(new Event('change'));`);
+  const remaining=await b.js(`document.getElementById('ride-remaining').textContent`);
+  const parts=remaining.match(/^(\d+):(\d+):(\d+) remaining$/);
+  assert.ok(parts,remaining);
+  const seconds=Number(parts[1])*3600+Number(parts[2])*60+Number(parts[3]);
+  return Math.ceil(seconds/60*1000)+30000;
+}
+
+test('Grappa and Asolo full modeled 60× motion then off-rider manual pan zoom and return; desktop and phone',async t=>{
   const server=await previewServer(0);
   t.after(()=>{server.closeAllConnections();server.close();});
   for(const [label,width,height] of [['desktop',1440,900],['phone',375,812]]) {
@@ -76,6 +89,7 @@ test('Grappa and Asolo full continuous motion then off-rider manual pan zoom and
           await ready();
           assert.equal(await b.js(`maps[0]._removed`),true,'Route switch disposes the old map');
         }
+        const traversalMs=await steadyTraversal(b);
         await b.js(`(()=>{
           window.sequenceProbe={hidden:0,fallback:0,valid:0,invalid:0,maxRequests:0,minPitch:90,maxPitch:0};
           const m=observedTerrain,t=document.getElementById('terrain'),start=performance.now();
@@ -122,13 +136,13 @@ test('Grappa and Asolo full continuous motion then off-rider manual pan zoom and
         })()`);
         const start=Date.now();
         {
-          while(Date.now()-start<115000) {
+          while(Date.now()-start<traversalMs) {
             await sleep(250);
             const s=await state();
             assert.equal(s.online,true,JSON.stringify(s));
             if(!s.playing && s.progress==='1000')break;
           }
-          assert.equal((await state()).progress,'1000','Full normal-speed route, not a seek');
+          assert.equal((await state()).progress,'1000','Full modeled steady route at 60× ride time, not a seek');
         }
         await ready();
         const result=await b.js(`cancelAnimationFrame(sequenceProbe.raf);({...sequenceProbe,raf:undefined})`);
@@ -271,14 +285,15 @@ test('live fractional-DPR terrain remains verified through resize and playback',
   const final=await state();
   assert.equal(final.visible,'visible');
   assert.equal(final.pitch,45);
-  assert.ok(await b.js(`parseFloat(document.getElementById('progress').textContent)>2`));
+  assert.ok(await b.js(`Number(document.getElementById('cockpit').dataset.distance)>0`),
+    'Actual physics-backed travel at default 16×, not the retired >2km/4s geometry movie');
   console.log('FRACTIONAL DPR after 4s playback:',JSON.stringify(final));
   await b.js(`document.getElementById('back').click()`);
   assert.equal(await b.js(`document.querySelectorAll('#terrain canvas').length`),0);
   assert.deepEqual(b.exceptions,[]);
 });
 
-test('complete normal-speed Grappa terrain playback at desktop and phone sizes',async t=>{
+test('complete modeled steady 60× Grappa terrain playback at desktop and phone sizes',async t=>{
   const server=await previewServer(0);
   t.after(()=>{server.closeAllConnections();server.close();});
   const evidence=process.env.RIDER_FIRST_EVIDENCE_DIR;
@@ -318,6 +333,7 @@ test('complete normal-speed Grappa terrain playback at desktop and phone sizes',
       }
       assert.equal(await b.js(`JSON.parse(document.getElementById('terrain').dataset.frame||'{}').ok`),true,
         'Live provider must actually qualify; unavailable is a block, not a pass');
+      const traversalMs=await steadyTraversal(b);
       await b.js(`(()=>{
         const terrain=document.getElementById('terrain');
         const p=window.fullProbe={frames:0,hidden:0,fallback:0,valid:0,invalid:0,
@@ -362,7 +378,7 @@ test('complete normal-speed Grappa terrain playback at desktop and phone sizes',
       })()`);
       const start=Date.now(),captured=new Set();
       let completed=false;
-      while(Date.now()-start<115000) {
+      while(Date.now()-start<traversalMs) {
         await sleep(250);
         const state=await b.js(`({distance:Number(document.getElementById('terrain').dataset.distance),
           fallback:fullProbe.fallback,playing:document.getElementById('play').getAttribute('aria-label')==='Pause route preview',
@@ -393,7 +409,7 @@ test('complete normal-speed Grappa terrain playback at desktop and phone sizes',
         responses:responses.length,statuses:[...new Set(responses.map(r=>r.host+':'+r.status))],bytes,providerBytes,failures};
       console.log('COMPLETE LIVE GRAPPA:',JSON.stringify({...result,checkpoints:result.checkpoints.length}));
       if(evidence)await writeFile(resolve(evidence,`${label}-full.json`),JSON.stringify(result,null,2)+'\n');
-      assert.equal(completed,true,'Actual normal-speed preview must reach the finish');
+      assert.equal(completed,true,'Actual modeled steady 60× playback must reach the finish');
       assert.equal(observation.hidden,0);
       assert.equal(observation.fallback,0);
       assert.ok(observation.valid>100);

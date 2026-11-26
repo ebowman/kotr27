@@ -2,6 +2,7 @@ import { loadRouteAnalysis } from '../../js/route-analysis-loader.mjs';
 import { positionAt } from '../../js/route-analysis.mjs';
 import { verifyAsset } from '../../js/route-catalog.mjs';
 import { validatePackPointer, validateRoutePack } from '../../js/route-pack-contract.mjs';
+import { createRideSimulation, createSimulationScheduler, rideRiderFromInput, exampleDrivetrain } from '../../js/ride-simulation.mjs';
 
 const $ = id => document.getElementById(id);
 const NS = 'http://www.w3.org/2000/svg';
@@ -20,8 +21,27 @@ const names = {
 const params = new URLSearchParams(location.search);
 document.body.classList.toggle('long-name',params.get('layout') === 'long-name');
 const reduced = matchMedia('(prefers-reduced-motion: reduce)');
+// Both sheets share the space between the live header/status and playbar.
+// Enlarged text can make the cockpit too tall to anchor Profile above it.
+const bar = document.querySelector('.playbar'), credit = document.querySelector('.player-credit');
+function layoutSheets() {
+  const headerBottom = Math.max(document.querySelector('.player-header').getBoundingClientRect().bottom,
+    document.querySelector('.player-status').getBoundingClientRect().bottom);
+  document.querySelector('.player-bottom').style.setProperty('--playbar-clearance',
+    `${bar.getBoundingClientRect().height+credit.getBoundingClientRect().height+8}px`);
+  document.querySelector('.player-bottom').style.setProperty('--sheet-max-height',
+    `${Math.max(0,bar.getBoundingClientRect().top-headerBottom-16)}px`);
+  $('player').style.setProperty('--terrain-controls-top',
+    `${document.querySelector('.player-status').getBoundingClientRect().bottom+8}px`);
+}
+const sheetLayout = new ResizeObserver(layoutSheets);
+for (const el of [bar,credit,document.querySelector('.player-header'),
+  document.querySelector('.player-status'),document.querySelector('.player-bottom'),$('player')])
+  sheetLayout.observe(el);
 let pack, selected, analysis, inPlayer = false, playing = false, distance = 0;
-let generation = 0, terrainController, terrainHandle, lastTime, frame, projection;
+let generation = 0, routeController, terrainController, terrainHandle, frame, projection;
+let simulation, scheduler, pendingGear, pendingHistory, notice = '';
+let mode = 'experiment';
 let terrainReady = false;
 let manual = false;
 const returnRider = document.createElement('button');
@@ -40,11 +60,12 @@ const format = n => new Intl.NumberFormat('en-GB').format(Math.round(n));
 // Release tooling replaces it with the validated content-addressed pointer.
 const pointerURL = new URL(document.querySelector('link[title="Approved route catalog"]').href);
 const assetRoot = new URL('../',pointerURL);
-const readAsset = async path => {
+const readAsset = async (path, signal) => {
   if (!/^assets\/route-(?:pack(?:\.[a-f0-9]{24})?\.json|(?:manifest-|profile-)?[a-f0-9]{64}\.(?:json|gpx))$/.test(path))
     throw Error('Asset outside public route allowlist');
   const res = await fetch(new URL(path,assetRoot), {
-    credentials:'omit',referrerPolicy:'no-referrer',redirect:'error',signal:AbortSignal.timeout(15000),
+    credentials:'omit',referrerPolicy:'no-referrer',redirect:'error',
+    signal:signal ? AbortSignal.any([signal,AbortSignal.timeout(15000)]) : AbortSignal.timeout(15000),
   });
   if (!res.ok) throw Error('Cleared route asset unavailable');
   const bytes = new Uint8Array(await res.arrayBuffer());
@@ -102,8 +123,97 @@ function drawMap(svg, rider = false) {
   $('peak-label').textContent = `${format(peak.elevationM)} m`;
 }
 function snapshot() {
-  return {identity:analysis.identity,position:positionAt(analysis,distance),distanceM:distance,
+  return {...(simulation?.status === 'available' ? simulation.snapshot() : {}),
+    identity:analysis.identity,position:positionAt(analysis,distance),distanceM:distance,
     phase:playing?'playing':'paused',cameraMode:camera};
+}
+const text = (id, value) => {if ($(id).textContent !== value) $(id).textContent = value;};
+const pressed = (button, value) => {
+  const next = String(value);
+  if (button.getAttribute('aria-pressed') !== next) button.setAttribute('aria-pressed',next);
+};
+const duration = seconds => {
+  if (seconds === null || seconds === undefined) return '—';
+  const minutes = Math.floor(seconds/60);
+  return `${Math.floor(minutes/60)}:${String(minutes%60).padStart(2,'0')}:${String(Math.floor(seconds%60)).padStart(2,'0')}`;
+};
+function renderCockpit() {
+  const available = simulation?.status === 'available';
+  const s = available ? simulation.snapshot() : null;
+  const interactive = available && mode === 'experiment' && s.motion !== 'finished';
+  $('seek').disabled = !analysis;$('restart').disabled = !analysis;
+  $('play').disabled = !available || (s.motion === 'finished' && s.trialOriginM === analysis.distanceM);
+  for (const button of document.querySelectorAll('[data-effort], #coast, #gear-easier, #gear-harder'))
+    button.disabled = !interactive;
+  if (pendingHistory !== undefined && s?.historyLength > pendingHistory) {
+    pendingHistory = undefined;pendingGear = undefined;
+  }
+  $('cockpit').dataset.status = available ? 'available' : 'unavailable';
+  $('cockpit').dataset.motion = s?.motion || 'unavailable';
+  $('cockpit').dataset.seconds = s?.simulationSeconds ?? '';
+  $('cockpit').dataset.origin = s?.trialOriginM ?? '';
+  $('cockpit').dataset.history = s?.historyLength ?? '';
+  text('ride-speed', s ? (s.speedMps*3.6).toFixed(1) : '—');
+  text('ride-power', s ? `${Math.round(s.pedalPowerW)} W` : '—');
+  text('ride-effort', s ? `${Math.round(s.effortFraction*100)}% FTP target` : 'Unavailable');
+  text('ride-grade', s ? `${(s.grade*100).toFixed(1)}%` : '—');
+  text('ride-gear', s ? `${s.gear.frontTeeth}×${s.gear.rearTeeth}` : '—');
+  text('ride-cadence', s ? `${Math.round(s.cadenceRpm)} rpm` : '— rpm');
+  text('ride-elapsed', s ? `${mode === 'experiment' ? 'Trial' : 'Elapsed'} ${duration(s.simulationSeconds)}` : 'Estimates unavailable');
+  text('ride-remaining', s ? (s.remainingSeconds === null ? 'ETA unknown · live choices' :
+    `${duration(s.remainingSeconds)} remaining`) : 'Profile & seek still available');
+  text('model-provenance', s ? `${mode === 'experiment' ? 'Experiment' : 'Explore · Steady'} · ${
+    s.provenance.telemetry === 'example-model' ? 'Example model' : 'Personal inputs · model'}` : 'Model unavailable');
+  text('rider-errors', available ? '' : simulation?.unavailableReasons?.join(' ') || '');
+  text('rider-assumptions', s ? `Rider ${s.assumptions.riderKg} kg · FTP ${s.assumptions.ftpW} W · bike + kit ${s.assumptions.bikeKitKg} kg. ${
+    s.assumptions.defaultedInputs.length ? 'Example fields: '+s.assumptions.defaultedInputs.map(k=>({riderKg:'rider mass',ftpW:'FTP',bikeKitKg:'bike + kit'}[k])).join(', ')+'.' : 'All three inputs supplied.'}` : 'Correct inputs to restore estimates; geometry is unchanged.');
+  text('drivetrain-assumptions', `Example drivetrain: ${exampleDrivetrain.frontTeeth.join('/')} rings, ${
+    exampleDrivetrain.rearTeeth.join('/')} cassette, ${exampleDrivetrain.circumferenceM} m wheel. Gears change cadence, not speed. Grade is processed from the route, not a live measurement.`);
+  text('physics-assumptions', s ? `Assumed still air, CdA ${s.assumptions.dragAreaM2} m², rolling coefficient ${
+    s.assumptions.rollingCoefficient}, drivetrain efficiency ${s.assumptions.drivetrainEfficiency*100}%. A ${
+    s.assumptions.speedCapMps*3.6} km/h model cap is not a safe descent speed. Delivered power can be below your FTP target at the cap.` :
+    'No riding estimates until the route and inputs are within the shared model’s supported range.');
+  for (const button of document.querySelectorAll('[data-effort]'))
+    pressed(button,!!s && s.effortFraction === Number(button.dataset.effort));
+  pressed($('coast'),!!s?.coast);
+  text('ride-notice', !available ? (simulation?.unavailableReasons?.join(' ') || 'Loading model…') :
+    pendingHistory !== undefined ? 'Pending · applies at the next model step when playing.' :
+    s.motion === 'finished' ? 'Finished · exact route endpoint. Restart trial or seek.' :
+    s.motion === 'stalled' ? 'Stalled · choose an effort to resume. No-momentum model.' :
+    notice || (playing ? 'Playing' : 'Paused'));
+}
+function buildModel(originM = distance) {
+  pendingGear = undefined;pendingHistory = undefined;
+  scheduler = undefined;simulation = undefined;
+  if (!analysis) return;
+  const rider = rideRiderFromInput({mass:$('rider-mass').value,enteredUnit:'kg',ftp:$('rider-ftp').value});
+  if (rider.status !== 'available') simulation = rider;
+  else {
+    const bike = $('rider-bike').value.trim();
+    // Keep an invalid numeric value invalid; never drop it into example defaults.
+    const bikeKitKg = /^(?:\d+(?:\.\d*)?|\.\d+)$/.test(bike) ? Number(bike) : NaN;
+    simulation = createRideSimulation({analysis,mode,originM,rider:{
+      ...rider.rider,...(bike === '' ? {} : {bikeKitKg}),
+    }});
+  }
+  if (simulation.status === 'available') {
+    scheduler = createSimulationScheduler(simulation,{rate:Number($('playback-rate').value)});
+    distance = simulation.snapshot().distanceM;
+  }
+  for (const [id,field] of [['rider-mass','mass'],['rider-ftp','ftp']]) {
+    $(id).setAttribute('aria-invalid',String(rider.issues?.some(issue=>issue.field === field) || false));
+    $(id).setAttribute('aria-describedby','rider-errors');
+  }
+  $('rider-bike').setAttribute('aria-invalid',String(simulation.issues?.some(issue=>issue.message.includes('bikeKitKg')) || false));
+  $('rider-bike').setAttribute('aria-describedby','rider-errors');
+  renderCockpit();
+}
+function command(action) {
+  if (simulation?.status !== 'available' || mode !== 'experiment') return;
+  pendingHistory ??= simulation.snapshot().historyLength;
+  simulation.command(action);
+  if (action.type === 'gear') pendingGear = action.value;
+  notice = '';renderCockpit();
 }
 function updatePosition(force = false) {
   if (!analysis) return;
@@ -118,27 +228,35 @@ function updatePosition(force = false) {
   $('position').value = `${(distance/1000).toFixed(1)} km`;
   $('height').value = `${format(p.rawElevationM)} m`;
   $('progress').textContent = `${(distance/1000).toFixed(1)} km`;
+  $('cockpit').dataset.distance = String(distance);
   terrainHandle?.update(snapshot(),force);
 }
 function pause() {
-  playing = false;cancelAnimationFrame(frame);lastTime = undefined;
+  scheduler?.pause();
+  playing = false;cancelAnimationFrame(frame);
   $('play').innerHTML = '▶ <span>Play</span>';
   $('play').setAttribute('aria-label','Play route preview');
-  // Flush the last throttled playing snapshot without recentering a manual map.
-  if (analysis && inPlayer) terrainHandle?.update(snapshot());
+  if (simulation?.status === 'available') distance = simulation.snapshot().distanceM;
+  // Flush the exact model boundary to every surface, without recentering a manual map.
+  if (analysis) {updatePosition();renderCockpit();}
   if (terrainReady) $('terrain-status').textContent = manual ?
     'Manual exploration · paused' : 'Satellite terrain · paused';
 }
 function tick(time) {
   if (!playing || !inPlayer) return;
-  if (lastTime !== undefined) distance = Math.min(analysis.distanceM,distance+Math.min(time-lastTime,100)*analysis.distanceM/90000);
-  lastTime = time;
-  updatePosition();
-  if (distance >= analysis.distanceM) pause();
+  const {previous,current,alpha,notice:late} = scheduler.frame(time);
+  // Interpolate only the adjacent fixed model steps, never extrapolate using
+  // watts, speed or a second travel clock. All spatial consumers use this value.
+  distance = current.phase === 'playing' ?
+    previous.distanceM+(current.distanceM-previous.distanceM)*alpha : current.distanceM;
+  updatePosition();renderCockpit();
+  if (late) notice = 'Playback paused after a late frame. Press Play to continue; no catch-up.';
+  if (current.phase !== 'playing') pause();
   else frame = requestAnimationFrame(tick);
 }
 function stopTerrain() {
   terrainReady = false;
+  $('camera').disabled = true;
   manual = false;returnRider.hidden = true;
   $('player').classList.remove('online');
   terrainController?.abort();terrainController = undefined;
@@ -177,6 +295,7 @@ async function terrain() {
         if (controller.signal.aborted) return;
         if (state === 'ready') {
           clearTimeout(deadline);terrainReady = true;$('player').classList.add('online');
+          $('camera').disabled = false;
           status(manual ? 'Manual exploration · paused' :
             playing ? 'Satellite terrain · preview playback' : 'Satellite terrain · paused');
         }
@@ -187,6 +306,7 @@ async function terrain() {
         if (state === 'unavailable') {
           clearTimeout(deadline);
           terrainReady = false;$('player').classList.remove('online');
+          $('camera').disabled = true;
           manual = false;returnRider.hidden = true;
           status(`Terrain unavailable · ${reason} · 2D route preview`);
         }
@@ -195,6 +315,7 @@ async function terrain() {
     if (controller.signal.aborted) handle?.dispose();
     else terrainHandle = handle;
   } catch {
+    if (controller.signal.aborted || terrainController !== controller) return;
     status('Terrain unavailable · 2D route preview');
     stopTerrain();
   }
@@ -202,18 +323,25 @@ async function terrain() {
 async function choose(id) {
   const request = ++generation;
   pause();stopTerrain();
-  analysis = null;selected = id;
+  routeController?.abort();
+  const controller = new AbortController();routeController = controller;
+  analysis = null;selected = id;distance = 0;
+  simulation = undefined;scheduler = undefined;
+  renderCockpit();
+  text('progress','—');
   $('fly').disabled = true;$('play').disabled = true;
   $('load-status').textContent = 'Loading the cleared route…';
   if (inPlayer) $('terrain-status').textContent = 'Loading selected route…';
   try {
     const summary = pack.routes.find(r=>r.routeId===id);
     if (!summary || withdrawn.has(id)) throw Error('Unavailable preview route');
-    if (!cache.has(id)) cache.set(id,loadRouteAnalysis({pack,routeId:id,revisionId:summary.revisionId,readAsset}));
-    const next = await cache.get(id);
+    const next = cache.get(id) || await loadRouteAnalysis({pack,routeId:id,revisionId:summary.revisionId,
+      readAsset:path=>readAsset(path,controller.signal)});
     if (request !== generation || withdrawn.has(id)) return;
     if (next.status !== 'supported') throw Error('Route analysis unavailable');
+    cache.set(id,next);
     selected = id;analysis = next;distance = 0;
+    notice = '';buildModel(0);
     const groupIndex = groups.findIndex(g=>g.routes.includes(id)), group = groups[groupIndex];
     $('landing-route').value = groupIndex;
     $('player-route').value = id;
@@ -239,10 +367,12 @@ async function choose(id) {
     profile($('landing-profile'),70);profile($('player-profile'),100);
     updatePosition();
     $('load-status').textContent = '';
-    $('fly').disabled = false;$('play').disabled = false;$('landing-route').disabled = false;
+    $('fly').disabled = false;$('landing-route').disabled = false;
     if (inPlayer) void terrain();
   } catch {
     if (request !== generation) return;
+    simulation = {status:'unavailable',unavailableReasons:['Selected route unavailable. Choose another route or return to Routes.']};
+    renderCockpit();
     $('load-status').textContent = 'Route unavailable. Reload to try this public preview again.';
     $('terrain-status').textContent = 'Selected route unavailable · return to Routes';
     // Never let an old route stand in for the failed requested selection.
@@ -261,6 +391,7 @@ async function enter() {
   if (!analysis) return;
   inPlayer = true;$('landing').hidden = true;$('player').hidden = false;
   document.body.style.overflow = 'hidden';
+  layoutSheets();
   $('back').focus({preventScroll:true});
   await terrain();
 }
@@ -277,8 +408,12 @@ $('landing-route').addEventListener('change',e=>choose(groups[Number(e.target.va
 $('player-route').addEventListener('change',e=>choose(e.target.value));
 $('play').addEventListener('click',()=>{
   if (playing) {pause();return;}
-  if (distance >= analysis.distanceM) distance = 0;
+  if (!scheduler) return;
+  if (distance >= analysis.distanceM) {
+    distance = simulation.restart().distanceM;pendingHistory = undefined;pendingGear = undefined;
+  }
   if (manual) followRider();
+  notice = '';scheduler.play();
   playing = true;$('play').innerHTML = 'Ⅱ <span>Pause</span>';
   if (terrainReady) $('terrain-status').textContent = 'Satellite terrain · preview playback';
   $('play').setAttribute('aria-label','Pause route preview');
@@ -286,7 +421,12 @@ $('play').addEventListener('click',()=>{
 });
 $('seek').addEventListener('input',e=>{
   if (!analysis) return;
-  pause();distance = Number(e.target.value)/1000*analysis.distanceM;updatePosition(true);
+  const target = Number(e.target.value)/1000*analysis.distanceM;
+  pause();distance = target;
+  if (simulation?.status === 'available') simulation.seek(distance);
+  pendingHistory = undefined;pendingGear = undefined;
+  notice = mode === 'experiment' ? 'New trial here · elapsed and work reset. Paused.' : 'Steady arrival time · paused.';
+  updatePosition(true);renderCockpit();
 });
 for (const [button,panel,otherButton,otherPanel] of [
   ['profile-toggle','profile-panel','tools-toggle','tools-panel'],
@@ -295,11 +435,54 @@ for (const [button,panel,otherButton,otherPanel] of [
   $(panel).hidden = !$(panel).hidden;
   $(button).setAttribute('aria-expanded',String(!$(panel).hidden));
   $(otherPanel).hidden = true;$(otherButton).setAttribute('aria-expanded','false');
+  layoutSheets();
+  if (!$(panel).hidden) $(panel === 'profile-panel' ? 'seek' : 'tools-close').focus({preventScroll:true});
 });
-$('camera').addEventListener('change',e=>{camera=e.target.value;updatePosition(true);});
+$('tools-close').addEventListener('click',()=>{
+  $('tools-panel').hidden = true;$('tools-toggle').setAttribute('aria-expanded','false');$('tools-toggle').focus();
+});
+$('camera').addEventListener('change',e=>{pause();camera=e.target.value;updatePosition(true);});
 $('offline').checked = params.get('terrain') === 'off';
 $('offline').addEventListener('change',()=>{pause();void terrain();});
-$('restart').addEventListener('click',()=>{pause();distance=0;updatePosition(true);});
+$('restart').addEventListener('click',()=>{
+  pause();
+  distance = simulation?.status === 'available' ? simulation.restart().distanceM : 0;
+  pendingHistory = undefined;pendingGear = undefined;
+  notice = 'Restarted at trial origin · paused.';updatePosition(true);renderCockpit();
+});
+$('playback-rate').addEventListener('change',()=>{
+  pause();scheduler?.setRate(Number($('playback-rate').value));
+  notice = 'Playback rate changed · paused. Riding speed is unchanged.';renderCockpit();
+});
+$('ride-mode').addEventListener('change',e=>{
+  pause();mode = e.target.value;notice = 'Mode changed · new model, paused.';
+  buildModel();updatePosition(true);
+});
+for (const button of document.querySelectorAll('[data-effort]'))
+  button.addEventListener('click',()=>command({type:'effort',value:Number(button.dataset.effort)}));
+$('coast').addEventListener('click',()=>command({type:'coast'}));
+// Sort only the shared example drivetrain's legal ratios. No speed/cadence solver here.
+const gears = exampleDrivetrain.frontTeeth.flatMap(frontTeeth=>
+  exampleDrivetrain.rearTeeth.map(rearTeeth=>({frontTeeth,rearTeeth})))
+  .sort((a,b)=>a.frontTeeth/a.rearTeeth-b.frontTeeth/b.rearTeeth);
+for (const [id,delta] of [['gear-easier',-1],['gear-harder',1]])
+  $(id).addEventListener('click',()=>{
+    const gear = pendingGear || simulation.snapshot().gear;
+    const i = gears.findIndex(g=>g.frontTeeth === gear.frontTeeth && g.rearTeeth === gear.rearTeeth);
+    const next = Math.max(0,Math.min(gears.length-1,i+delta));
+    if (i === next) {notice = delta < 0 ? 'Already in the easiest example gear.' : 'Already in the hardest example gear.';renderCockpit();return;}
+    command({type:'gear',value:gears[next]});
+  });
+for (const id of ['rider-mass','rider-ftp','rider-bike'])
+  $(id).addEventListener('input',()=>{
+    pause();notice = 'Inputs changed · new model here, paused. Not saved.';
+    buildModel();updatePosition(true);
+  });
+$('rider-reset').addEventListener('click',()=>{
+  pause();
+  for (const id of ['rider-mass','rider-ftp','rider-bike']) $(id).value = '';
+  notice = 'Example rider restored · new model here, paused.';buildModel();updatePosition(true);
+});
 document.addEventListener('visibilitychange',()=>{if(document.hidden)pause();});
 reduced.addEventListener('change',()=>pause());
 document.addEventListener('keydown',e=>{

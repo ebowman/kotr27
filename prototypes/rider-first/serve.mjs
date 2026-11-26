@@ -8,7 +8,8 @@ import { pathToFileURL } from 'node:url';
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const prototype = 'prototypes/rider-first/';
 const modules = ['route-analysis-loader.mjs','route-analysis.mjs','route-catalog.mjs',
-  'route-pack-contract.mjs','route-terrain-view.mjs','route-flyover.mjs','config.js'];
+  'route-pack-contract.mjs','route-terrain-view.mjs','route-flyover.mjs','config.js',
+  'ride-simulation.mjs','ascent-estimator.mjs','route-time.mjs','ride-clock.mjs','rider-scenario.mjs'];
 export async function previewServer(port = 4177) {
   const physical = await realpath(root);
   const pointer = JSON.parse(await readFile(resolve(root, 'assets/route-pack.json')));

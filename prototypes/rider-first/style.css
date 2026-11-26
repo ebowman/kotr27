@@ -1,6 +1,6 @@
 *{box-sizing:border-box}
 :root{--stone:#f2efe5;--ink:#193f34;--muted:#58695f;--green:#173c32;--ochre:#dfb767;--line:#c9cec1}
-body{margin:0;background:var(--stone);color:var(--ink);font:16px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+body{margin:0;background:var(--stone);color:var(--ink);font:1rem/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 [hidden]{display:none!important}
 button,select,input{font:inherit}
 button,select{cursor:pointer}
@@ -153,3 +153,84 @@ dialog p{margin:18px 0 24px}
   .mapboxgl-ctrl-top-right{top:135px!important;right:5px!important}
 }
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+
+/* A riding cockpit, not a second dashboard. Only the map owns the background;
+   the header and closed cockpit stay in flow even at enlarged text sizes. */
+#player{display:flex;flex-direction:column;overflow-y:auto}
+.player-header{position:relative;inset:auto;margin:16px 24px 0;flex-shrink:0}
+.player-route select{min-height:44px;font-size:1.0625rem}
+.player-route label{font-size:.625rem}
+.player-status{position:relative;inset:auto;margin:8px 24px 0;align-self:flex-start;display:grid;grid-template-columns:6px 1fr;gap:2px 9px;flex-shrink:0;max-width:calc(100% - 48px)}
+.player-status .status-dot{grid-row:1/3;align-self:center}
+#ride-notice{grid-column:2;font-size:.75rem;overflow-wrap:anywhere}
+#return-rider{grid-column:2;justify-self:start}
+.player-bottom{position:relative;inset:auto;transform:none;align-self:center;margin: auto 0 12px;flex-shrink:0;width:min(720px,calc(100% - 48px))}
+#cockpit{padding:8px 12px 0;border-radius:4px 4px 0 0}
+.telemetry{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));text-align:center;gap:8px;font-variant-numeric:tabular-nums}
+.telemetry strong{display:block;font-size:1.55rem;font-weight:550;line-height:1.2}
+.telemetry small{display:block;font-size:.7rem;color:#c7d4ca}
+.ride-context{display:flex;justify-content:space-between;gap:8px;font-size:.7rem;color:#d0dace;margin-top:3px;flex-wrap:wrap}
+#progress{margin:0;font-size:inherit}
+.ride-actions{display:grid;grid-template-columns:1fr 1fr;align-items:center;gap:10px}
+.gears{display:grid;grid-template-columns:1fr 1.4fr 1fr;align-items:center;gap:4px;font-size:.75rem}
+.gears>span{text-align:center}
+.gears>span,.gears button{min-width:0;overflow-wrap:anywhere}
+.gears button{padding:6px;min-width:64px}
+.efforts{display:flex;gap:3px}
+.efforts button{flex:1;padding:4px;font-size:.8rem;min-height:44px;border-bottom:2px solid transparent}
+.efforts small{display:block;font-size:.65rem}
+.efforts [aria-pressed=true]{color:#ffe097;background:#dfb76719;border-bottom-color:var(--ochre)}
+.playbar{justify-content:space-between;border-radius:0 0 4px 4px;flex-wrap:wrap}
+.playback-rate{display:flex;align-items:center;gap:5px;font-size:.7rem}
+.playback-rate select{min-width:62px;padding:8px}
+#tools-toggle{letter-spacing:0}
+#profile-panel{position:absolute;bottom:var(--playbar-clearance,88px);width:100%;margin:0;max-height:min(40dvh,var(--sheet-max-height,40dvh));overflow-y:auto;background:#12352e;z-index:2}
+#seek{height:44px}
+#tools-panel{bottom:var(--playbar-clearance,88px);max-height:var(--sheet-max-height,calc(100dvh - 220px));overflow-y:auto;overscroll-behavior:contain;font-size:.85rem;z-index:2;background:#12352e}
+.sheet-heading{display:flex;justify-content:space-between;align-items:center;gap:8px;position:sticky;top:-16px;background:#12352e;z-index:1}
+.sheet-heading h2{font-size:1.1rem;margin:0}
+#tools-panel label{flex-wrap:wrap;min-height:44px}
+#tools-panel select{max-width:100%;min-width:0}
+#tools-panel fieldset{margin:16px 0;padding:12px;min-width:0;border:1px solid #688575}
+#tools-panel fieldset input{display:block;width:100%;height:44px;min-width:0;padding:8px;color:var(--ink);background:var(--stone);border:1px solid #688575}
+#tools-panel fieldset label{margin:8px 0 0}
+#tools-panel input[aria-invalid=true]{border:2px solid #ad640a}
+#rider-errors{color:#ffe097;overflow-wrap:anywhere}
+#rider-errors:empty{display:none}
+#tools-panel summary{cursor:pointer;min-height:44px;padding:10px 0}
+#tools-panel button{border:1px solid #688575}
+#tools-panel .check input{min-width:20px;min-height:20px}
+#player button{min-width:44px}
+#player .mapboxgl-ctrl-group button{width:44px;height:44px;min-height:44px}
+#player .mapboxgl-ctrl-top-right{top:var(--terrain-controls-top,160px)!important}
+@media(max-width:800px){
+  .player-header{margin:8px 12px 0}
+  .player-route{padding:2px 8px}
+  .player-route select{font-size:.8125rem}
+  #back{height:65px;min-width:44px}
+  .player-status{margin:6px 12px 0;max-width:calc(100% - 24px);font-size:.65rem;padding:5px 8px}
+  #ride-notice{font-size:.7rem}
+  .player-bottom,.online .player-bottom{bottom:auto;width:calc(100% - 24px);margin-bottom:8px}
+  .online .player-bottom{margin-bottom:22px}
+  #cockpit{padding:6px 8px 0}
+  .ride-actions{display:flex;flex-direction:column;gap:0;align-items:stretch}
+  .telemetry strong{font-size:1.35rem}
+  .telemetry small{font-size:.65rem}
+  .ride-context{font-size:.65rem}
+  .gears{font-size:.75rem}
+  .gears button{padding:4px 8px}
+  .efforts button{font-size:.75rem}
+  .playbar{gap:4px}
+  .playbar .primary{min-width:76px}
+  .playback-rate{gap:4px;line-height:1.1;font-size:.6rem;flex-shrink:0}
+  .playback-rate select{padding:4px 12px 4px 6px;min-width:52px;width:4.5em}
+  #profile-toggle,#tools-toggle{font-size:.75rem;padding:6px}
+  #tools-panel{width:100%}
+  .player-credit{font-size:.5rem}
+  #player-map{padding:140px 12px 275px}
+}
+@media(max-height:600px){
+  #player{min-height:100dvh}
+  .player-bottom{margin-top:30dvh}
+  #tools-panel{max-height:min(60dvh,var(--sheet-max-height,60dvh))}
+}
