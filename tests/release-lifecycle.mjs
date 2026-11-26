@@ -96,6 +96,14 @@ for (const mode of ['obsolete','completed']) test(`held planner Fetch ${mode} ac
     await cmd('Fetch.continueRequest',{requestId:held.requestId});
     await until(() => terminal.get(held.networkId)?.method === 'Network.loadingFinished');
     await until(() => js(`document.querySelector('#fly')?.disabled === false`));
+    // Fly can enable before other document resources finish. This positive
+    // control promises completed old-document work; do not race a queued CDP
+    // continuation against the replacement we deliberately release next.
+    // Only the held freshness response itself is allowed to remain pending.
+    await until(() => [...network.entries()].every(([id,r]) =>
+      r.loaderId !== oldFrame.loaderId ||
+      Object.keys(r.request.headers).some(key=>key.toLowerCase()==='x-kotr-freshness') ||
+      terminal.has(id)));
   }
   freshness.resolve();
   await until(() => frames.some(frame => frame.id === oldFrame.id && frame.loaderId !== oldFrame.loaderId));

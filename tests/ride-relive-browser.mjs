@@ -34,7 +34,7 @@ async function fixture(t,{width=1440,height=900,terrain=false,deny=false}={}) {
   await build('.',out);
   const files=(await readdir(out,{recursive:true})).filter(p=>extname(p));
   const bytes=new Map(await Promise.all(files.map(async p=>[p,await readFile(join(out,p))])));
-  const requests=[],network=[];
+  const requests=[],network=[],downloadsById=new Map();
   const types={'.html':'text/html','.mjs':'text/javascript','.js':'text/javascript','.css':'text/css','.json':'application/json','.gpx':'application/xml'};
   server=createServer(async(req,res)=>{
     const body=[];for await(const chunk of req)body.push(chunk);
@@ -46,9 +46,13 @@ async function fixture(t,{width=1440,height=900,terrain=false,deny=false}={}) {
   server.listen(0,'127.0.0.1');await once(server,'listening');
   const b=await browser({after:fn=>cleanup.push(fn)},m=>{
     if(m.method==='Network.requestWillBeSent')network.push(m.params.request);
+    if(m.method==='Browser.downloadWillBegin')
+      downloadsById.set(m.params.guid,{name:m.params.suggestedFilename,state:'inProgress'});
+    if(m.method==='Browser.downloadProgress'&&downloadsById.has(m.params.guid))
+      downloadsById.get(m.params.guid).state=m.params.state;
   });
   await b.cmd('Page.enable');await b.cmd('Network.enable');
-  await b.cmd('Browser.setDownloadBehavior',{behavior:'allow',downloadPath:downloads});
+  await b.cmd('Browser.setDownloadBehavior',{behavior:'allow',downloadPath:downloads,eventsEnabled:true});
   await b.cmd('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
   if(deny)await b.cmd('Page.addScriptToEvaluateOnNewDocument',{source:`
     Object.defineProperty(window,'indexedDB',{get(){throw new DOMException('Denied','SecurityError')}});`});
@@ -111,6 +115,9 @@ async function fixture(t,{width=1440,height=900,terrain=false,deny=false}={}) {
     await writeFile(join(dir,name+'.png'),Buffer.from(data,'base64'));
   }
   async function exported(name) {
+    // A final filename can briefly exist before Chrome has written its bytes.
+    // Wait for the browser's completion, then keep the exact-byte assertion.
+    await until(()=>[...downloadsById.values()].some(d=>d.name===name&&d.state==='completed'));
     await until(async()=> (await readdir(downloads)).includes(name));
     return readFile(join(downloads,name));
   }

@@ -524,9 +524,41 @@ test('packaged explicit IndexedDB consent, reload, stale save after deletion and
   await f.upload(syntheticGPX());
   const url=await f.js('location.href'),id=new URL(url).searchParams.get('route');
   // Actual native keyboard activation of the visible per-file consent control.
+  await f.js(`window.consentTrace=[];
+    window.consentButton=[...document.querySelectorAll('#local-files button')].find(b=>b.textContent.startsWith('Remember'));
+    for(const type of ['focusin','keydown','keyup','click'])
+      document.addEventListener(type,e=>consentTrace.push({type,key:e.key,trusted:e.isTrusted,
+        target:e.target.id||e.target.textContent.slice(0,55),targetConnected:e.target.isConnected,
+        originalConnected:consentButton.isConnected}),true);
+    new MutationObserver(()=>consentTrace.push({type:'library-render',connected:consentButton.isConnected,
+      focus:document.activeElement.id||document.activeElement.tagName}))
+      .observe(document.getElementById('local-files'),{childList:true});
+    consentButton.focus()`);
+  // This fixture uploads through CDP, not a foreground native file picker.
+  // A later first browser focus can re-read the library and replace the button
+  // between JS focus() and Enter. Exercise a real tab return, observe its
+  // authoritative refresh, then focus the current control once before Enter.
+  const {targetInfo}=await f.cmd('Target.getTargetInfo');
+  const other=await f.cmd('Target.createTarget',{url:'about:blank'});
+  try {
+    await until(()=>f.js('document.hidden'));
+    const renders=await f.js(`consentTrace.filter(e=>e.type==='library-render').length`);
+    await f.cmd('Target.activateTarget',{targetId:targetInfo.targetId});
+    t.diagnostic(JSON.stringify(await f.js(`({beforeNativeHover:{hidden:document.hidden,
+      focused:document.hasFocus(),renders:consentTrace.filter(e=>e.type==='library-render').length}})`)));
+    // As in the existing native terrain fixture, activation alone need not
+    // focus a headless document. A trusted hover establishes native focus.
+    await f.cmd('Input.dispatchMouseEvent',{type:'mouseMoved',x:10,y:10,button:'none',buttons:0});
+    await until(()=>f.js(`!document.hidden && document.hasFocus() &&
+      consentTrace.filter(e=>e.type==='library-render').length>${renders}`));
+  } finally {await f.cmd('Target.closeTarget',{targetId:other.targetId});}
   await f.js(`[...document.querySelectorAll('#local-files button')].find(b=>b.textContent.startsWith('Remember')).focus()`);
+  assert.equal(await f.js(`document.activeElement.textContent`),'Remember this file on this device');
   for(const type of ['keyDown','keyUp'])await f.cmd('Input.dispatchKeyEvent',{type,key:'Enter',code:'Enter',windowsVirtualKeyCode:13,...(type==='keyDown'?{text:'\r'}:{})});
-  await until(()=>f.js(`document.getElementById('local-status').textContent.includes('Remembered on')`));
+  try {await until(()=>f.js(`document.getElementById('local-status').textContent.includes('Remembered on')`));}
+  finally {t.diagnostic(JSON.stringify(await f.js(`({consentTrace,status:document.getElementById('local-status').textContent})`)));}
+  assert.equal(await f.js(`consentTrace.some(e=>e.type==='click'&&e.trusted&&e.targetConnected&&
+    e.target==='Remember this file on this device')`),true);
   assert.deepEqual((await f.evaluate('indexedDB.databases()')).map(d=>d.name),['kotr27-local-routes']);
   await f.navigate(url);
   await until(()=>f.js(`document.getElementById('local-status').textContent.includes('Opened remembered')`));

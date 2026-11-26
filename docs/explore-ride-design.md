@@ -387,3 +387,280 @@ seven-route model probe completed; no feature implementation, suite, release,
 performance qualification or publication is claimed. Parent owns independent
 review and lifecycle. No newly discovered bead is needed for the already
 documented Brentha limitation.
+
+## 8. Final integration qualification — 2026-11-26, kotr27-1ry.8
+
+**Corrected qualification candidate; fresh independent review still required.**
+The first independent review failed the desktop Asolo post-pan readiness wait.
+The bounded correction and its remaining causal uncertainty are recorded below;
+earlier passing runs do not override that review. The original failures and
+exhausted recovery history are retained. Keep this task in progress until fresh
+independent PASS; parent publication and public verification remain separate.
+Nothing here claims deployment.
+
+### Artifact and preservation
+
+Built from runtime at `27c6000f151da7799b870aa7f319a8f0741200c7`, on
+`epic/kotr27-1ry`, using `tools/build-release.mjs`, served only at `/kotr27/`
+by isolated ephemeral test servers. Retained artifact:
+
+- `/tmp/kotr27-1ry8-release`
+- Offline release: `aed13a4ad9de129216de604881e8c930bd4854588e55251708f7dd225f1514b8`
+- Homepage entry: `98f0088d76e5bf8ccf185684`
+- 76 files, 4,160,700 bytes; 73 manifest-bound resources.
+
+Independent repeated builds matched byte for byte. The full relative dependency
+graph, including dynamic parser/worker references, resolves inside the artifact.
+Every hashed filename matches its final bytes; all seven pinned route revisions
+remain unchanged. Explicit allowlisting excludes private originals, tests,
+documentation, screenshots, development trees and arbitrary extra assets.
+All 54 packaged JavaScript/module syntax checks passed.
+
+Only test synchronization, a new acceptance test, and this document were edited;
+**no runtime or allowlist change**. Parent preview 4177 needs no refresh for
+these edits. User Chrome and parent pages were not used. No dependency install,
+Beads write, commit, close, push or deployment was performed.
+Fingerprint comparison preserved all 47 unrelated tracked edits and every
+other baseline file outside the four edited tracked paths (297-file execution
+baseline). The new integration test is the fifth owned path. Index, HEAD and
+branch are unchanged. All 91 canonical Beads fingerprints match the parent's
+correction baseline, which includes the parent's review-failure note;
+`.8` remains assigned to Eric Bowman, `in_progress`.
+
+### What was observed
+
+| Root requirement | Evidence and limits |
+|---|---|
+| Compelling Grappa climb | Continuous desktop/phone journeys passed main-climb selection, section/profile pointer and keyboard seek, live effort, gear, coast/stall/recovery, separate rate, pinned equal-time gap and common-distance arrival/work, late switchbacks, then Asolo and private Relive/public return. At the measured hard-effort endpoint: 198 W, 8.1 km/h, 53 rpm; about +217 m at equal trial time, −78.1 s arrival and +0.527 kJ at the common reached distance. Existing tests also cover repin/remove/reset. |
+| Calm continuous terrain | Pre-review 30-second samples at 1440×900 and 375×812 recorded **1,801 / 1,800 changing rendered poses**. Desktop median/p95/max gaps: **16.7/18.0/21.2 ms**; phone: **16.7/18.0/19.7 ms**. Both had zero ≥200 ms holds, hidden frames, cockpit/map distance mismatches or terrain-status mutations. Real-provider screenshots show actual public switchbacks, rider, ghost and road-ahead information. Corrective-run measurements appear below; none are universal FPS claims. |
+| Honest camera failure/manual behavior | The continuous journey passed Asolo native pan, wheel zoom and paused Return at both sizes, plus Grappa's later switchback segment with current proof and 45° Follow. Existing Grappa manual regression also passed. Separate WebGL fixtures passed denied SDK, missing imagery/DEM, context loss and foreground-ridge rejection without weakening clearance. Earlier four full-route Grappa/Asolo traversals from `.2` remain prior evidence, not rerun here; no runtime changed. |
+| Phone usability | The integrated closed ghost scene retained **417.59/812 px** spatial height; existing active-ghost terrain case retained 406.91 px and first-party 2D 420.91 px. Existing 200% text tests and the integrated Relive sheet passed actual navigation, seek, Play/sample-step and sheet-close hit targets without horizontal scrolling. Expanded sheets intentionally occupy spatial space. |
+| Seven routes and old tools | All seven D0–D3 IDs/variants, existing public deep links, malformed/retired-link recovery, My week/Essentials and secondary briefing/pace/comparison/planner/Prepare/preferences tests passed. Brentha Standard `rwgps-57874050` still has unavailable physics because existing processed windows exceed the ±50% model domain; geometry/profile/sections remain usable. No clipping, route substitution or source rewrite. |
+| Private actual replay | Seven focused Relive tests and both continuous journeys passed. Synthetic FIT/GPX exact samples retain source time, sensors and provenance; between samples telemetry is unavailable, not forward-filled. Gaps remain unknown without connecting chords; sample stepping is readable. Modeled alternatives remain distinct. The continuous fixture uses public Grappa coordinates with invented times/sensors, not a real person's recording. |
+| Privacy and consent | First-party-only Relive journeys recorded **zero external requests**. The focused public-terrain → private → public test recorded **12 queued public viewport tile requests after disposal**, each checked against prior public bounds, and **zero private provider inputs/requests**. The longer integrated journey had zero queued tiles after its later boundary; do not generalize that to all transitions. Private geometry remains first-party 2D only. Memory-first import, explicit persistence, export/remove, cancellation, stale callbacks and cross-tab Forget passed. |
+| Offline and stale entry | Nine offline tests passed installation/disconnected reload, explicit update, retained old complete packs on failures, withdrawal/tombstones, deletion, cold-unavailable and denied-storage behavior. Two lifecycle tests passed after synchronizing completed old-document requests before the positive-control replacement. |
+
+Screenshots are local evidence, **not shipped**:
+`/tmp/kotr27-1ry8-evidence/`. Useful inspected examples:
+`integrated-1440-grappa-ghost.png`, `integrated-375-grappa-ghost.png`,
+`integrated-1440-grappa-profile.png`, `integrated-375-grappa-switchbacks.png`,
+`integrated-375-asolo-return.png`, `integrated-375-private-actual.png`,
+`integrated-375-text-200.png`, `integrated-375-public-return.png`, and
+`baseline-375-text-200-profile.png`. Integrated images were refreshed by passing
+complete runs. The older straight-line Relive fixture tests provenance/gaps;
+the public Grappa/Asolo and new synthetic-on-public-geometry images provide
+meaningful route shapes. No screenshot alone proves motion or privacy.
+
+### Reproduction and actual results
+
+Run from the physical project root. The build destination must not already
+exist; use a new temporary destination for a fresh build.
+
+```sh
+node tools/build-release.mjs /tmp/kotr27-1ry8-release
+node --test tests/ascent-estimator.mjs tests/route-time.mjs tests/route-pace.mjs \
+  tests/ride-clock.mjs tests/ride-simulation.mjs tests/route-flyover.mjs \
+  tests/route-playback.mjs tests/route-analysis.mjs tests/ride-insights.mjs \
+  tests/ride-comparison.mjs tests/recorded-replay.mjs tests/local-routes.mjs \
+  tests/route-comparison.mjs tests/rider-controls.mjs tests/release.mjs tests/route-pack.mjs
+node --test --test-name-pattern='final public artifact' tests/final-qualification.mjs
+```
+
+Results: **183/183**, then **1/1** graph/privacy/deterministic-artifact check.
+
+```sh
+RIDE_EXPLORER_EVIDENCE_DIR=/tmp/kotr27-1ry8-evidence \
+RIDE_RELIVE_EVIDENCE_DIR=/tmp/kotr27-1ry8-evidence \
+node --test --test-concurrency=1 tests/rider-home.mjs tests/ride-relive-browser.mjs \
+  tests/offline-packs.mjs tests/release-lifecycle.mjs tests/local-routes-browser.mjs \
+  tests/route-flyover-browser.mjs
+```
+
+Initial combined result: **56 pass, 2 fail, 1 deferred fullscreen check**.
+The failures were an empty export read before download completion and an
+unexpected stale CDP continuation during the lifecycle positive control.
+Corrections preserve the exact-byte and no-unexpected-protocol-error assertions:
+wait for `Browser.downloadProgress: completed`, and wait for old-document
+resources to terminate before releasing the deliberate freshness replacement.
+Focused reruns passed **7/7 Relive** and **2/2 lifecycle**. The entire combined
+coverage was subsequently rerun together with the new integration test below.
+
+```sh
+KOTR_INTEGRATION_BUILD=/tmp/kotr27-1ry8-release \
+RIDE_EXPLORER_EVIDENCE_DIR=/tmp/kotr27-1ry8-evidence \
+node --test --test-concurrency=1 tests/explore-integration.mjs tests/ride-relive-browser.mjs
+
+KOTR_INTEGRATION_BUILD=/tmp/kotr27-1ry8-release \
+RIDE_EXPLORER_EVIDENCE_DIR=/tmp/kotr27-1ry8-evidence \
+node --test --test-concurrency=1 tests/explore-integration.mjs tests/release-lifecycle.mjs
+
+KOTR_INTEGRATION_BUILD=/tmp/kotr27-1ry8-release \
+RIDE_EXPLORER_EVIDENCE_DIR=/tmp/kotr27-1ry8-evidence \
+node --test tests/explore-integration.mjs
+
+node --test --test-concurrency=1 tests/trip-planner-browser.mjs \
+  tests/route-briefing-browser.mjs tests/route-pace-browser.mjs \
+  tests/route-comparison-browser.mjs tests/event-guide-browser.mjs tests/preferences-browser.mjs
+node --check tests/explore-integration.mjs
+node --check tests/ride-relive-browser.mjs
+node --check tests/release-lifecycle.mjs
+node --check tests/local-routes-browser.mjs
+git --no-pager diff --check
+```
+
+Secondary tools: **55/55 passed**. Edited-test syntax and diff checks passed.
+During the initial stopped phase, the first two integration commands retained
+two failing integration cases while passing their seven Relive/two lifecycle
+companions; the standalone integration command also failed both cases. After
+the authorized, traced correction, standalone integration passed **2/2**.
+
+Pre-review combined command:
+
+```sh
+KOTR_INTEGRATION_BUILD=/tmp/kotr27-1ry8-release \
+RIDE_EXPLORER_EVIDENCE_DIR=/tmp/kotr27-1ry8-evidence \
+RIDE_RELIVE_EVIDENCE_DIR=/tmp/kotr27-1ry8-evidence \
+node --test --test-concurrency=1 tests/explore-integration.mjs tests/rider-home.mjs \
+  tests/ride-relive-browser.mjs tests/offline-packs.mjs tests/release-lifecycle.mjs \
+  tests/local-routes-browser.mjs tests/route-flyover-browser.mjs
+```
+
+Pre-review result: **60 passed, 0 failed, 1 explicitly deferred fullscreen check**
+(61 including nested cases). This includes both continuous journeys, all
+seven Relive cases, nine offline cases, both lifecycle cases, 22 legacy local
+file cases, seven home cases and camera/failure regressions. The final artifact
+audit also passed again with the same 76 files and release hash.
+
+The first continuation run of this combined command had **59 pass, 1 fail,
+1 deferred**: the legacy keyboard-consent test timed out awaiting “Remembered
+on”. It was not reported as passing. A traced isolated run passed, then a
+controlled tab return demonstrated that activation alone left Chrome visible
+but unfocused and library refresh replaced the previously focused button.
+The first controlled probe stopped at that focus gate. Using the existing
+terrain fixture's trusted-hover focus technique, then waiting for the actual
+library refresh before focusing the current consent button, produced a trusted
+Enter/click on a connected button and completed the unchanged save, reload,
+stale-save rejection and deletion assertions. The focused command was:
+
+```sh
+node --test --test-name-pattern='packaged explicit IndexedDB consent' tests/local-routes-browser.mjs
+```
+
+That corrected case and the subsequent complete combined command passed.
+This fixes test input synchronization; it does not claim that background
+library refresh preserves an old DOM button or certify all focus behavior.
+
+### Root cause, retained recovery history and review handoff
+
+The initial motion observer included deliberate Pause; stopping observation
+before Pause resolved that distinct issue. Native selection then stopped
+progress. Recovery **2/2 consumed**: (1) opened-select relative arrows still
+failed; (2) native type-ahead worked in a minimal isolated control probe but
+still failed in the actual page. Work stopped and the parent retained that
+history. The operator then explicitly authorized continued diagnosis and
+completion; **this did not reset the original 2/2 allowance**.
+
+The requested hypothesis—`pause()` rendering over the newly chosen rate—was
+**disproved**. Source inspection found no rate-value write in that render path.
+An actual-artifact event/value-write trace of the failing helper showed:
+
+1. Trusted pointer focus on `playback-rate`, value 16, player visible.
+2. The helper's trusted Escape reached the app's documented Back handler.
+3. Focus moved to `fly`, player hidden; subsequent trusted characters went to
+   `fly`. No select input/change event or app rate-value write occurred.
+
+The correction focuses the closed select without clicking then escaping its
+native popup. It uses native character input and requires a **trusted change
+event on the requested control/value**, preserved visible player, and exact
+selected value. No `.value` assignment or synthetic change event substitutes
+for this qualification. Primary actions remain actual hit-tested pointer
+press/release; profile navigation also uses native keyboard input. This
+preserved the original 16-versus-4 assertion and passed both viewports without
+changing runtime code.
+
+Subsequent progress exposed two distinct new-fixture errors: a redundant Return
+click after seek had already entered Follow, and missing GPX/telemetry
+namespaces in the invented recording. The test now asserts current 45° Follow
+there (the later real Asolo pan/Return remains mandatory), and validates its
+properly namespaced fixture through the unchanged parser before browser import.
+Neither correction weakens product assertions. All remaining journey stages,
+including actual parser/worker HTTP requests, now pass.
+
+That was the initial implementer handoff, not independent PASS; the subsequent
+review and correction below supersede its readiness claim. No discovered bead
+was created and no task bookkeeping was changed by the child. All child-owned
+test browsers/servers exited; parent preview and browser pages were untouched.
+
+### Independent review: desktop Asolo readiness correction
+
+The fresh review returned **FAIL**: 59 pass, one desktop post-pan timeout,
+one deferred fullscreen check. Phone completed; the reviewer also reported
+43 model/release, 55 secondary and one artifact check passing. The timeout
+contained no final proof/viewport state or failure screenshot. The current
+operator authorized this distinct correction; the original **2/2** nonprogress
+history remains consumed, not reset.
+
+Diagnostics were added **before** changing the wait: bounded proof-transition
+history, final proof/status, visibility/focus, native drag hit targets, map
+movement/bounds and sanitized network-failure paths (no token query strings).
+Every readiness failure now captures `integrated-WIDTH-terrain-timeout-LABEL.png`
+in the selected evidence directory. Observation stops before private import.
+
+One diagnostic desktop run against `/tmp/kotr27-1ry8-review-release` passed
+without changing the original 500 ms polling. Both drag endpoints hit the real
+canvas; its observed successful post-pan/Return path had valid terrain. The
+run did **not reproduce the reviewer's timeout**, and there is no evidence
+justifying a claim that the historical failure was a provider outage or an app
+defect.
+
+The source and live trace do establish a test weakness: proof is invalidated on
+later renders, while expensive verification runs at a separate 200 ms cadence.
+The trace recorded both current-valid and stale transitions. A 500 ms poll is
+not guaranteed to observe a valid interval. The test now observes mutations and
+reports the **same `online && proof.ok && proof.current` predicate at the actual
+observation**, with an additional distance-registration assertion. It does not
+relabel a previously stale proof, reuse a last-good fallback, retry the provider
+or increase the **17-second** deadline. Production terrain, coverage/clearance
+predicates, native drag/zoom/Return and fallback assertions are unchanged.
+
+A deterministic test demonstrates a valid proof arriving and being invalidated
+between polls; it also rejects failed-current/offline states, reports terminal
+failure and verifies cancellation. This establishes the polling weakness, **not
+conclusive retrospective causation of the uninstrumented reviewer timeout**.
+That uncertainty must remain visible to the next independent reviewer.
+
+```sh
+node --test --test-name-pattern='terrain readiness observer' tests/explore-integration.mjs
+KOTR_INTEGRATION_BUILD=/tmp/kotr27-1ry8-review-release \
+RIDE_EXPLORER_EVIDENCE_DIR=/tmp/kotr27-1ry8-correction-evidence \
+node --test tests/explore-integration.mjs
+
+KOTR_INTEGRATION_BUILD=/tmp/kotr27-1ry8-review-release \
+RIDE_EXPLORER_EVIDENCE_DIR=/tmp/kotr27-1ry8-correction-evidence \
+RIDE_RELIVE_EVIDENCE_DIR=/tmp/kotr27-1ry8-correction-evidence \
+node --test --test-concurrency=1 tests/explore-integration.mjs tests/rider-home.mjs \
+  tests/ride-relive-browser.mjs tests/offline-packs.mjs tests/release-lifecycle.mjs \
+  tests/local-routes-browser.mjs tests/route-flyover-browser.mjs
+```
+
+Focused results: **1/1 observer regression; 3/3 including both complete native
+journeys**. Both observed manual proofs had imagery/elevation/depth/current/ok
+true; Return restored current Follow proof at unchanged distance while paused.
+Corrective combined result: **61 passed, 0 failed, 1 deferred fullscreen check**
+(62 including nested cases). This is implementer evidence for fresh review,
+not an override of the prior independent FAIL.
+The corrective combined journey samples each recorded **1,800 changing poses**
+in 30 seconds; desktop median/p95/max **16.7/17.9/21.0 ms**, phone
+**16.6/18.4/20.6 ms**, with zero ≥200 ms holds, hidden frames, mismatches or
+status changes. The artifact audit passed again: same 76 files, bytes and hash.
+New screenshots are under `/tmp/kotr27-1ry8-correction-evidence`; original review
+evidence was not overwritten. No production/allowlist bytes changed, so parent
+preview 4177 needs no refresh.
+
+Environment: **Apple M4 Max**, installed headless **Chrome 158.0.8127.88**, macOS, desktop and
+emulated 375 px phone at DPR 1—not physical-phone, Safari or fullscreen
+qualification. Fullscreen remains explicitly deferred; existing Safari/CDP
+diagnostics are not newly certified. No source sensor, road-condition, safety,
+fatigue or pacing guarantees follow from modeled speed/work. Parent must assess
+root experience criteria independently and verify actual public homepage and
+Explore interactions **after** any authorized publication.
