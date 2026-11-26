@@ -6,7 +6,8 @@ import { horizontalDistanceM } from './route-analysis.mjs';
 const node=(tag,text,parent,id)=>{
   const e=document.createElement(tag); e.textContent=text; parent.append(e); if(id)e.id=id; return e;
 };
-export function installLocalRoutes(parent,{open,changed,removed,storageBarrier=()=>Promise.resolve()}) {
+export function installLocalRoutes(parent,{open,changed,removed,storageBarrier=()=>Promise.resolve(),
+  beforeOpen=()=>{},cancelled=()=>{}}) {
   const storage=createLocalRouteStorage(), memory=new Map(), persisted=new Set(), saving=new Map();
   let meta={generation:null,entries:[]}, ready=false, busy=false, controller, epoch=0, selected=null;
   let syncSerial=0;
@@ -101,6 +102,12 @@ export function installLocalRoutes(parent,{open,changed,removed,storageBarrier=(
           }
         });
       button('Delete this file',()=>erase(id));
+      if (memory.has(id)) button('Export original file',()=>{
+        const url=URL.createObjectURL(new Blob([r.buffer],{type:'application/octet-stream'}));
+        const link=document.createElement('a');link.href=url;
+        link.download=`${r.name}.${r.decoded.format.toLowerCase()}`;link.click();
+        setTimeout(()=>URL.revokeObjectURL(url),1000);
+      });
     }
     node('li',`Remembered usage: ${meta.entries.length}/${libraryLimits.files} files · `+
       `${(meta.entries.reduce((n,e)=>n+e.bytes,0)/1048576).toFixed(2)}/20 MiB originals. `+
@@ -126,9 +133,10 @@ export function installLocalRoutes(parent,{open,changed,removed,storageBarrier=(
     return outcome;
   }
   yes.onclick=()=>erase();
-  cancel.onclick=()=>controller?.abort();
+  cancel.onclick=()=>{controller?.abort();cancelled();};
   input.onchange=async()=>{
     const file=input.files[0]; input.value=''; if (!file || busy) return;
+    beforeOpen();
     if (memory.size>=10 || [...memory.values()].reduce((n,r)=>n+r.buffer.byteLength,0)+file.size>libraryLimits.bytes)
       return announce('Session limit: 10 files / 20 MiB originals. Delete a local file first.');
     const ticket=++epoch, generation=meta.generation;
@@ -143,6 +151,7 @@ export function installLocalRoutes(parent,{open,changed,removed,storageBarrier=(
     finally { if(ticket===epoch) setBusy(false); }
   };
   async function load(id) {
+    beforeOpen();
     if (memory.has(id)) {open(memory.get(id));return;}
     const ticket=++epoch; setBusy(true); controller=new AbortController();
     try {
@@ -268,6 +277,9 @@ export function installLocalRoutes(parent,{open,changed,removed,storageBarrier=(
     details.append(svg);
   }
   return {root,initial,show,get:id=>memory.get(id),load,forget:()=>erase(),
+    cancelPending() {
+      epoch++;controller?.abort();setBusy(false);announce('');
+    },
     isReady:()=>ready,
     missing:()=>ready ? 'Local file unavailable in this session. Import again or open a remembered file below. This link is not portable; no organizer route substituted.' :
       'Checking this browser’s local library…',

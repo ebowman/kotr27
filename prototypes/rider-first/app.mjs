@@ -6,6 +6,7 @@ import { createRideSimulation, createSimulationScheduler, rideRiderFromInput, ex
 import { rideInsights, sectionName } from '../../js/ride-insights.mjs';
 import { routeSection } from '../../js/route-flyover.mjs';
 import { createRideComparison } from '../../js/ride-comparison.mjs';
+import { installRideRelive } from '../../js/ride-relive.mjs';
 
 const $ = id => document.getElementById(id);
 const NS = 'http://www.w3.org/2000/svg';
@@ -47,6 +48,8 @@ let simulation, scheduler, pendingGear, pendingHistory, notice = '';
 let comparison, comparisonSample, comparisonHistory, presentedSeconds, comparisonNotice = '';
 let selectedChapterId, highlightedChapterId, insights, lastHUD = -Infinity;
 let mode = 'experiment';
+let privateView = false;
+const profileHelp = $('profile-help').textContent;
 let terrainReady = false;
 let manual = false;
 const returnRider = document.createElement('button');
@@ -182,6 +185,7 @@ function highlightSection(chapter) {
     pressed(button,button.dataset.chapterId === chapter.id);
 }
 function renderInsights() {
+  if (mode === 'relive') return;
   insights = rideInsights(analysis,distance,selectedChapterId);
   $('road-card').dataset.status = insights.status;
   for (const button of document.querySelectorAll('[data-frame]')) button.disabled = insights.status !== 'available';
@@ -222,7 +226,7 @@ function frameRoute(value) {
   camera = value;$('camera').value = value;
   $('player-map').dataset.framing = value;
   manual = false;
-  $('player-map').setAttribute('viewBox','0 0 640 580');
+  $('player-map').setAttribute('viewBox',mode === 'relive' ? '0 0 400 400' : '0 0 640 580');
   if (camera === 'section' && highlightedChapterId) {
     const points = routeSection(analysis,highlightedChapterId).map(([lon,lat])=>projection({lon,lat}));
     const xs=points.map(p=>p[0]),ys=points.map(p=>p[1]);
@@ -233,6 +237,13 @@ function frameRoute(value) {
   updatePosition(true);
 }
 function seekTo(target, chapterId) {
+  if (mode === 'relive') {
+    const second = relive.replay?.secondAtDistance(target);
+    if (second === null) {
+      pause();text('relive-message','Distance ambiguous at a gap. Use elapsed or sample controls; no distance inferred.');
+    } else if (second !== undefined) seekRecorded(second);
+    return;
+  }
   if (!analysis) return;
   pause();distance = Math.max(0,Math.min(analysis.distanceM,target));
   if (simulation?.status === 'available') simulation.seek(distance);
@@ -249,6 +260,29 @@ function selectSection(id) {
   if (chapter) seekTo(chapter.startM,id);
 }
 function renderCockpit() {
+  $('player').classList.toggle('reliving',mode === 'relive');
+  if (mode === 'relive') {
+    const available = !!relive.clock;
+    for (const id of ['seek','restart','play']) $(id).disabled = !available;
+    for (const button of document.querySelectorAll('[data-effort], #coast, #gear-easier, #gear-harder, #main-climb, #retry-section, [data-frame="section"]'))
+      button.disabled = true;
+    renderComparison();
+    $('cockpit').setAttribute('aria-label','Recorded riding cockpit');
+    if (available) relive.render();
+    else {
+      for (const id of ['ride-speed','ride-power','ride-grade','ride-gear','ride-cadence','ride-elapsed','progress'])
+        text(id,'—');
+      text('speed-provenance','km/h · recorded');
+      text('ride-effort','No recording selected');
+      text('road-current','Choose a timestamped recording');text('road-ahead','Private first-party 2D only');
+      text('ride-notice','Paused · no actuals loaded');
+      for (const key of ['motion','seconds','distance','sample','age','exact','origin','history']) delete $('cockpit').dataset[key];
+      $('cockpit').dataset.status = 'unavailable';
+    }
+    return;
+  }
+  $('cockpit').setAttribute('aria-label','Modeled riding cockpit');
+  for (const key of ['sample','age','exact']) delete $('cockpit').dataset[key];
   const available = simulation?.status === 'available';
   const s = available ? simulation.snapshot() : null;
   const interactive = available && mode === 'experiment' && s.motion !== 'finished';
@@ -368,7 +402,7 @@ function buildModel(originM = distance) {
   clearComparison('Rider or model changed; comparison needs the same identity.');
   pendingGear = undefined;pendingHistory = undefined;
   scheduler = undefined;simulation = undefined;
-  if (!analysis) return;
+  if (!analysis || mode === 'relive') {renderCockpit();return;}
   const rider = rideRiderFromInput({mass:$('rider-mass').value,enteredUnit:'kg',ftp:$('rider-ftp').value});
   if (rider.status !== 'available') simulation = rider;
   else {
@@ -399,6 +433,10 @@ function command(action) {
   notice = '';renderCockpit();
 }
 function updatePosition(force = false) {
+  if (mode === 'relive') {
+    if (relive.clock) {distance = relive.actual().distanceM;renderCockpit();}
+    return;
+  }
   if (!analysis) return;
   sampleComparison();
   if (force) manual = false;
@@ -444,11 +482,12 @@ function updatePosition(force = false) {
   terrainHandle?.update(snapshot(),force,{sectionPadding});
 }
 function pause() {
+  relive.clock?.pause();
   scheduler?.pause();
   playing = false;cancelAnimationFrame(frame);
   $('play').innerHTML = '▶ <span>Play</span>';
   $('play').setAttribute('aria-label','Play route preview');
-  if (simulation?.status === 'available') distance = simulation.snapshot().distanceM;
+  if (mode !== 'relive' && simulation?.status === 'available') distance = simulation.snapshot().distanceM;
   // Flush the exact model boundary to every surface, without recentering a manual map.
   if (analysis) {updatePosition();renderCockpit();}
   if (terrainReady) $('terrain-status').textContent = manual ?
@@ -456,6 +495,13 @@ function pause() {
 }
 function tick(time) {
   if (!playing || !inPlayer) return;
+  if (mode === 'relive') {
+    const state = relive.clock.tick(time);
+    updatePosition();
+    if (state.phase !== 'playing') pause();
+    else frame = requestAnimationFrame(tick);
+    return;
+  }
   const {previous,current,alpha,notice:late} = scheduler.frame(time);
   // Interpolate only the adjacent fixed model steps, never extrapolate using
   // watts, speed or a second travel clock. All spatial consumers use this value.
@@ -481,6 +527,13 @@ function stopTerrain() {
 async function terrain() {
   stopTerrain();
   if (!inPlayer) return;
+  // Privacy boundary is checked before any provider import/mount. It remains
+  // closed during parsing, unavailable files and modeled local alternatives.
+  if (privateView) {
+    $('provider-credit').hidden = true;
+    text('terrain-status','Private local · first-party 2D only');
+    return;
+  }
   if ($('offline').checked) {
     $('terrain-status').textContent = '2D route preview · terrain off';
     return;
@@ -537,10 +590,19 @@ async function terrain() {
 async function choose(id) {
   const request = ++generation;
   pause();stopTerrain();
+  relive.library.cancelPending();relive.clear();
+  if (privateView) {
+    privateView = false;mode = 'experiment';$('ride-mode').value = mode;
+    configureRate(false);
+  }
+  $('player-route').querySelector('[data-private]')?.remove();
+  credit.firstChild.textContent='Route: Ride with GPS · Route preview ';
+  $('offline').disabled = false;
+  $('profile-help').textContent = profileHelp;
   clearComparison('Route changed.');
   routeController?.abort();
   const controller = new AbortController();routeController = controller;
-  analysis = null;selected = id;distance = 0;
+  analysis = null;projection = undefined;selected = id;distance = 0;
   $('camera').disabled = true;
   selectedChapterId = undefined;highlightedChapterId = undefined;insights = undefined;
   camera = 'follow';$('camera').value = camera;
@@ -622,6 +684,8 @@ async function enter() {
 }
 function back() {
   pause();stopTerrain();inPlayer = false;
+  if (privateView) void choose(selected);
+  else relive.library.cancelPending();
   $('player').hidden = true;$('landing').hidden = false;
   $('provider-credit').hidden = true;
   document.body.style.overflow = '';
@@ -633,6 +697,13 @@ $('landing-route').addEventListener('change',e=>choose(groups[Number(e.target.va
 $('player-route').addEventListener('change',e=>choose(e.target.value));
 $('play').addEventListener('click',()=>{
   if (playing) {pause();return;}
+  if (mode === 'relive') {
+    if (!relive.clock) return;
+    relive.clock.play();playing = true;
+    $('play').innerHTML = 'Ⅱ <span>Pause</span>';
+    $('play').setAttribute('aria-label','Pause recorded replay');
+    frame = requestAnimationFrame(tick);return;
+  }
   if (!scheduler) return;
   if (distance >= analysis.distanceM) {
     clearComparison('Restart starts a new trial.');
@@ -647,16 +718,31 @@ $('play').addEventListener('click',()=>{
   frame = requestAnimationFrame(tick);
 });
 $('seek').addEventListener('input',e=>{
+  if (mode === 'relive') {seekRecorded(Number(e.target.value)/1000*relive.replay.durationSeconds);return;}
   if (!analysis) return;
   seekTo(Number(e.target.value)/1000*analysis.distanceM);
 });
 $('player-profile').addEventListener('pointerdown',e=>{
+  if (mode === 'relive' && relive.clock && e.button === 0) {
+    const box=e.currentTarget.getBoundingClientRect();
+    seekRecorded((e.clientX-box.left)/box.width*relive.replay.durationSeconds);
+    e.currentTarget.focus({preventScroll:true});return;
+  }
   if (!analysis || e.button !== 0) return;
   const box = e.currentTarget.getBoundingClientRect();
   seekTo((e.clientX-box.left)/box.width*analysis.distanceM);
   e.currentTarget.focus({preventScroll:true});
 });
 $('player-profile').addEventListener('keydown',e=>{
+  if (mode === 'relive' && relive.clock) {
+    const a=relive.actual(), times=relive.replay.times;
+    const targets={Home:0,End:relive.replay.durationSeconds,
+      ArrowLeft:times[Math.max(0,a.sampleIndex-1)],ArrowDown:times[Math.max(0,a.sampleIndex-1)],
+      ArrowRight:times[Math.min(times.length-1,a.sampleIndex+1)],ArrowUp:times[Math.min(times.length-1,a.sampleIndex+1)],
+      PageDown:a.elapsedSeconds-10,PageUp:a.elapsedSeconds+10};
+    if (e.key in targets) {e.preventDefault();seekRecorded(targets[e.key]);}
+    return;
+  }
   if (!analysis) return;
   const targets = {ArrowLeft:distance-250,ArrowDown:distance-250,ArrowRight:distance+250,ArrowUp:distance+250,
     PageDown:distance-1000,PageUp:distance+1000,Home:0,End:analysis.distanceM};
@@ -687,6 +773,7 @@ $('camera').addEventListener('change',e=>{pause();frameRoute(e.target.value);});
 $('offline').checked = params.get('terrain') === 'off';
 $('offline').addEventListener('change',()=>{pause();void terrain();});
 $('restart').addEventListener('click',()=>{
+  if (mode === 'relive') {seekRecorded(0);return;}
   pause();
   clearComparison('Restart starts a new trial.');
   distance = simulation?.status === 'available' ? simulation.restart().distanceM : 0;
@@ -694,10 +781,36 @@ $('restart').addEventListener('click',()=>{
   notice = `Restarted at trial origin · paused. ${comparisonNotice}`;updatePosition(true);renderCockpit();
 });
 $('playback-rate').addEventListener('change',()=>{
-  pause();scheduler?.setRate(Number($('playback-rate').value));
+  pause();
+  if (mode === 'relive') {
+    relive.clock?.setAnimationRate(Number($('playback-rate').value));renderCockpit();return;
+  }
+  scheduler?.setRate(Number($('playback-rate').value));
   notice = 'Playback rate changed · paused. Riding speed is unchanged.';renderCockpit();
 });
 $('ride-mode').addEventListener('change',e=>{
+  if (e.target.value === 'relive') {
+    if (relive.record && relive.replay.status === 'available') {
+      pause();mode='relive';configureRate(true);simulation=scheduler=undefined;
+      relive.library.cancelPending();relive.clearComparison();relive.clock.setAnimationRate(1);
+      text('relive-message','Recording retained unchanged · paused.');
+      clearComparison('Recorded replay is not a strategy ghost.');relive.draw();renderCockpit();
+    } else beginPrivate();
+    relive.root.open=true;return;
+  }
+  if (privateView && (!relive.record || $('relive-alternative').disabled)) {
+    $('ride-mode').value=mode;
+    text('relive-message','Modeled alternative unavailable without continuous supported geometry; recording and gaps are unchanged.');
+    return;
+  }
+  if (mode === 'relive') {
+    configureRate(false);distance=0;
+    drawMap($('player-map'),true);profile($('player-profile'),100);renderSections();
+    $('profile-help').textContent=profileHelp;
+  }
+  relive.library.cancelPending();
+  relive.clearComparison();
+  if(privateView)text('relive-message','Modeled alternative · recording retained unchanged. Select Relive to return to source time.');
   pause();mode = e.target.value;notice = 'Mode changed · new model, paused.';
   buildModel();updatePosition(true);
 });
@@ -747,6 +860,76 @@ document.querySelectorAll('[data-dialog]').forEach(button=>button.addEventListen
 }));
 $('dialog-close')?.addEventListener('click',()=>$('info-dialog').close());
 $('routes-nav').addEventListener('click',()=>$('landing-route').focus());
+
+function configureRate(recorded) {
+  $('playback-rate').replaceChildren(...(recorded?[.5,1,2,4]:[1,4,16,60]).map(n=>new Option(`${n}×`,n)));
+  $('playback-rate').value=recorded?'1':'16';
+  document.querySelector('.playback-rate').firstChild.textContent=recorded?'Source time':'Ride time';
+  $('profile-help').textContent=recorded ?
+    'Raw source elevation dots by recorded elapsed. Tap to seek paused. Arrow keys step exact samples; Page keys 10 s; Home / End. Gaps remain unknown.' : profileHelp;
+}
+function beginPrivate() {
+  // Dispose the public provider BEFORE the importer may parse/derive anything.
+  pause();stopTerrain();generation++;routeController?.abort();
+  privateView=true;$('offline').checked=true;$('offline').disabled=true;
+  credit.firstChild.textContent='Private local recording / course · first-party 2D ';
+  $('provider-credit').hidden=true;text('terrain-status','Private local · first-party 2D only');
+  relive.clear();clearComparison('Private recording selected.');
+  mode='relive';$('ride-mode').value=mode;configureRate(true);
+  simulation=scheduler=undefined;analysis=null;distance=0;
+  projection=undefined;camera='follow';$('camera').value=camera;
+  selectedChapterId=highlightedChapterId=insights=undefined;
+  $('player-route').querySelector('[data-private]')?.remove();
+  for (const id of ['player-map','player-profile','section-list']) $(id).replaceChildren();
+  for (const id of ['position','height','section-detail','road-transition','model-provenance','ride-remaining'])
+    text(id,'');
+  renderCockpit();
+}
+function seekRecorded(seconds) {
+  pause();
+  if (!relive.clock || !Number.isFinite(seconds)) {
+    text('relive-message','Recorded seek unavailable. Choose a valid timestamped recording.');return;
+  }
+  relive.clock.seekRecordedSeconds(seconds);updatePosition();
+}
+const relive = installRideRelive({
+  beforeOpen:beginPrivate,pause,seek:seekRecorded,changed:()=>{},
+  cancelled:()=>{beginPrivate();text('relive-message','Import cancelled; playback and derived view cleared.');},
+  removed:id=>{
+    if (relive.record?.id===id) {beginPrivate();text('relive-message','Local file removed; playback and derived view cleared.');}
+  },
+  publicPlan:()=>{
+    const a=cache.get(selected);
+    return a && !withdrawn.has(selected) ? {name:names[selected],analysis:a} : null;
+  },
+  open:async record=>{
+    const request=generation;
+    const replay=await relive.load(record);
+    if(request!==generation)return;
+    analysis=record.analysis;
+    const option=new Option(`${record.name} · private ${record.decoded.kind}`,record.id);
+    option.dataset.private='true';$('player-route').add(option);$('player-route').value=record.id;
+    if(replay.status==='available') {
+      relive.draw();renderCockpit();
+    } else if(analysis.status==='supported') {
+      mode='explore';$('ride-mode').value=mode;configureRate(false);
+      drawMap($('player-map'),true);profile($('player-profile'),100);renderSections();
+      buildModel(0);updatePosition();
+      text('ride-notice','Geometry only · no complete actual timestamps. Modeled, not recorded.');
+    } else {
+      renderCockpit();
+      text('relive-message',`${replay.reason} Continuous geometry analysis also unavailable; no model or gaps invented.`);
+    }
+  },
+});
+$('ride-mode').add(new Option('Relive · recorded source time','relive'));
+relive.root.addEventListener('toggle',()=>{
+  if(relive.root.open && !privateView)beginPrivate();
+});
+$('relive-alternative').addEventListener('click',()=>{
+  $('ride-mode').value='experiment';$('ride-mode').dispatchEvent(new Event('change'));
+});
+$('relive-public').addEventListener('click',()=>choose(selected));
 
 try {
   if (pointerURL.origin !== location.origin ||

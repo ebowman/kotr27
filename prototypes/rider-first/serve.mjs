@@ -9,7 +9,9 @@ const root = fileURLToPath(new URL('../../', import.meta.url));
 const prototype = 'prototypes/rider-first/';
 const modules = ['route-analysis-loader.mjs','route-analysis.mjs','route-catalog.mjs',
   'route-pack-contract.mjs','route-terrain-view.mjs','route-flyover.mjs','config.js',
-  'ride-simulation.mjs','ride-insights.mjs','ride-comparison.mjs','ascent-estimator.mjs','route-time.mjs','ride-clock.mjs','rider-scenario.mjs'];
+  'ride-simulation.mjs','ride-insights.mjs','ride-comparison.mjs','ascent-estimator.mjs','route-time.mjs','ride-clock.mjs','rider-scenario.mjs',
+  'ride-relive.mjs','local-routes-view.mjs','local-route-import.mjs','local-route-storage.mjs',
+  'local-route-parser.mjs','local-route-worker.mjs','recorded-replay.mjs','route-playback.mjs','route-briefing.mjs'];
 export async function previewServer(port = 4177) {
   const physical = await realpath(root);
   const pointer = JSON.parse(await readFile(resolve(root, 'assets/route-pack.json')));
@@ -46,7 +48,7 @@ export async function previewServer(port = 4177) {
       res.writeHead(200, {
         'Content-Type':types[extname(path)], 'Cache-Control':'no-store',
         'X-Content-Type-Options':'nosniff', 'Referrer-Policy':'no-referrer',
-        'Content-Security-Policy':"default-src 'self'; script-src 'self' https://api.mapbox.com; style-src 'self' 'unsafe-inline' https://api.mapbox.com; img-src 'self' data: blob: https://*.mapbox.com; connect-src 'self' https://*.mapbox.com; worker-src blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+        'Content-Security-Policy':"default-src 'self'; script-src 'self' https://api.mapbox.com; style-src 'self' 'unsafe-inline' https://api.mapbox.com; img-src 'self' data: blob: https://*.mapbox.com; connect-src 'self' https://*.mapbox.com; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
       });
       res.end(req.method === 'HEAD' ? undefined : data);
     } catch {res.writeHead(500).end('Preview asset unavailable');}

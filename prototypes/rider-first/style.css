@@ -268,3 +268,21 @@ dialog p{margin:18px 0 24px}
   .player-bottom{margin-top:30dvh}
   #tools-panel{max-height:min(60dvh,var(--sheet-max-height,60dvh))}
 }
+/* Relive reuses the same dismissible sheet and playbar. Private data is text,
+   not a second dashboard or provider layer. */
+#relive-sheet{border-top:1px solid #688575;margin-top:12px;overflow-wrap:anywhere}
+#relive-sheet h2{font-size:1rem}
+#relive-sheet p{margin:8px 0}
+#tools-panel #local-file{width:100%;height:auto;min-height:44px;font:inherit}
+#tools-panel #relive-seek{width:100%;height:44px}
+#local-files{padding-left:18px}
+#local-files button{display:block;width:100%;margin:6px 0}
+#local-status,#relive-message{color:#ffe097}
+.reliving .efforts,.reliving .gears button,.reliving #ride-gear{display:none}
+.reliving .gears{display:block;text-align:center;padding:6px}
+.reliving .ride-actions{display:block}
+.reliving #profile-panel details,.reliving #profile-panel .section-actions:not(:has(#profile-close)),
+.reliving #main-climb,.reliving #comparison-notice,.reliving #comparison-detail,
+.reliving #section-detail,.reliving #road-transition,.reliving #retry-section,
+.reliving #profile-panel>p:not(#profile-help){display:none}
+.reliving #player-map{padding-bottom:210px}

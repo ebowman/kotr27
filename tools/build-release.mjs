@@ -105,12 +105,14 @@ async function writeRelease(root, out, routePack) {
     'js/local-route-storage.mjs': [],
     'js/local-routes-view.mjs': ['./local-route-import.mjs','./local-route-storage.mjs','./route-briefing.mjs','./route-analysis.mjs'],
     'js/recorded-replay.mjs': ['./route-analysis.mjs','./route-time.mjs','./ride-clock.mjs'],
+    'js/ride-relive.mjs': ['./local-routes-view.mjs','./recorded-replay.mjs','./route-playback.mjs',
+      './route-time.mjs','./route-briefing.mjs'],
     'js/recorded-replay-view.mjs': ['./recorded-replay.mjs','./route-session.mjs','./route-pace.mjs','./route-briefing.mjs','./route-analysis.mjs'],
     'js/site-shell.mjs': ['./route-state.mjs','./preferences-view.mjs','./route-catalog.mjs','./trip-planner.mjs','./trip-planner-view.mjs','./route-playback-adapters.mjs','./route-session.mjs','./route-briefing-view.mjs','./route-flyover-view.mjs','./route-pace.mjs','./route-pace-view.mjs','./route-comparison-view.mjs','./route-comparison.mjs','./local-routes-view.mjs','./local-route-storage.mjs','./recorded-replay.mjs','./recorded-replay-view.mjs','./event-guide.mjs','./event-guide-view.mjs','./route-weather-view.mjs','./offline-view.mjs'],
     'prototypes/rider-first/style.css': [],
     'prototypes/rider-first/app.mjs': ['../../js/route-analysis-loader.mjs','../../js/route-analysis.mjs',
       '../../js/route-catalog.mjs','../../js/route-pack-contract.mjs','../../js/route-terrain-view.mjs','../../js/ride-simulation.mjs',
-      '../../js/ride-insights.mjs','../../js/route-flyover.mjs','../../js/ride-comparison.mjs'],
+      '../../js/ride-insights.mjs','../../js/route-flyover.mjs','../../js/ride-comparison.mjs','../../js/ride-relive.mjs'],
     'js/home-entry.mjs': ['../assets/site.css','./site-shell.mjs','../prototypes/rider-first/app.mjs','./offline-view.mjs'],
   };
   for (const [file, deps] of Object.entries(graph)) {
