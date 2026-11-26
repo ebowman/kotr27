@@ -53,13 +53,26 @@ const profileHelp = $('profile-help').textContent;
 let terrainReady = false;
 const rideCamera = createRideCamera();
 function cameraControls(available = terrainReady) {
+  $('zoom-help').title='Satellite imagery and approximate terrain only. Road surfaces and road cuts are not modeled; this is not literal rider eyesight.';
+  for (const view of ['rider','aerial']) {
+    $(`view-${view}`).disabled = !available;
+    pressed($(`view-${view}`),available && !manual && camera==='follow' && rideCamera.view===view);
+  }
   $('zoom-nearer').disabled = !available || rideCamera.zoom >= flyoverLimits.maxZoom;
   $('zoom-farther').disabled = !available || rideCamera.zoom <= flyoverLimits.minZoom;
-  text('zoom-help', available ? 'Closer view, same terrain detail. New route resets distance.' :
+  text('zoom-help', available ? manual ? 'Manual exploration · Return restores your chosen view.' :
+    camera!=='follow' ? 'Aerial framing · choose Rider to look forward.' : rideCamera.view==='rider' ?
+    'Rider · 2–9 m above approximate terrain; lifts on steep DEM. Not Street View.' :
+    'Closer view, same terrain detail. New route resets distance.' :
     privateView ? 'Private route · camera zoom unavailable in 2D.' : 'Camera zoom requires online terrain.');
 }
 for (const [id,delta] of [['zoom-nearer',.5],['zoom-farther',-.5]])
   $(id).addEventListener('click',()=>terrainHandle?.setZoom(rideCamera.zoom+delta));
+for (const view of ['rider','aerial'])
+  $(`view-${view}`).addEventListener('click',()=>{
+    if (!terrainReady) return;
+    rideCamera.setView(view);cameraControls();frameRoute('follow');
+  });
 let manual = false;
 const returnRider = document.createElement('button');
 returnRider.id = 'return-rider';returnRider.textContent = 'Return to rider';returnRider.hidden = true;
@@ -243,6 +256,7 @@ function frameRoute(value) {
       `${Math.min(...xs)-25} ${Math.min(...ys)-25} ${Math.max(...xs)-Math.min(...xs)+50} ${Math.max(...ys)-Math.min(...ys)+50}`);
   }
   for (const button of document.querySelectorAll('[data-frame]')) pressed(button,button.dataset.frame === camera);
+  cameraControls();
   updatePosition(true);
 }
 function seekTo(target, chapterId) {
@@ -532,7 +546,7 @@ function stopTerrain() {
   terrainController?.abort();terrainController = undefined;
   terrainHandle?.dispose();terrainHandle = undefined;
   $('terrain').replaceChildren();$('terrain').style.visibility = 'hidden';
-  for (const key of ['frame','distance','requests','camera']) delete $('terrain').dataset[key];
+  for (const key of ['frame','pose','renderSequence','distance','requests','uniqueRequests','camera','input']) delete $('terrain').dataset[key];
 }
 async function terrain() {
   stopTerrain();
@@ -567,7 +581,7 @@ async function terrain() {
       camera:rideCamera,onCamera:()=>cameraControls(),
       onManual:()=>{
         if (controller.signal.aborted) return;
-        manual = true;returnRider.hidden = false;pause();
+        manual = true;returnRider.hidden = false;cameraControls();pause();
       },
       onStatus:(state,reason) => {
         if (controller.signal.aborted) return;
@@ -581,6 +595,10 @@ async function terrain() {
         if (state === 'verifying') {
           terrainReady = false;
           status(reason);
+        }
+        if (state === 'relocating') {
+          terrainReady = false;$('player').classList.remove('online');
+          cameraControls(false);status(reason);
         }
         if (state === 'unavailable') {
           clearTimeout(deadline);

@@ -7,7 +7,8 @@ import { createAnalysisPlaybackRoute } from '../js/route-playback-adapters.mjs';
 import { createRoutePlayback } from '../js/route-playback.mjs';
 import { estimateRouteTime } from '../js/route-time.mjs';
 import { positionAt } from '../js/route-analysis.mjs';
-import { cameraJobs, cameraPose, createRideCamera, createRoutePresentation, followBearing, shortestAngle, followMotion, officialFlyover, routeLine, routeBounds, frameEvidence, terrainDepthEvidence, renderedRoadEvidence, flyoverLimits } from '../js/route-flyover.mjs';
+import { riderTerrainElevation, riderTerrainCeiling, riderRasterEvidence, createTerrainBudget } from '../js/route-flyover.mjs';
+import { cameraJobs, cameraPose, createRideCamera, createRoutePresentation, followBearing, shortestAngle, followMotion, officialFlyover, routeLine, routeBounds, frameEvidence, terrainDepthEvidence, renderedRoadEvidence, riderGeometry, riderOrbit, riderFrameEvidence, riderLimits, flyoverLimits } from '../js/route-flyover.mjs';
 
 test('camera distance is finite bounded state, independent of model and explicit route reset',()=>{
   const c=createRideCamera();
@@ -20,6 +21,178 @@ test('camera distance is finite bounded state, independent of model and explicit
   c.reset();assert.equal(c.zoom,12.6);
   assert.equal(flyoverLimits.tileRequests,240);
   assert.equal(flyoverLimits.tileCache,32);
+});
+
+test('terrain budget bounds unique coverage and reloads for one map lifetime, with no view-toggle reset',()=>{
+  const aerial=createTerrainBudget();
+  assert.equal(aerial.consume('metadata','Source'),true);
+  assert.equal(aerial.requests,0);
+  for(let i=0;i<240;i++)assert.equal(aerial.consume('same','Tile'),true);
+  assert.equal(aerial.consume('same','Tile'),false);
+  aerial.enableRider();
+  assert.equal(aerial.consume('new','Tile'),false,'Exhaustion cannot be undone by changing view');
+  for(const unique of [false,true]) {
+    const b=createTerrainBudget();b.enableRider();
+    const limit=unique?riderLimits.tileRequests:riderLimits.totalTileRequests;
+    for(let i=0;i<limit;i++) {
+      b.enableRider();
+      assert.equal(b.consume(unique?String(i):'same','Tile'),true);
+    }
+    assert.equal(b.requests,limit);
+    assert.equal(b.unique,unique?limit:1);
+    assert.equal(b.consume('over','Tile'),false);
+    const atLimit=[b.requests,b.unique];
+    for(let i=0;i<100;i++)assert.equal(b.consume(String(i),'Tile'),false);
+    assert.deepEqual([b.requests,b.unique],atLimit,'Failure cannot grow URL storage');
+  }
+  assert.equal(createTerrainBudget().consume('fresh-map','Tile'),true);
+});
+
+test('forward geometry: finite local bends, legal uphill axis, DEM clearance, endpoints and resets',async()=>{
+  const {pack}=await readRoutePack('.');
+  const load=createAnalysisStore(pack,p=>readFile(p));
+  for(const id of ['rwgps-57873019','rwgps-57873112']) {
+    const r=pack.catalog.routes.find(r=>r.id===id),a=await load(id,r.currentRevisionId);
+    const terrain=([lon,lat])=>200+(lat-45.8)*10000+(lon-11.7)*10000;
+    let prior;
+    for(let d=0;d<a.distanceM;d+=7) {
+      const s={distanceM:d,identity:a.identity},g=riderGeometry(a,s,12.6,terrain,prior,16);
+      assert.ok(g);
+      assert.ok([g.altitude,g.pitch,g.bearing,...g.position].every(Number.isFinite));
+      assert.ok(g.pitch>=45 && g.pitch<=85);
+      assert.ok(Math.abs(g.altitude-terrain(g.position)-5/2.5**(2.6/6))<1e-8,'DEM, not raw GPX elevation');
+      assert.ok(g.aim.distanceM-d<=55 && g.aim.distanceM>d);
+      assert.ok(g.samples.every(p=>p.distanceM>=Math.min(d,a.distanceM-12) && p.distanceM<=Math.min(a.distanceM,d+60)));
+      const reset=riderGeometry(a,s,12.6,terrain,prior,10000,true);
+      const fresh=riderGeometry(a,s,12.6,terrain);
+      assert.equal(reset.bearing,fresh.bearing);
+      if(prior) {
+        assert.ok(Math.abs(shortestAngle(prior.bearing,g.bearing))<=riderLimits.yawRate*riderLimits.yawSpeedScale*.016+.00001);
+        assert.ok(Math.abs(g.yawRate-prior.yawRate)<=riderLimits.yawAcceleration*riderLimits.yawSpeedScale**2*.016+.00001);
+      }
+      prior=g;
+    }
+    const s={distanceM:a.distanceM*.31,identity:a.identity},g=riderGeometry(a,s,12.6,terrain);
+    for(const direction of [-1,1]) {
+      const fast={...g,bearing:g.bearing-direction*15,
+        yawRate:direction*riderLimits.yawRate*riderLimits.yawSpeedScale};
+      const slow=riderGeometry(a,{...s,distanceM:s.distanceM+.08},12.6,terrain,fast,16);
+      assert.ok(Math.abs(slow.yawRate-fast.yawRate)<=riderLimits.yawAcceleration*.016+.00001,
+        'A drop in displayed speed must brake within the acceleration bound, not snap to the lower rate cap');
+    }
+    for(const d of [0,a.distanceM-1,a.distanceM]) {
+      const s={distanceM:d,identity:a.identity};
+      const g=riderGeometry(a,s,NaN,terrain,prior,NaN);
+      assert.ok(g && Number.isFinite(g.bearing+g.pitch+g.altitude));
+      assert.ok(g.samples.length>=2,'Finish still has distinct actual road samples');
+      assert.equal(riderGeometry(a,s,12.6,()=>null),null);
+      assert.equal(riderGeometry(a,s,12.6,()=>NaN),null);
+      const reversed=riderGeometry(a,{...s,distanceM:0},12.6,terrain,prior,16);
+      assert.equal(reversed.bearing,riderGeometry(a,{...s,distanceM:0},12.6,terrain).bearing);
+    }
+  }
+  const c=createRideCamera();c.setView('rider');c.setZoom(15);
+  assert.equal(c.view,'rider');c.setView('invalid');assert.equal(c.view,'rider');
+  c.reset();assert.equal(c.view,'aerial');assert.equal(c.zoom,12.6);
+});
+
+test('pinned current DEM read fails closed for absent, obsolete, wrong-source and ambiguous tiles',()=>{
+  const source={id:'rider-dem',type:'raster-dem',url:'mapbox://mapbox.mapbox-terrain-dem-v1',maxzoom:14};
+  const dem={uid:57,dim:512,get:(x,y)=>100+x+2*y};
+  const tile={uid:57,dem,demTexture:{},needsDEMTextureUpload:false,uses:0,state:'loaded',hasData:()=>true,
+    tileID:{wrap:0,canonical:{z:14,x:8192,y:8192}}};
+  const cache={getSource:()=>source,_sourceLoaded:true,_tiles:{},_cache:{data:{a:[{value:tile}]}}};
+  const map={queryTerrainElevation:()=>null,getTerrain:()=>({source:'rider-dem',exaggeration:1}),
+    getSource:()=>source,painter:{terrain:{enabled:true,sourceCache:cache}}};
+  const p=[.001,-.001],read=()=>riderTerrainElevation(map,p,'2.15.0');
+  assert.ok(Number.isFinite(read().height));assert.equal(read().via,'current-source-tile');
+  const before=JSON.stringify(cache._cache);read();assert.equal(JSON.stringify(cache._cache),before,'Read does not mutate cache');
+  assert.equal(riderTerrainElevation(map,p,'3.0.0'),null);
+  for(const [object,key,value] of [
+    [map.painter.terrain,'enabled',false],[cache,'_sourceLoaded',false],[source,'maxzoom',13],
+    [source,'url','mapbox://other'],[tile,'state','reloading'],[tile,'aborted',true],
+    [tile,'uses',1],[tile,'demTexture',null],[tile,'needsDEMTextureUpload',true],
+    [tile,'expirationTime',1],[dem,'uid',58],[dem,'dim',256],
+    [tile.tileID.canonical,'x',8193],[tile.tileID.canonical,'z',13],
+  ]) {
+    const old=object[key];object[key]=value;
+    assert.equal(read(),null,key);object[key]=old;
+  }
+  map.getSource=()=>({...source});assert.equal(read(),null,'Source instance replaced');
+  map.getSource=()=>source;
+  cache._tiles.a=tile;assert.equal(read(),null,'An active revision is never replaced with cached data');delete cache._tiles.a;
+  cache._tiles.a=tile;tile.uses=1;tile.needsDEMTextureUpload=true;tile.demTexture=null;
+  assert.equal(riderTerrainCeiling(map,p,'2.15.0').via,'loaded-source-ceiling');
+  assert.equal(read(),null,'Pending upload is a safety ceiling, never current rendered proof');
+  tile.state='loading';assert.equal(riderTerrainCeiling(map,p,'2.15.0'),null);
+  tile.state='loaded';tile.uses=0;tile.needsDEMTextureUpload=false;tile.demTexture={};delete cache._tiles.a;
+  cache._cache.data.b=[{value:tile}];assert.equal(read(),null,'Ambiguous revisions');delete cache._cache.data.b;
+  cache._cache.data={};assert.equal(read(),null,'Absent tile');
+  map.queryTerrainElevation=()=>321;
+  assert.deepEqual(read(),{height:321,via:'public'},'Public numeric query remains authoritative');
+});
+
+test('DEM orbit solver is finite, pitch-compatible, bounded and never fills missing terrain',()=>{
+  for(const pitch of [60,75,85])for(const slope of [-.04,0,.1,.4]) {
+    let queries=0;
+    const g={pitch,altitude:214.8},terrain=r=>{queries++;return 200+slope*r;};
+    const range=riderOrbit(g,terrain);
+    assert.ok(range>0 && range<=512);
+    assert.ok(Math.abs(terrain(range)+range/Math.tan(pitch*Math.PI/180)-g.altitude)<.0001);
+    assert.ok(queries<=145);
+  }
+  assert.equal(riderOrbit({pitch:85,altitude:214.8},()=>null),null);
+  assert.equal(riderOrbit({pitch:85,altitude:214.8},r=>200-r),null,'No invented intersection');
+});
+
+test('forward rendered proof rejects missing/below-ground/occluded/local road and UI cover; distant holes do not relax aerial',()=>{
+  const p={lon:11,lat:45,distanceM:10},geometry={position:[11,45],samples:[p,{...p,distanceM:14}]};
+  const map=depthFixture({project:()=>({x:100,y:100}),queryTerrainElevation:()=>100,
+    queryRenderedFeatures:()=>[{}],getPitch:()=>75,getBearing:()=>0,
+    getFreeCameraOptions:()=>({position:{toLngLat:()=>({lng:11,lat:45}),toAltitude:()=>105.6}})});
+  map.painter.terrain.proxyCoords[0].canonical={z:0,x:0,y:0};
+  const check=()=>riderFrameEvidence(map,geometry,()=>true);
+  assert.equal(check().ok,true);
+  assert.equal(riderFrameEvidence(map,geometry,()=>true,()=>true,'2.15.0',20).ok,false,
+    'Old geometry cannot certify a new shared presented distance');
+  map.queryRenderedFeatures=()=>[];
+  assert.equal(check().ok,true,'Forward exact-road depth plus actual ink does not depend on SDK terrain query bounds');
+  assert.equal(renderedRoadEvidence(map,{x:100,y:100}),false,'Aerial feature gate is unchanged');
+  map.painter.terrain.proxyCoords.push({key:'distant',canonical:{z:2,x:3,y:3}});
+  assert.equal(check().ok,true,'Only the current local sampled region is required in forward mode');
+  assert.equal(terrainDepthEvidence(map,p,{x:100,y:100},100).covered,false,'Aerial still requires all proxies');
+  map.queryTerrainElevation=()=>null;assert.equal(check().ok,false);
+  map.queryTerrainElevation=()=>120;assert.equal(check().ok,false,'Actual camera below DEM fails');
+  map.queryTerrainElevation=()=>100;
+  assert.equal(riderFrameEvidence(map,geometry,()=>false).ok,false);
+  assert.equal(riderFrameEvidence(map,geometry,()=>true,()=>false).ok,false,'Cockpit-obscured road is not visible');
+  map.clear=false;assert.equal(check().ok,false,'Local ridge occlusion fails');
+  map.clear=true;map.road=false;assert.equal(check().ok,false,'Terrain plus feature, without ink, fails');
+  map.road=true;delete map.painter.terrain.terrainTileForTile.current.dem;
+  assert.equal(check().ok,false,'Numeric elevation alone is not current bound DEM');
+});
+
+test('forward imagery requires currently bound textures at depth-verified terrain, never empty sky pixels',()=>{
+  const map=depthFixture({}),tile={texture:{}},id={key:'current',wrap:0,canonical:{z:0,x:0,y:0}};
+  map.transform.locationCoordinate=p=>({x:p.lng,y:p.lat});
+  const points=[{lon:.2,lat:.2,visible:true,covered:true},{lon:.5,lat:.5,visible:true,covered:true}];
+  const tr=map.painter.terrain;tr.proxyCoords=[id];tr.proxyToSource={current:{sat:[id]}};
+  map.getStyle=()=>({layers:[{type:'raster',source:'sat'}]});
+  map.style={_getSourceCache:()=>({id:'sat',getTile:()=>tile})};
+  const check=()=>riderRasterEvidence(map,points);
+  assert.equal(check().ok,true);
+  assert.equal(check().samples.length,2);
+  assert.ok(check().samples.every(s=>s.textured));
+  tr.proxyCoords.push({key:'behind',canonical:{z:0,x:1,y:0}});
+  assert.equal(check().ok,true,'Unseen selected proxy is not a visible imagery hole');
+  tile.texture=null;assert.equal(check().ok,false,'No texture at actual visible surface');
+  tile.texture={};tr.proxyToSource.current.sat=[];
+  assert.equal(check().ok,false,'Loaded but unbound tile is not current coverage');
+  tr.proxyToSource.current.sat=[id];
+  points[0].visible=false;assert.equal(check().ok,false,'Occluded/missing depth is not a raster sample');
+  points[0].visible=true;points[0].covered=false;assert.equal(check().ok,false);
+  points[0].covered=true;points[0].lon=NaN;assert.equal(check().ok,false);
+  assert.equal(riderRasterEvidence(map,[]).ok,false,'Empty/sky pixels never become terrain evidence');
 });
 
 // Deterministic packed-depth fixture. Real GPU terrain/ridge coverage is tested
@@ -249,6 +422,8 @@ async function terrainFixture() {
     .replace('export async function mountRouteTerrain','async function mountRouteTerrain');
   let now=0, map, visibility='hidden', manualCalls=0;
   const timers=new Map(), frames=new Map(), transitions=[], statuses=[], poses=[], presented=[];
+  const surface={events:new Map(),addEventListener(name,fn){this.events.set(name,fn);},
+    removeEventListener(name,fn){assert.equal(this.events.get(name),fn);this.events.delete(name);}};
   const box={left:0,top:0,right:200,bottom:200,width:200,height:200};
   const container={clientWidth:200,clientHeight:200,dataset:{},
     getBoundingClientRect:()=>box,
@@ -263,6 +438,7 @@ async function terrainFixture() {
     emit(name,e={}){this.events[name]?.({type:name,...e});}
     addControl(){} addSource(){} addLayer(){} setTerrain(){} triggerRepaint(){} resize(){}
     getSource(){return {tiles:[],tileSize:256};}
+    getCanvasContainer(){return surface;}
     zooming=false;zoom=12.6;
     isZooming(){return this.zooming;} getZoom(){return this.zoom;}
     stop(){this.zooming=false;}
@@ -288,11 +464,11 @@ async function terrainFixture() {
   let nextTimer=0;
   const mount=new Function('window','document','devicePixelRatio','performance','setTimeout','clearTimeout',
     'cameraPose','createRideCamera','followBearing','routeBounds','routeLine','frameEvidence','limits',
-    'createRoutePresentation','requestAnimationFrame','cancelAnimationFrame',
+    'createRoutePresentation','requestAnimationFrame','cancelAnimationFrame','riderLimits','createTerrainBudget',
     source+'\nreturn mountRouteTerrain;')(window,document,1,{now:()=>now},
     (fn,ms)=>{const id=++nextTimer;timers.set(id,{fn,at:now+ms});return id;},
     id=>timers.delete(id),cameraPose,createRideCamera,followBearing,routeBounds,routeLine,proof,flyoverLimits,
-    createRoutePresentation,fn=>{const id=++nextTimer;frames.set(id,fn);return id;},id=>frames.delete(id));
+    createRoutePresentation,fn=>{const id=++nextTimer;frames.set(id,fn);return id;},id=>frames.delete(id),riderLimits,createTerrainBudget);
   const identity={revisionId:'test',geometrySha256:'test'};
   const position={lon:11,lat:45,rawElevationM:100,elevationM:100,distanceM:0};
   const analysis={identity,status:'supported',distanceM:100,
@@ -305,7 +481,7 @@ async function terrainFixture() {
     onPresent:s=>presented.push(s),
     onStatus:(state,message)=>statuses.push({state,message}),onManual(){manualCalls++;}});
   map.emit('load');
-  return {map,handle,container,statuses,transitions,controller,gl,snapshot,timers,frames,poses,presented,analysis,document,
+  return {map,handle,container,statuses,transitions,controller,gl,snapshot,timers,frames,poses,presented,analysis,document,surface,
     manualCalls:()=>manualCalls,
     async replace(){
       const handle=await mount({container,analysis,snapshot,signal:new AbortController().signal,
@@ -346,6 +522,7 @@ test('terrain presentation stays continuous through successful motion and transi
   f.map.emit('render');
   assert.deepEqual(f.transitions,['visible'],'Seek also retains the presented terrain');
   f.controller.abort();
+  assert.equal(f.surface.events.size,0,'Captured Rider input listeners are removed on disposal');
   assert.equal(f.map.removed,1);
   assert.equal(f.gl.maxParallelImageRequests,16);
   assert.equal(f.timers.size,0);

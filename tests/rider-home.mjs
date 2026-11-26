@@ -90,6 +90,429 @@ async function currentTerrain(b) {
   assert.ok(!r.exceptionDetails,JSON.stringify(r.exceptionDetails));return r.result.value;
 }
 
+async function installRiderSampler(b,f) {
+  const path=[...f.files.keys()].find(p=>/^js\/route-flyover\.[a-f0-9]+\.mjs$/.test(p));
+  assert.ok(path);
+  await b.js(`(async()=>{const helpers=await import(${JSON.stringify(f.base+path)});
+    window.riderSampler=helpers.riderTerrainElevation;window.riderRaster=helpers.riderRasterEvidence;})()`);
+}
+async function observeRasterCoverage(b) {
+  await b.js(`(()=>{
+    const m=observedTerrain;
+    let strict;
+    window.rasterMismatches??=[];
+    m.on('render',()=>{
+      const tr=m.painter?.terrain;
+      if(!tr?.proxyCoords || performance.now()-(window.lastRaster?.at||0)<200)return;
+      if(!strict && m.getSource('rider-satellite'))strict=kotrTerrainTools.rasterCoverage(m);
+      const proof=JSON.parse(document.getElementById('terrain').dataset.frame||'{}');
+      window.lastRaster={at:performance.now(),strict:strict?.(),visible:proof.raster,proxies:tr.proxyCoords.map(p=>({
+        id:p.canonical,wrap:p.wrap,layers:m.getStyle().layers.filter(l=>l.type==='raster'&&l.layout?.visibility!=='none').map(l=>{
+          const c=m.style._getSourceCache(l.source);
+          return {source:l.source,tiles:(tr.proxyToSource[p.key]?.[c.id]||[]).map(id=>({
+            id:id.canonical,wrap:id.wrap,texture:!!c.getTile(id)?.texture}))};
+        })}))};
+      if(proof.current && performance.now()-proof.at<10 && proof.raster?.ok && lastRaster.strict===false && rasterMismatches.length<20)
+        rasterMismatches.push({distance:proof.distanceM,geometrySha256:proof.geometrySha256,...lastRaster});
+    });return true;
+  })()`);
+}
+test('Rider resource qualification: explicit paused full-route seeks, not a playback-duration claim',async t=>{
+  const f=await fixture(t),b=await f.chrome();
+  await b.cmd('Page.enable');
+  await b.cmd('Emulation.setDeviceMetricsOverride',{width:1440,height:900,deviceScaleFactor:1,mobile:false});
+  await b.cmd('Page.addScriptToEvaluateOnNewDocument',{source:`
+    Object.defineProperty(window,'mapboxgl',{configurable:true,set(gl){
+      Object.defineProperty(window,'mapboxgl',{value:gl,configurable:true});
+      gl.Map=new Proxy(gl.Map,{construct(T,args){return window.observedTerrain=new T(...args);}});
+    }});`});
+  await b.cmd('Page.navigate',{url:f.base});await ready(b);
+  await installRiderSampler(b,f);
+  await click(b,'fly');await currentTerrain(b);
+  const evidence=[];
+  try {
+    for(const id of ['rwgps-57873019','rwgps-57873112'].filter(id=>!process.env.RIDER_RESOURCE_ROUTE || id===process.env.RIDER_RESOURCE_ROUTE)) {
+      if(id==='rwgps-57873112'){await select(b,'player-route',id);await ready(b);await currentTerrain(b);}
+      await observeRasterCoverage(b);
+      await click(b,'view-rider');await currentTerrain(b);
+      for(let i=0;i<=512;i++) {
+        await seek(b,Math.round(i*1000/512));
+        const proof=await currentTerrain(b);
+        const resources=await b.js(`({requests:Number(document.getElementById('terrain').dataset.requests),
+          unique:Number(document.getElementById('terrain').dataset.uniqueRequests),
+          playing:document.getElementById('play').getAttribute('aria-label')==='Pause route preview'})`);
+        evidence.push({id,i,distance:proof.distanceM,clearance:proof.clearance,...resources});
+        assert.equal(resources.playing,false);
+        assert.equal(proof.mode,'rider');assert.ok(proof.elevation&&proof.road);
+      }
+      t.diagnostic(JSON.stringify(evidence.at(-1)));
+    }
+  } finally {
+    const dir=process.env.RIDE_EXPLORER_EVIDENCE_DIR;
+    if(dir){await mkdir(dir,{recursive:true});await writeFile(join(dir,'resource-traversal.json'),JSON.stringify(evidence,null,2));
+      await writeFile(join(dir,'resource-traversal-last.json'),JSON.stringify(await b.js(`({
+        frame:JSON.parse(document.getElementById('terrain').dataset.frame||'{}'),
+        camera:JSON.parse(document.getElementById('terrain').dataset.camera||'{}'),raster:window.lastRaster,
+        mismatches:window.rasterMismatches})`),null,2));}
+    await screenshot(b,'resource-traversal-last');
+  }
+});
+test('pinned DEM boundary lifecycle diagnostic',async t=>{
+  const f=await fixture(t),b=await f.chrome();
+  await b.cmd('Page.enable');
+  await b.cmd('Page.addScriptToEvaluateOnNewDocument',{source:`
+    Object.defineProperty(window,'mapboxgl',{configurable:true,set(gl){
+      Object.defineProperty(window,'mapboxgl',{value:gl,configurable:true});
+      gl.Map=new Proxy(gl.Map,{construct(T,args){return window.observedTerrain=new T(...args);}});
+    }});`});
+  await b.cmd('Page.navigate',{url:f.base});await ready(b);
+  await installRiderSampler(b,f);
+  await click(b,'fly');await currentTerrain(b);await seek(b,214);await currentTerrain(b);
+  await click(b,'view-rider');await currentTerrain(b);
+  await b.js(`window.boundary=[];
+    observedTerrain.on('render',()=>{
+      const m=observedTerrain,p=m.getFreeCameraOptions().position,ll=p.toLngLat(),ground=m.queryTerrainElevation(ll);
+      if(boundary.length>=1200)return;
+      const terrain=m.painter.terrain,cache=terrain.sourceCache,source=cache.getSource();
+      const candidates=[...Object.values(cache._tiles).map(tile=>({tile,where:'active'})),
+        ...Object.values(cache._cache.data).flat().map(x=>({tile:x.value,where:'cache'}))];
+      const tiles=candidates.filter(({tile})=>{
+        const c=tile.tileID.canonical,n=2**c.z;
+        return Math.floor(p.x*n)===c.x && Math.floor(p.y*n)===c.y;
+      }).map(({tile,where})=>{
+        const c=tile.tileID.canonical,n=2**c.z,dem=tile.dem;
+        const x=(p.x*n-c.x)*dem.dim,y=(p.y*n-c.y)*dem.dim,i=Math.floor(x),j=Math.floor(y);
+        const q=[dem.get(i,j),dem.get(i+1,j),dem.get(i,j+1),dem.get(i+1,j+1)];
+        const sampled=(q[0]*(1-x+i)+q[1]*(x-i))*(1-y+j)+(q[2]*(1-x+i)+q[3]*(x-i))*(y-j);
+        return {where,id:c,uid:tile.uid,demUid:dem.uid,state:tile.state,uses:tile.uses,
+          aborted:tile.aborted,expirationTime:tile.expirationTime,dim:dem.dim,x,y,q,sampled,
+          texture:!!tile.demTexture,needsUpload:tile.needsDEMTextureUpload,
+          bound:Object.values(terrain.terrainTileForTile).includes(tile)};
+      });
+      boundary.push({at:performance.now(),adapter:riderSampler(m,ll,mapboxgl.version),
+        distance:Number(document.getElementById('cockpit').dataset.distance),
+        ground,altitude:p.toAltitude(),tiles,source:{id:source.id,url:source.url,maxzoom:source.maxzoom},
+        activeSource:m.getTerrain().source,sourceSame:m.getSource(m.getTerrain().source)===source});
+    });void 0;`);
+  await click(b,'play');await sleep(6000);await click(b,'play');
+  const result=await b.js('boundary');
+  const dir=process.env.RIDE_EXPLORER_EVIDENCE_DIR;
+  if(dir){await mkdir(dir,{recursive:true});await writeFile(join(dir,'dem-boundary.json'),JSON.stringify(result,null,2));}
+  t.diagnostic(JSON.stringify(result.filter(p=>p.ground===null)));
+  assert.ok(result.some(p=>p.ground===null),'Reproduce the exact public-query miss');
+  for(const p of result) {
+    assert.ok(p.adapter && Number.isFinite(p.adapter.height));
+    const tile=p.tiles.find(t=>t.id.z===14);
+    if(tile) assert.ok(Math.abs(tile.sampled-p.adapter.height)<1e-6,'Independent raw-texel sampler parity');
+    assert.ok(p.altitude-p.adapter.height>=1.5);
+  }
+});
+
+for(const playbackRate of [1,16]) for(const [width,height] of [[1440,900],[375,812]])
+test(`built forward rider ${playbackRate}x ${width}: current DEM, actual camera and nearby rendered road on Grappa and Asolo`,async t=>{
+  const f=await fixture(t,{cameraBaseline:process.env.RIDE_CAMERA_BASELINE});
+  {
+    const b=await f.chrome();
+    await b.cmd('Page.enable');
+    await b.cmd('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
+    if(width===375)await b.cmd('Emulation.setTouchEmulationEnabled',{enabled:true,maxTouchPoints:2});
+    await b.cmd('Page.addScriptToEvaluateOnNewDocument',{source:`
+      Object.defineProperty(window,'mapboxgl',{configurable:true,set(gl){
+        Object.defineProperty(window,'mapboxgl',{value:gl,configurable:true});
+        gl.Map=new Proxy(gl.Map,{construct(T,args){
+          const m=window.observedTerrain=new T(...args);
+          const actual=()=>{
+            const p=m.getFreeCameraOptions().position,ll=p.toLngLat(),ground=m.queryTerrainElevation(ll);
+            return {scale:m.transform.worldSize,zoom:m.getZoom(),altitude:p.toAltitude(),ground,
+              clearance:Number.isFinite(ground)?p.toAltitude()-ground:null,
+              distance:Number(document.getElementById('terrain').dataset.distance)};
+          };
+          // Read before the captured listener and at its input mutation's
+          // microtask checkpoint, after synchronous camera handling. A queued
+          // microtask in this earlier listener would run BEFORE that handler.
+          // Same rider position: later zoom includes terrain-orbit movement.
+          let pendingWheel=false;
+          const inputObserver=new MutationObserver(()=>{
+            if(pendingWheel) {
+              window.riderWheelEvidence.after=actual();pendingWheel=false;
+            }
+          });
+          inputObserver.observe(document.getElementById('terrain'),{attributes:true,attributeFilter:['data-input']});
+          m.on('remove',()=>inputObserver.disconnect());
+          m.getCanvasContainer().addEventListener('wheel',e=>{
+            window.riderWheelEvidence={trusted:e.isTrusted,before:actual()};pendingWheel=true;
+          },{capture:true});
+          return m;
+        }});
+      }});`});
+    await b.cmd('Page.navigate',{url:f.base});await ready(b);
+    await installRiderSampler(b,f);
+    await select(b,'playback-rate',String(playbackRate));
+    const pointer=async id=>{
+      const p=await b.js(`(()=>{
+        const el=document.getElementById('${id}'),r=el.getBoundingClientRect();
+        return {x:r.x+r.width/2,y:r.y+r.height/2,hit:el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)),
+          width:r.width,height:r.height,disabled:el.disabled};
+      })()`);
+      assert.ok(p.hit && !p.disabled && p.width>=44 && p.height>=44,JSON.stringify({id,...p}));
+      await b.cmd('Input.dispatchMouseEvent',{type:'mousePressed',x:p.x,y:p.y,button:'left',clickCount:1});
+      await b.cmd('Input.dispatchMouseEvent',{type:'mouseReleased',x:p.x,y:p.y,button:'left',clickCount:1});
+    };
+    const state=()=>b.js(`({playing:document.getElementById('play').getAttribute('aria-label')==='Pause route preview',
+      ...document.getElementById('cockpit').dataset,rate:document.getElementById('playback-rate').value,
+      zoom:observedTerrain.getZoom(),scale:observedTerrain.transform.worldSize,pitch:observedTerrain.getPitch(),
+      proof:JSON.parse(document.getElementById('terrain').dataset.frame||'{}'),
+      camera:JSON.parse(document.getElementById('terrain').dataset.camera||'{}')})`);
+    try {
+    await pointer('fly');await currentTerrain(b);
+    for (const [route,target,label] of [
+      ['rwgps-57873019',190,'grappa-lower'],['rwgps-57873019',310,'grappa-upper'],
+      ['rwgps-57873112',210,'asolo'],
+    ].filter(row=>!process.env.RIDER_REGION || row[2]===process.env.RIDER_REGION)) {
+      if(label==='asolo') {await select(b,'player-route',route);await ready(b);await currentTerrain(b);}
+      await seek(b,process.env.RIDER_SEEK?Number(process.env.RIDER_SEEK):target);await currentTerrain(b);
+      const paused=await state();
+      await pointer('view-rider');
+      try {await currentTerrain(b);} catch(e) {
+        await screenshot(b,`rider-${playbackRate}x-${width}-${label}-failed`);
+        t.diagnostic(JSON.stringify(await state()));throw e;
+      }
+      assert.equal((await state()).distance,paused.distance);
+      assert.equal((await state()).playing,false);
+      assert.equal((await state()).proof.mode,'rider','Old aerial implementation must fail');
+      t.diagnostic(JSON.stringify({width,label,detail:await b.js(`(()=>{
+        const m=observedTerrain,s=m.style._otherSourceCaches['rider-satellite'];
+        const p=m.getFreeCameraOptions().position;
+        const loaded=Object.values(s._tiles).filter(t=>t.state==='loaded').map(t=>t.tileID.canonical);
+        const near=loaded.filter(c=>Math.floor(p.x*2**c.z)===c.x&&Math.floor(p.y*2**c.z)===c.y);
+        return {sourceMax:m.getSource('rider-satellite').maxzoom,loaded:loaded.length,near,
+          proxyMax:Math.max(...m.painter.terrain.proxyCoords.map(c=>c.canonical.z))};
+      })()`)}));
+      await screenshot(b,`rider-${playbackRate}x-${width}-${label}-paused`);
+      await b.js(`(()=>{
+        const el=document.getElementById('terrain'),map=observedTerrain;
+        window.riderEvidence={frames:[],proofs:[],hidden:0};
+        const render=()=>{
+          const pos=map.getFreeCameraOptions().position,ll=pos.toLngLat(),publicGround=map.queryTerrainElevation(ll);
+          const terrain=riderSampler(map,ll,mapboxgl.version),ground=terrain?.height ?? null;
+          const c=JSON.parse(el.dataset.camera||'{}');
+          riderEvidence.frames.push({at:performance.now(),pose:JSON.parse(el.dataset.pose||'{}'),
+            camera:{bearing:c.bearing,target:c.target,yawRate:c.yawRate,pitch:c.pitch,position:c.position,
+              altitude:c.altitude,ground:c.ground,orbit:c.orbit},altitude:pos.toAltitude(),ground,publicGround,terrain,
+            clearance:Number.isFinite(ground)?pos.toAltitude()-ground:null,pitch:map.getPitch(),bearing:map.getBearing(),
+            distance:Number(document.getElementById('cockpit').dataset.distance)});
+          if(getComputedStyle(el).visibility!=='visible')riderEvidence.hidden++;
+        };map.on('render',render);
+        const observer=new MutationObserver(()=>{
+          const p=JSON.parse(el.dataset.frame||'{}');if(p.current)riderEvidence.proofs.push(p);
+        });observer.observe(el,{attributes:true,attributeFilter:['data-frame']});
+        riderEvidence.dispose=()=>{map.off('render',render);observer.disconnect();};
+      })()`);
+      await pointer('play');
+      await sleep(1500);
+      const approach=await state();
+      await screenshot(b,`rider-${playbackRate}x-${width}-${label}-approach`);
+      assert.equal(approach.proof.road,true,JSON.stringify({message:'Forward approach must not be a blank hillside',
+        distance:approach.distance,bearing:approach.camera.bearing,target:approach.camera.target}));
+      t.diagnostic(JSON.stringify({width,label,refinedImagery:await b.js(`(()=>{
+        const m=observedTerrain,p=m.getFreeCameraOptions().position,s=m.style._otherSourceCaches['rider-satellite'];
+        return Object.values(s._tiles).filter(t=>t.state==='loaded').map(t=>t.tileID.canonical)
+          .filter(c=>Math.floor(p.x*2**c.z)===c.x&&Math.floor(p.y*2**c.z)===c.y);
+      })()`)}));
+      await sleep(process.env.RIDER_SEEK?4500:playbackRate===1?24500:58500);await currentTerrain(b);
+      const moving=await state();
+      assert.equal(moving.playing,true);
+      assert.ok(Number(moving.distance)>Number(paused.distance));
+      await pointer('zoom-nearer');await currentTerrain(b);
+      const close=await state();assert.equal(close.playing,true);
+      assert.ok(close.camera.clearance<moving.camera.clearance);
+      await sleep(3000);await currentTerrain(b);
+      await screenshot(b,`rider-${playbackRate}x-${width}-${label}-moving`);
+      await pointer('zoom-farther');await currentTerrain(b);
+      assert.equal((await state()).playing,true);
+      // Bounded observation transfer: serializing tens of thousands of nested
+      // samples in one CDP request itself blocks RAF and trips the honest
+      // no-catch-up clock. Never change the clock to accommodate the observer.
+      const counts=await b.js(`riderEvidence.dispose();({frames:riderEvidence.frames.length,
+        proofs:riderEvidence.proofs.length,hidden:riderEvidence.hidden})`);
+      const evidence={frames:[],proofs:[],hidden:counts.hidden};
+      for(const key of ['frames','proofs'])for(let i=0;i<counts[key];i+=key==='frames'?400:20)
+        evidence[key].push(...await b.js(`riderEvidence.${key}.slice(${i},${i+(key==='frames'?400:20)})`));
+      const dir=process.env.RIDE_EXPLORER_EVIDENCE_DIR;
+      if(dir)await writeFile(join(dir,`rider-${playbackRate}x-${width}-${label}.json`),JSON.stringify(evidence,null,2));
+      assert.equal(evidence.hidden,0);
+      assert.ok(evidence.frames.length>60);
+      assert.ok(evidence.proofs.filter(p=>p.ok && p.mode==='rider').length>10);
+      assert.deepEqual(evidence.frames.filter(p=>!(p.clearance>=1.5 && p.clearance<=10 && p.pitch>=45 && p.pitch<=85.001)),[]);
+      const angle=(a,b)=>((b-a+540)%360+360)%360-180,rates=[];
+      for(let i=1;i<evidence.frames.length;i++) {
+        const p=evidence.frames[i-1],q=evidence.frames[i],dt=(q.pose.at-p.pose.at)/1000;
+        assert.ok(Math.abs(angle(q.camera.bearing,q.bearing))<.001,'Actual heading matches bounded camera, not only SDK arguments');
+        if(dt>0 && dt<=.25 && q.distance>=p.distance && q.distance-p.distance<30) {
+          const rate=Math.abs(angle(p.bearing,q.bearing))/dt;rates.push(rate);
+          const scale=playbackRate===1?1:4;
+          assert.ok(rate<=360*scale+.01,JSON.stringify({p,q,rate}));
+          assert.ok(Math.abs(q.camera.yawRate-p.camera.yawRate)<=3600*scale**2*dt+.01,'Actual consecutive pose acceleration is bounded');
+        }
+      }
+      rates.sort((a,b)=>a-b);
+      t.diagnostic(JSON.stringify({width,label,actualYaw:{maximum:rates.at(-1),p99:rates[Math.floor(rates.length*.99)]}}));
+      if(label==='grappa-lower') {
+        const x=width*.8,y=height*.45,before=await state();
+        assert.equal(await b.js(`document.elementFromPoint(${x},${y}).tagName`),'CANVAS');
+        const inputBefore=await b.js(`document.getElementById('terrain').dataset.input`);
+        await b.cmd('Input.dispatchMouseEvent',{type:'mouseWheel',x,y,deltaX:0,deltaY:-70});
+        try {await until(()=>b.js(`document.getElementById('terrain').dataset.input!==${JSON.stringify(inputBefore)}`));}
+        catch(e) {
+          if(dir)await writeFile(join(dir,`rider-${playbackRate}x-${width}-${label}-wheel-failed.json`),JSON.stringify({before,state:await state()},null,2));
+          await screenshot(b,`rider-${playbackRate}x-${width}-${label}-wheel-failed`);throw e;
+        }
+        await until(()=>b.js(`!observedTerrain.isZooming()`));await currentTerrain(b);
+        const wheel=await state();
+        assert.equal(wheel.playing,true);assert.equal(wheel.rate,before.rate);
+        assert.equal(wheel.proof.geometrySha256,before.proof.geometrySha256);
+        assert.ok(wheel.camera.desiredZoom>before.camera.desiredZoom,JSON.stringify({before:before.camera.desiredZoom,after:wheel.camera.desiredZoom}));
+        assert.ok(wheel.proof.clearance<before.proof.clearance*.97,'Actual measured camera gets closer');
+        const nativeWheel=await b.js('window.riderWheelEvidence');
+        assert.equal(nativeWheel.trusted,true);
+        assert.equal(nativeWheel.after.distance,nativeWheel.before.distance);
+        assert.ok(nativeWheel.after.scale>nativeWheel.before.scale*1.02,JSON.stringify(nativeWheel));
+        t.diagnostic(JSON.stringify({width,nativeWheel:{before:{scale:before.scale,clearance:before.proof.clearance,desired:before.camera.desiredZoom},
+          after:{scale:wheel.scale,clearance:wheel.proof.clearance,desired:wheel.camera.desiredZoom}}}));
+        await sleep(1000);await currentTerrain(b);
+        assert.ok(Math.abs((await state()).camera.desiredZoom-wheel.camera.desiredZoom)<.001);
+        await b.cmd('Input.dispatchMouseEvent',{type:'mousePressed',x,y,button:'left',clickCount:1});
+        await b.cmd('Input.dispatchMouseEvent',{type:'mouseReleased',x,y,button:'left',clickCount:1});
+        const keyBefore=await state();
+        await b.cmd('Input.dispatchKeyEvent',{type:'keyDown',key:'-',code:'Minus',windowsVirtualKeyCode:189});
+        await b.cmd('Input.dispatchKeyEvent',{type:'keyUp',key:'-',code:'Minus',windowsVirtualKeyCode:189});
+        await sleep(500);await currentTerrain(b);
+        const keyboard=await state();
+        assert.equal(keyboard.playing,true);
+        assert.equal(keyboard.proof.geometrySha256,wheel.proof.geometrySha256);
+        assert.ok(keyboard.camera.desiredZoom<wheel.camera.desiredZoom);
+        assert.ok(keyboard.proof.clearance>keyBefore.proof.clearance*1.03,'Keyboard changes actual measured camera distance');
+        await b.cmd('Input.dispatchKeyEvent',{type:'keyDown',key:'+',code:'Equal',modifiers:2});
+        await b.cmd('Input.dispatchKeyEvent',{type:'keyUp',key:'+',code:'Equal',modifiers:2});
+        await b.js(`document.getElementById('playback-rate').focus()`);
+        await b.cmd('Input.dispatchKeyEvent',{type:'keyDown',key:'-',code:'Minus'});
+        await b.cmd('Input.dispatchKeyEvent',{type:'keyUp',key:'-',code:'Minus'});
+        await currentTerrain(b);
+        assert.equal((await state()).camera.desiredZoom,keyboard.camera.desiredZoom,'Modified shortcuts and form focus do not zoom the camera');
+        assert.equal((await state()).rate,keyboard.rate);
+        let pinch;
+        if(width===375) {
+          const before=await state(),points=gap=>[{x:width/2-gap,y,id:1},{x:width/2+gap,y,id:2}];
+          await b.cmd('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:points(25)});
+          for(let gap=27;gap<=35;gap+=2) {
+            await b.cmd('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:points(gap)});await sleep(35);
+          }
+          await b.cmd('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+          await until(()=>b.js(`!observedTerrain.isZooming()`));await currentTerrain(b);
+          const after=await state();pinch={before,after};
+          assert.equal(after.playing,true);
+          assert.equal(after.proof.geometrySha256,before.proof.geometrySha256);
+          assert.ok(after.camera.desiredZoom>before.camera.desiredZoom);
+          assert.ok(after.proof.clearance<before.proof.clearance*.97,'Pinch changes actual measured camera distance');
+          await sleep(700);await currentTerrain(b);
+          assert.equal((await state()).camera.desiredZoom,after.camera.desiredZoom);
+          // Cancellation must restore ordinary single-pointer pan, not leave
+          // the public drag handler disabled or two competing zoom owners.
+          await b.cmd('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:points(25)});
+          await b.cmd('Input.dispatchTouchEvent',{type:'touchCancel',touchPoints:[]});
+          assert.equal(await b.js('observedTerrain.dragPan.isEnabled()'),true);
+        }
+        if(dir)await writeFile(join(dir,`rider-${playbackRate}x-${width}-native-controls.json`),
+          JSON.stringify({wheel:{before,after:wheel,native:nativeWheel},keyboard:{before:keyBefore,after:keyboard},pinch},null,2));
+        await pointer('play');const stopped=await state();
+        // A 16x switchback pause can leave bounded yaw/support damping in
+        // flight. Compare distance controls at the SAME settled scene, not a
+        // stale pre-pause proof while the safety lift is still coming down.
+        await until(()=>b.js(`(()=>{
+          const c=JSON.parse(document.getElementById('terrain').dataset.camera||'{}');
+          return c.view==='rider' && Math.abs(c.yawRate)<=.1 &&
+            Math.abs(((c.target-c.bearing+540)%360+360)%360-180)<=.1 &&
+            Math.abs(c.pitch-c.targetPitch)<=.1 && Math.abs(c.support-c.neededSupport)<=.01;
+        })()`));
+        await currentTerrain(b);const paused=await state();
+        assert.equal(paused.distance,stopped.distance);assert.equal(paused.seconds,stopped.seconds);
+        await pointer('zoom-farther');await currentTerrain(b);
+        const pausedFar=await state();
+        assert.equal(pausedFar.playing,false);assert.equal(pausedFar.distance,paused.distance);
+        assert.equal(pausedFar.seconds,paused.seconds);
+        assert.ok(pausedFar.proof.clearance>paused.proof.clearance,
+          JSON.stringify({before:paused.proof.clearance,after:pausedFar.proof.clearance}));
+        await pointer('zoom-nearer');await currentTerrain(b);
+        assert.ok(Math.abs((await state()).camera.desiredZoom-paused.camera.desiredZoom)<.001);
+        await pointer('play');await currentTerrain(b);
+        // Native pan transfers to aerial inspection, pauses, and keeps the
+        // requested Rider preference for Return. Manual depth is not weakened.
+        await b.cmd('Input.dispatchMouseEvent',{type:'mousePressed',x,y,button:'left',buttons:1,clickCount:1});
+        for(let i=1;i<=8;i++) {
+          await b.cmd('Input.dispatchMouseEvent',{type:'mouseMoved',x:x-i*6,y,button:'left',buttons:1});await sleep(30);
+        }
+        await b.cmd('Input.dispatchMouseEvent',{type:'mouseReleased',x:x-48,y,button:'left',clickCount:1});
+        await until(async()=>!(await state()).playing);
+        assert.equal((await currentTerrain(b)).mode,'manual');
+        assert.equal(await b.js(`document.getElementById('view-rider').getAttribute('aria-pressed')`),'false');
+        assert.match(await b.js(`document.getElementById('zoom-help').textContent`),/Manual exploration/);
+        await pointer('return-rider');assert.equal((await currentTerrain(b)).mode,'rider');
+        assert.equal(await b.js(`document.getElementById('view-rider').getAttribute('aria-pressed')`),'true');
+        assert.equal((await state()).playing,false);
+        assert.ok(Math.abs((await state()).camera.desiredZoom-paused.camera.desiredZoom)<.001);
+        await pointer('play');await currentTerrain(b);
+        await screenshot(b,`rider-${playbackRate}x-${width}-${label}-native-return`);
+        await pointer('play');
+        const preference=(await state()).camera.desiredZoom;
+        const seeks=[];
+        for(const target of [800,190]) {
+          await seek(b,target);const proof=await currentTerrain(b),s=await state();
+          assert.equal(s.playing,false);
+          assert.equal(s.camera.desiredZoom,preference);
+          assert.equal(s.camera.riderDistanceM,Number(s.distance));
+          assert.equal(proof.distanceM,Number(s.distance));
+          seeks.push({target,distance:proof.distanceM,cameraDistance:s.camera.riderDistanceM,
+            desiredZoom:s.camera.desiredZoom,clearance:proof.clearance,position:proof.position});
+          await screenshot(b,`rider-${playbackRate}x-${width}-seek-${target}`);
+        }
+        if(dir)await writeFile(join(dir,`rider-${playbackRate}x-${width}-seeks.json`),JSON.stringify(seeks,null,2));
+        await pointer('play');await currentTerrain(b);
+        const running=await state();
+        await pointer('view-aerial');await currentTerrain(b);
+        assert.equal((await state()).playing,true);
+        await pointer('view-rider');await currentTerrain(b);
+        const reentered=await state();
+        assert.equal(reentered.playing,true);assert.equal(reentered.rate,running.rate);
+        assert.equal(reentered.origin,running.origin);assert.equal(reentered.history,running.history);
+        assert.equal(reentered.proof.geometrySha256,running.proof.geometrySha256);
+        assert.equal(reentered.camera.desiredZoom,preference);
+        assert.ok(Number(reentered.distance)>=Number(running.distance));
+      }
+      await pointer('view-aerial');await currentTerrain(b);
+      const aerial=await state();
+      assert.equal(aerial.playing,true);assert.equal(aerial.pitch,45);
+      assert.equal(aerial.rate,moving.rate);assert.equal(aerial.proof.mode,'follow');
+      await pointer('play');
+      t.diagnostic(JSON.stringify({width,label,frames:evidence.frames.length,
+        valid:evidence.proofs.filter(p=>p.ok).length,clearance:[Math.min(...evidence.frames.map(p=>p.clearance)),
+          Math.max(...evidence.frames.map(p=>p.clearance))],distance:[evidence.frames[0].distance,evidence.frames.at(-1).distance],
+        requests:await b.js(`Number(document.getElementById('terrain').dataset.requests)`),
+        uniqueRequests:await b.js(`Number(document.getElementById('terrain').dataset.uniqueRequests)`)}));
+    }
+    assert.deepEqual(b.exceptions,[]);
+    } catch(error) {
+      await screenshot(b,`rider-${playbackRate}x-${width}-failure`);
+      const dir=process.env.RIDE_EXPLORER_EVIDENCE_DIR;
+      if(dir)await writeFile(join(dir,`rider-${playbackRate}x-${width}-failure.json`),
+        JSON.stringify({state:await state(),recent:await b.js(`window.riderEvidence && ({
+          frames:riderEvidence.frames.slice(-200),proofs:riderEvidence.proofs.slice(-20),hidden:riderEvidence.hidden})`)},null,2));
+      t.diagnostic(JSON.stringify({failure:await state(),
+        status:await b.js(`document.getElementById('terrain-status').textContent`)}));
+      throw error;
+    }
+  }
+});
+
 test('built moving camera: trusted wheel/buttons/keyboard/pinch retain zoom and the one ride clock at desktop/375',async t=>{
   const f=await fixture(t,{cameraBaseline:process.env.RIDE_CAMERA_BASELINE});
   for(const [width,height] of [[1440,900],[375,812]]) {
