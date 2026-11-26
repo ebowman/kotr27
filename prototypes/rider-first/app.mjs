@@ -4,7 +4,7 @@ import { verifyAsset } from '../../js/route-catalog.mjs';
 import { validatePackPointer, validateRoutePack } from '../../js/route-pack-contract.mjs';
 import { createRideSimulation, createSimulationScheduler, rideRiderFromInput, exampleDrivetrain } from '../../js/ride-simulation.mjs';
 import { rideInsights, sectionName } from '../../js/ride-insights.mjs';
-import { routeSection } from '../../js/route-flyover.mjs';
+import { routeSection, createRideCamera, flyoverLimits } from '../../js/route-flyover.mjs';
 import { createRideComparison } from '../../js/ride-comparison.mjs';
 import { installRideRelive } from '../../js/ride-relive.mjs';
 
@@ -51,6 +51,15 @@ let mode = 'experiment';
 let privateView = false;
 const profileHelp = $('profile-help').textContent;
 let terrainReady = false;
+const rideCamera = createRideCamera();
+function cameraControls(available = terrainReady) {
+  $('zoom-nearer').disabled = !available || rideCamera.zoom >= flyoverLimits.maxZoom;
+  $('zoom-farther').disabled = !available || rideCamera.zoom <= flyoverLimits.minZoom;
+  text('zoom-help', available ? 'Closer view, same terrain detail. New route resets distance.' :
+    privateView ? 'Private route · camera zoom unavailable in 2D.' : 'Camera zoom requires online terrain.');
+}
+for (const [id,delta] of [['zoom-nearer',.5],['zoom-farther',-.5]])
+  $(id).addEventListener('click',()=>terrainHandle?.setZoom(rideCamera.zoom+delta));
 let manual = false;
 const returnRider = document.createElement('button');
 returnRider.id = 'return-rider';returnRider.textContent = 'Return to rider';returnRider.hidden = true;
@@ -516,6 +525,7 @@ function tick(time) {
 }
 function stopTerrain() {
   terrainReady = false;
+  cameraControls(false);
   $('camera').disabled = !analysis;
   manual = false;returnRider.hidden = camera === 'follow';
   $('player').classList.remove('online');
@@ -554,6 +564,7 @@ async function terrain() {
     if (controller.signal.aborted) return;
     const handle = await mountRouteTerrain({
       container:$('terrain'),analysis,snapshot:snapshot(),signal:controller.signal,
+      camera:rideCamera,onCamera:()=>cameraControls(),
       onManual:()=>{
         if (controller.signal.aborted) return;
         manual = true;returnRider.hidden = false;pause();
@@ -562,6 +573,7 @@ async function terrain() {
         if (controller.signal.aborted) return;
         if (state === 'ready') {
           clearTimeout(deadline);terrainReady = true;$('player').classList.add('online');
+          cameraControls(true);
           $('camera').disabled = false;
           status(manual ? 'Manual exploration · paused' :
             playing ? 'Satellite terrain · preview playback' : 'Satellite terrain · paused');
@@ -573,6 +585,7 @@ async function terrain() {
         if (state === 'unavailable') {
           clearTimeout(deadline);
           terrainReady = false;$('player').classList.remove('online');
+          cameraControls(false);
           $('camera').disabled = !analysis;
           manual = false;returnRider.hidden = camera === 'follow';
           status(`Terrain unavailable · ${reason} · 2D route preview`);
@@ -590,6 +603,7 @@ async function terrain() {
 async function choose(id) {
   const request = ++generation;
   pause();stopTerrain();
+  rideCamera.reset();
   relive.library.cancelPending();relive.clear();
   if (privateView) {
     privateView = false;mode = 'experiment';$('ride-mode').value = mode;
@@ -872,6 +886,7 @@ function beginPrivate() {
   // Dispose the public provider BEFORE the importer may parse/derive anything.
   pause();stopTerrain();generation++;routeController?.abort();
   privateView=true;$('offline').checked=true;$('offline').disabled=true;
+  cameraControls(false);
   credit.firstChild.textContent='Private local recording / course · first-party 2D ';
   $('provider-credit').hidden=true;text('terrain-status','Private local · first-party 2D only');
   relive.clear();clearComparison('Private recording selected.');

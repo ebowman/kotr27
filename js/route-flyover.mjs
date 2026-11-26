@@ -8,8 +8,23 @@ export const cameraJobs = Object.freeze([
   ['side','Side','Look across the route from the right-hand side.'],
   ['cinematic','Cinematic','A wide trailing-quarter view turning with route distance, not a second clock.'],
 ]);
-export const flyoverLimits = Object.freeze({vertices:2048, tileRequests:240, tileCache:32,
-  frameMs:200, loadMs:12000, coverageMs:2500, maxZoom:13, maxPitch:55,maxPixels:4000000});
+export const flyoverLimits = Object.freeze({vertices:2048, detailVertices:512, detailStep:128, tileRequests:240, tileCache:32,
+  frameMs:200, loadMs:12000, coverageMs:2500, minZoom:10, maxZoom:16, maxPitch:55,maxPixels:4000000});
+// Viewing distance, not simulation state. Owners keep this across renderer
+// remounts/seek/pause/Return and reset it only on an explicit route change.
+// 16 overzooms the existing z12 imagery / z11 DEM: closer, not new detail.
+// Source resolution, concurrency, cache, request and proof budgets stay fixed.
+export function createRideCamera() {
+  let zoom=12.6;
+  return Object.freeze({
+    get zoom() { return zoom; },
+    setZoom(value) {
+      if (Number.isFinite(value)) zoom=Math.max(flyoverLimits.minZoom,Math.min(flyoverLimits.maxZoom,value));
+      return zoom;
+    },
+    reset() { zoom=12.6; },
+  });
+}
 export const followMotion = Object.freeze({behindM:1500,aheadM:2500,yawDegreesPerSecond:12});
 export const shortestAngle = (from,to)=>((to-from+540)%360+360)%360-180;
 // Dense controllers already supply one route position per frame: preserve that
@@ -70,9 +85,16 @@ function sectionPoints(a,chapterId) {
 export function routeSection(a,chapterId) {
   return routeLine({points:sectionPoints(a,chapterId)});
 }
-export function routeLine(a) {
-  const step=Math.max(1,Math.ceil((a.points.length-1)/(flyoverLimits.vertices-1)));
-  return a.points.filter((p,i)=>i%step===0 || i===a.points.length-1).map(p=>[p.lon,p.lat]);
+export function routeLine(a,focusIndex) {
+  // Spend part of the SAME vertex budget on consecutive source points near
+  // the rider. Uniform thinning alone cuts across switchbacks at closer zoom.
+  // The adapter changes this window only every 128 source points, not per RAF.
+  const detailed=Number.isInteger(focusIndex) && focusIndex>=0 && focusIndex<a.points.length;
+  const from=detailed ? Math.max(0,focusIndex-flyoverLimits.detailStep) : 0;
+  const to=detailed ? Math.min(a.points.length-1,from+flyoverLimits.detailVertices-1) : -1;
+  const budget=flyoverLimits.vertices-(to-from+1);
+  const step=Math.max(1,Math.ceil((a.points.length-1)/(budget-1)));
+  return a.points.filter((p,i)=>i%step===0 || i===a.points.length-1 || i>=from && i<=to).map(p=>[p.lon,p.lat]);
 }
 export function cameraPose(a, snapshot, refinements={}) {
   const p=snapshot.position;
@@ -89,7 +111,8 @@ export function cameraPose(a, snapshot, refinements={}) {
     mode==='cinematic' ? course-35+20*Math.sin(d/3000) : course;
   return {center:[p.lon,p.lat], bearing,
     pitch:mode==='overview' ? 0 : Math.max(20,Math.min(flyoverLimits.maxPitch,refinements.pitch ?? (mode==='side' ? 55 : 45))),
-    zoom:Math.max(10,Math.min(flyoverLimits.maxZoom,refinements.zoom ?? (mode==='cinematic' ? 12 : 12.6)))};
+    zoom:Math.max(flyoverLimits.minZoom,Math.min(flyoverLimits.maxZoom,
+      Number.isFinite(refinements.zoom) ? refinements.zoom : (mode==='cinematic' ? 12 : 12.6)))};
 }
 // Pinned Mapbox 2.15 rendered-terrain depth, using the SAME NDC bias as its
 // _prelude_terrain.vertex.glsl isOccluded(). CPU unproject instead raycasts
@@ -132,6 +155,35 @@ export function terrainDepthEvidence(map,p,xy,z) {
   const gap=depth-surface;
   return {covered,visible:gap<=.0005,gap};
 }
+// Screen-point feature picking in SDK 2.15 raycasts the simplified DEM tree;
+// at close zoom it can miss a visibly drawn road under the rider. Require a
+// rendered route feature AND actual route/section ink in the current colour
+// buffer near that pixel instead. Satellite/DEM coverage and occlusion remain
+// separate mandatory gates. This reads the existing draw, not a second render.
+export function renderedRoadEvidence(map,xy) {
+  if (!map.queryRenderedFeatures({layers:['route']}).length) return false;
+  const gl=map.painter?.context?.gl,t=map.transform;
+  if (!gl || gl.isContextLost() || !Number.isFinite(xy.x+xy.y)) return false;
+  const width=gl.drawingBufferWidth,height=gl.drawingBufferHeight;
+  const left=Math.max(0,Math.floor((xy.x-8)/t.width*width));
+  const right=Math.min(width,Math.ceil((xy.x+8)/t.width*width));
+  const bottom=Math.max(0,Math.floor((1-(xy.y+8)/t.height)*height));
+  const top=Math.min(height,Math.ceil((1-(xy.y-8)/t.height)*height));
+  if (!(right>left && top>bottom)) return false;
+  const pixels=new Uint8Array((right-left)*(top-bottom)*4);
+  const previous=gl.getParameter(gl.FRAMEBUFFER_BINDING);
+  try {
+    gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+    gl.readPixels(left,bottom,right-left,top-bottom,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
+  } finally { gl.bindFramebuffer(gl.FRAMEBUFFER,previous); }
+  // Opaque #ff932e route or the #ffe097, .9-opacity selected-section over it.
+  // Allow byte rounding only, not a broad satellite-colour/brightness heuristic.
+  let ink=0;
+  for(let i=0;i<pixels.length;i+=4) if (pixels[i]>=253 && pixels[i+3]>=253 &&
+    (Math.abs(pixels[i+1]-147)<=2 && Math.abs(pixels[i+2]-46)<=2 ||
+     Math.abs(pixels[i+1]-216)<=2 && Math.abs(pixels[i+2]-140)<=2)) ink++;
+  return ink>=2;
+}
 // HTTP success/queued tiles and the marker's delayed opacity alone are not
 // paint evidence. Require current DEM bindings and actual rendered depth too.
 export function frameEvidence(map, p, marker, container, imageryReady, mode='follow') {
@@ -161,7 +213,7 @@ export function frameEvidence(map, p, marker, container, imageryReady, mode='fol
   const depth=terrainDepthEvidence(map,p,xy,z);
   const elevation=depth.covered && Number.isFinite(z) && Math.abs(z-p.rawElevationM)<=300;
   const clear=depth.visible && Number(getComputedStyle(marker).opacity)===1;
-  const road=map.queryRenderedFeatures([[xy.x-8,xy.y-8],[xy.x+8,xy.y+8]],{layers:['route']}).length>0;
+  const road=renderedRoadEvidence(map,xy);
   return {mode,framed,aligned,elevation,clear,road,depthGap:depth.gap,imagery:imageryReady(),
     ok:framed && aligned && elevation && clear && road && imageryReady()};
 }

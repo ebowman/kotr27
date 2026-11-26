@@ -60,6 +60,11 @@
     <div id="player-surface">
       <svg id="player-map" class="route-map" viewBox="0 0 640 580" role="img" aria-label="Actual route outline with moving preview position. Not a 3D terrain view."></svg>
       <div id="terrain" aria-label="Online satellite terrain"></div>
+      <div class="camera-distance glass" role="group" aria-label="Camera distance" aria-describedby="zoom-help">
+        <button id="zoom-nearer" type="button" disabled aria-label="Zoom nearer">+ Nearer</button>
+        <button id="zoom-farther" type="button" disabled aria-label="Zoom farther">− Farther</button>
+        <small id="zoom-help">Camera zoom requires online terrain.</small>
+      </div>
     </div>
     <header class="player-header">
       <button id="back" class="glass" aria-label="Back to Routes">← <span>Routes</span></button>

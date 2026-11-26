@@ -76,6 +76,9 @@ figcaption,.map-footer{display:flex;justify-content:space-between;padding:0 28px
 #player-map{width:100%;height:100%;padding:115px 20px 120px}
 #terrain{position:absolute;inset:0}
 #terrain:empty{visibility:hidden}
+.camera-distance{position:absolute;top:var(--terrain-controls-top,160px);left:28px;display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:4px;max-width:230px}
+.camera-distance button{min-width:44px;min-height:44px;padding:6px 10px}
+.camera-distance small{grid-column:1/-1;font-size:10px;line-height:1.3;padding:0 4px 2px;color:#bdcbbf}
 .player-header{position:absolute;top:24px;left:28px;right:28px;display:flex;align-items:start;gap:12px;pointer-events:none}
 .player-header>*{pointer-events:auto}
 .glass{background:#12352ef2;border:1px solid #68857577;box-shadow:0 6px 30px #081c1920;border-radius:4px}

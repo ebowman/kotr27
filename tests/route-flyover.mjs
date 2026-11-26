@@ -7,7 +7,20 @@ import { createAnalysisPlaybackRoute } from '../js/route-playback-adapters.mjs';
 import { createRoutePlayback } from '../js/route-playback.mjs';
 import { estimateRouteTime } from '../js/route-time.mjs';
 import { positionAt } from '../js/route-analysis.mjs';
-import { cameraJobs, cameraPose, createRoutePresentation, followBearing, shortestAngle, followMotion, officialFlyover, routeLine, routeBounds, frameEvidence, terrainDepthEvidence, flyoverLimits } from '../js/route-flyover.mjs';
+import { cameraJobs, cameraPose, createRideCamera, createRoutePresentation, followBearing, shortestAngle, followMotion, officialFlyover, routeLine, routeBounds, frameEvidence, terrainDepthEvidence, renderedRoadEvidence, flyoverLimits } from '../js/route-flyover.mjs';
+
+test('camera distance is finite bounded state, independent of model and explicit route reset',()=>{
+  const c=createRideCamera();
+  assert.equal(c.zoom,12.6);
+  assert.equal(c.setZoom(15),15);
+  for (const invalid of [NaN,Infinity,-Infinity,undefined,null,'14'])
+    assert.equal(c.setZoom(invalid),15);
+  assert.equal(c.setZoom(999),16);
+  assert.equal(c.setZoom(-999),10);
+  c.reset();assert.equal(c.zoom,12.6);
+  assert.equal(flyoverLimits.tileRequests,240);
+  assert.equal(flyoverLimits.tileCache,32);
+});
 
 // Deterministic packed-depth fixture. Real GPU terrain/ridge coverage is tested
 // separately in route-flyover-browser, never inferred from this fixture.
@@ -15,7 +28,12 @@ function depthFixture(map) {
   let bound=null;
   const gl={FRAMEBUFFER:1,FRAMEBUFFER_BINDING:2,RGBA:3,UNSIGNED_BYTE:4,
     isContextLost:()=>false,getParameter:()=>bound,bindFramebuffer:(_,value)=>{bound=value;},
-    readPixels:(_x,_y,_w,_h,_format,_type,pixels)=>pixels.set([0,0,0,map.clear===false ? 102 : 128])};
+    drawingBufferWidth:200,drawingBufferHeight:200,
+    readPixels:(_x,_y,_w,_h,_format,_type,pixels)=>{
+      if (bound===null) {
+        for(let i=0;i<pixels.length;i+=4)pixels.set(map.road===false ? [40,130,80,255] : [255,147,46,255],i);
+      } else pixels.set([0,0,0,map.clear===false ? 102 : 128]);
+    }};
   map.transform={width:200,height:200,worldSize:1,projection:{name:'mercator'},
     locationCoordinate:()=>({x:0,y:0}),projMatrix:[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1]};
   map.painter={width:200,height:200,context:{gl},terrain:{
@@ -52,6 +70,17 @@ test('all actual approved routes: camera jobs at start, steepest, bends, middle 
     assert.deepEqual(line[0],[a.points[0].lon,a.points[0].lat]);
     assert.deepEqual(line.at(-1),[a.points.at(-1).lon,a.points.at(-1).lat]);
     assert.ok(line.every(([x,y])=>x>=bounds[0][0] && x<=bounds[1][0] && y>=bounds[0][1] && y<=bounds[1][1]));
+    for(let i=0;i<a.points.length-1;i+=17) {
+      const block=Math.floor(i/flyoverLimits.detailStep)*flyoverLimits.detailStep;
+      const detail=routeLine(a,block);
+      assert.ok(detail.length<=flyoverLimits.vertices,'Near detail never expands the vertex budget');
+      // Consecutive source segments under the rider survive, not a shortcut
+      // which merely happens to be within the 8px road check at aerial zoom.
+      assert.ok(detail.some((p,j)=>p[0]===a.points[i].lon && p[1]===a.points[i].lat &&
+        detail[j+1]?.[0]===a.points[i+1].lon && detail[j+1]?.[1]===a.points[i+1].lat),
+      'Preserve the segment in source order, including routes that revisit a coordinate');
+      assert.deepEqual(detail[0],line[0]);assert.deepEqual(detail.at(-1),line.at(-1));
+    }
     const resolved={bundle:{route:r,revision:r.revisions[0]},profile:a,state:{area:'explore',view:'flyover'}};
     assert.equal(officialFlyover(resolved),true);
     assert.equal(officialFlyover({...resolved,bundle:{...resolved.bundle,route:{...r,kind:'local'}}}),false);
@@ -79,6 +108,27 @@ test('actual paint gate rejects missing imagery/elevation, rider occlusion, stal
     globalThis.getComputedStyle=()=>({opacity:.2});
     assert.equal(frameEvidence(map,p,marker,container,()=>true).ok,false);
   } finally {globalThis.getComputedStyle=old;}
+});
+
+test('road evidence requires actual current route ink, not an inverse pick or a feature elsewhere',()=>{
+  const map=depthFixture({queryRenderedFeatures:()=>[{}]}),xy={x:100,y:100};
+  assert.equal(renderedRoadEvidence(map,xy),true);
+  map.road=false;
+  assert.equal(renderedRoadEvidence(map,xy),false,'A feature plus satellite pixels is not a painted road');
+  map.road=true;
+  map.queryRenderedFeatures=()=>[];
+  assert.equal(renderedRoadEvidence(map,xy),false,'Orange pixels without a rendered route feature fail');
+  map.queryRenderedFeatures=()=>[{}];
+  const gl=map.painter.context.gl,prior={};
+  gl.bindFramebuffer(gl.FRAMEBUFFER,prior);
+  gl.readPixels=(_x,_y,_w,_h,_f,_t,pixels)=>{
+    for(let i=0;i<pixels.length;i+=4)pixels.set([255,216,141,255],i);
+  };
+  assert.equal(renderedRoadEvidence(map,xy),true,'Current selected-section over route ink');
+  assert.equal(gl.getParameter(),prior,'Colour read restores framebuffer too');
+  gl.readPixels=()=>{throw Error('colour read failure');};
+  assert.throws(()=>renderedRoadEvidence(map,xy),/colour read failure/);
+  assert.equal(gl.getParameter(),prior);
 });
 
 test('rendered depth rejects occlusion, missing/unbound DEM, stale depth and preserves framebuffer binding',()=>{
@@ -210,10 +260,13 @@ async function terrainFixture() {
     constructor(options){this.options=options;map=this;depthFixture(this);}
     on(name,fn){this.events[name]=fn;}
     once(name,fn){this.on(name,fn);}
-    emit(name,e={}){this.events[name]?.(e);}
+    emit(name,e={}){this.events[name]?.({type:name,...e});}
     addControl(){} addSource(){} addLayer(){} setTerrain(){} triggerRepaint(){} resize(){}
     getSource(){return {tiles:[],tileSize:256};}
-    jumpTo(pose){poses.push({at:now,...pose});if(pose.center)this.center=pose.center;if(pose.pitch!==undefined)this.pitch=pose.pitch;}
+    zooming=false;zoom=12.6;
+    isZooming(){return this.zooming;} getZoom(){return this.zoom;}
+    stop(){this.zooming=false;}
+    jumpTo(pose){poses.push({at:now,...pose});if(pose.center)this.center=pose.center;if(pose.pitch!==undefined)this.pitch=pose.pitch;if(pose.zoom!==undefined)this.zoom=pose.zoom;}
     getPitch(){return this.pitch;} fitBounds(){this.fits++;}
     project(){return {x:100,y:100};}
     queryTerrainElevation(){return this.elevation;}
@@ -234,11 +287,11 @@ async function terrainFixture() {
   };
   let nextTimer=0;
   const mount=new Function('window','document','devicePixelRatio','performance','setTimeout','clearTimeout',
-    'cameraPose','followBearing','routeBounds','routeLine','frameEvidence','limits',
+    'cameraPose','createRideCamera','followBearing','routeBounds','routeLine','frameEvidence','limits',
     'createRoutePresentation','requestAnimationFrame','cancelAnimationFrame',
     source+'\nreturn mountRouteTerrain;')(window,document,1,{now:()=>now},
     (fn,ms)=>{const id=++nextTimer;timers.set(id,{fn,at:now+ms});return id;},
-    id=>timers.delete(id),cameraPose,followBearing,routeBounds,routeLine,proof,flyoverLimits,
+    id=>timers.delete(id),cameraPose,createRideCamera,followBearing,routeBounds,routeLine,proof,flyoverLimits,
     createRoutePresentation,fn=>{const id=++nextTimer;frames.set(id,fn);return id;},id=>frames.delete(id));
   const identity={revisionId:'test',geometrySha256:'test'};
   const position={lon:11,lat:45,rawElevationM:100,elevationM:100,distanceM:0};
@@ -298,6 +351,49 @@ test('terrain presentation stays continuous through successful motion and transi
   assert.equal(f.timers.size,0);
 });
 
+test('native zoom owns its animation; follow, pause, seek and Return preserve distance without manual feedback',async()=>{
+  const f=await terrainFixture(),s=f.snapshot,original=structuredClone(f.snapshot);
+  f.map.emit('render');
+  f.map.emit('movestart',{originalEvent:{type:'wheel'}});
+  f.map.zooming=true;f.map.zoom=14.5;
+  f.map.emit('zoom',{originalEvent:{type:'wheel'}});
+  const count=f.poses.length;
+  f.advance(16);f.handle.update({...s,distanceM:1});
+  assert.equal(f.poses.length,count,'Follow cannot call jumpTo/stop on an SDK zoom animation');
+  assert.equal(f.manualCalls(),0);
+  f.map.zooming=false;f.map.emit('zoomend');
+  for (const [phase,force] of [['playing',false],['paused',false],['paused',true],['playing',true]]) {
+    f.advance(16);f.handle.update({...s,phase},force);
+    assert.equal(f.poses.at(-1).zoom,14.5);
+    assert.equal(f.poses.at(-1).pitch,45);
+  }
+  f.map.emit('dragstart',{originalEvent:{touches:[{},{}]}});
+  assert.equal(f.manualCalls(),0,'Pinch translation is not pan inspection');
+  f.map.emit('touchstart',{originalEvent:{touches:[{},{}]}});
+  const beforePinch=f.poses.length;
+  f.advance(16);f.handle.update(s);
+  assert.equal(f.poses.length,beforePinch,'Preserve native touch recognition before isZooming becomes true');
+  f.map.emit('touchend',{originalEvent:{touches:[]}});
+  f.map.emit('mousedown');
+  f.advance(16);f.handle.update(s);
+  assert.equal(f.poses.length,beforePinch,'Mouse drag recognition cannot be cancelled by follow either');
+  f.document.events.mouseup();
+  f.map.emit('dragstart',{originalEvent:{}});
+  assert.equal(f.manualCalls(),1);
+  f.handle.setZoom(15);
+  assert.equal(f.map.getZoom(),15);
+  assert.equal(JSON.parse(f.container.dataset.pose).manual,true,'Zoom does not exit manual inspection');
+  f.handle.update(s,true);
+  assert.equal(f.poses.at(-1).zoom,15);
+  f.map.emit('zoom',{}); // Programmatic poses cannot change intent.
+  f.handle.update(s);
+  assert.equal(f.poses.at(-1).zoom,15);
+  f.map.emit('movestart',{originalEvent:{type:'keydown',key:'ArrowRight'}});
+  assert.equal(f.manualCalls(),2,'Keyboard pan remains explicit inspection');
+  assert.deepEqual(s,original,'Camera never mutates the shared snapshot');
+  f.handle.dispose();
+});
+
 test('manual off-rider pan and return use distinct proof; old route timers and events are isolated',async()=>{
   const f=await terrainFixture();
   f.map.emit('render');
@@ -307,7 +403,7 @@ test('manual off-rider pan and return use distinct proof; old route timers and e
   next.map.emit('render');
   assert.equal(f.map.removed,1);
   assert.equal(f.timers.size,0,'New proved map clears only its own load deadline');
-  next.map.emit('movestart',{originalEvent:{}});
+  next.map.emit('dragstart',{originalEvent:{}});
   next.map.project=()=>({x:-900,y:100});
   next.map.road=false;next.map.clear=false;
   f.advance(200);
@@ -317,7 +413,7 @@ test('manual off-rider pan and return use distinct proof; old route timers and e
   f.advance(3500);
   assert.equal(next.map.removed,0);
   const count=f.statuses.length, calls=f.manualCalls();
-  oldDeadline();f.map.emit('movestart',{originalEvent:{}});
+  oldDeadline();f.map.emit('dragstart',{originalEvent:{}});
   f.map.emit('render');f.map.emit('error');f.map.emit('moveend');
   f.handle.update(f.snapshot,true);
   assert.equal(f.statuses.length,count);
@@ -337,7 +433,7 @@ test('manual off-rider pan and return use distinct proof; old route timers and e
 test('manual missing viewport imagery DEM depth provider GPU and budgets remain bounded terminal failures',async()=>{
   for(const failure of ['imagery','dem','depth','error','webglcontextlost','budget']) {
     const f=await terrainFixture();f.map.emit('render');
-    f.map.emit('movestart',{originalEvent:{}});f.map.emit('render');
+    f.map.emit('dragstart',{originalEvent:{}});f.map.emit('render');
     if(failure==='imagery')f.map.imagery=false;
     if(failure==='dem')delete f.map.painter.terrain.terrainTileForTile.current.dem;
     if(failure==='depth')f.map.painter.terrain._depthFBO.width--;
@@ -347,7 +443,7 @@ test('manual missing viewport imagery DEM depth provider GPU and budgets remain 
       assert.equal(JSON.parse(f.container.dataset.frame).ok,false);
       for(let i=0;i<5;i++){
         f.advance(500);
-        f.map.emit('movestart',{originalEvent:{}});f.map.emit('render');
+        f.map.emit('dragstart',{originalEvent:{}});f.map.emit('render');
       }
     } else if(failure==='budget'){
       for(let i=0;i<=flyoverLimits.tileRequests;i++)f.map.options.transformRequest('https://fixture/tile','Tile');
@@ -371,7 +467,7 @@ test('route replacement resets tile budget and isolates already queued old-map f
   await Promise.resolve();
   assert.equal(next.map.removed,0);
   assert.equal(f.container.style.visibility,'visible');
-  next.map.emit('movestart',{originalEvent:{}});
+  next.map.emit('dragstart',{originalEvent:{}});
   for(let i=0;i<flyoverLimits.tileRequests;i++)next.map.options.transformRequest('https://fixture/new','Tile');
   await Promise.resolve();f.advance(200);next.map.emit('render');
   assert.equal(next.map.removed,0,'New route gets exactly its own existing 240-request budget');
@@ -493,7 +589,7 @@ test('overview is framed once, manual owns viewport, hidden/reduced motion and d
     f.advance(16);f.handle.update({...s,cameraMode:'overview',distanceM:i,position:positionAt(f.analysis,i)});
   }
   assert.equal(f.map.fits,1,'Moving the overview rider does not repeatedly refit the map');
-  f.map.emit('movestart',{originalEvent:{}});
+  f.map.emit('dragstart',{originalEvent:{}});
   const commands=f.poses.length;
   f.handle.update({...s,phase:'paused'});
   assert.equal(f.poses.length,commands,'Pause in manual mode never recenters');

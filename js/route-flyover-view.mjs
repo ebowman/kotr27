@@ -1,4 +1,4 @@
-import { cameraJobs, cameraPose, officialFlyover, flyoverLimits } from './route-flyover.mjs';
+import { cameraJobs, cameraPose, createRideCamera, officialFlyover, flyoverLimits } from './route-flyover.mjs';
 import { routePlayback as controller, subscribePlayback } from './route-session.mjs';
 
 const node=(tag,text,parent,id)=>{
@@ -19,6 +19,7 @@ export function installRouteFlyover(parent,onSeek) {
   }
   function build(resolved) {
     root.replaceChildren(); refinements={}; manual=false;
+    const camera=createRideCamera();
     let reframe=false;
     // Selecting a camera is an explicit framing command even when its enum
     // value is unchanged. Carry that intent through the single snapshot draw.
@@ -55,11 +56,22 @@ export function installRouteFlyover(parent,onSeek) {
     const reset=node('button','Reset to route start',controls,'flyover-reset');
     reset.onclick=()=>{
       refinements={};
-      root.querySelector('#flyover-pitch').value=45;root.querySelector('#flyover-zoom').value=12.6;
+      root.querySelector('#flyover-pitch').value=45;
       cameraAction('restart');
     };
     const follow=node('button','Return to rider',controls,'flyover-return');
     follow.onclick=()=>cameraAction('setCameraMode','follow');
+    const nearer=node('button','Zoom nearer',controls,'flyover-nearer');
+    const farther=node('button','Zoom farther',controls,'flyover-farther');
+    nearer.onclick=()=>renderer?.setZoom(camera.zoom+.5);
+    farther.onclick=()=>renderer?.setZoom(camera.zoom-.5);
+    function cameraControls(available=!!renderer) {
+      nearer.disabled=!available || camera.zoom>=flyoverLimits.maxZoom;
+      farther.disabled=!available || camera.zoom<=flyoverLimits.minZoom;
+      const zoom=root.querySelector('#flyover-zoom');
+      if (zoom) {zoom.value=camera.zoom;zoom.disabled=!available;}
+    }
+    cameraControls(false);
     const full=node('button','Fullscreen',controls,'flyover-fullscreen');
     full.onclick=async()=>{
       try {
@@ -88,11 +100,13 @@ export function installRouteFlyover(parent,onSeek) {
     const help=node('details','',root);
     node('summary','Shortcuts and optional camera refinements',help);
     node('p','Within this panel, outside inputs: 1 Follow, 2 Overview, 3 Side, 4 Cinematic; Space play/pause; R reset; F fullscreen; Escape Return to rider (or leave fullscreen). '+
-      'Drag/pinch the map to explore manually; animation pauses. Use Return to rider to resume tracking. Every action also has a labeled touch control. Seeks and camera changes pause; camera changes never seek. Reduced motion never autoplays. Pitch/zoom refinements apply outside Overview. If the rider leaves the frame or terrain blocks it, the view falls back to linked 2D/profile.',help);
-    for (const [key,text,min,max,value] of [['pitch','Pitch (degrees)',20,55,45],['zoom','Zoom',10,13,12.6]]) {
+      'Wheel, pinch, +/- keys on the map or Zoom nearer/farther change distance without pausing. Drag/rotate pauses for inspection; Return to rider restores tracking. Zoom requires online 3D; closer views magnify the same terrain detail. Distance survives pause, seek and Return; a new route resets it. Seeks and camera-mode changes pause; camera changes never seek. Reduced motion never autoplays. If the rider leaves the frame or terrain blocks it, the view falls back to linked 2D/profile.',help);
+    for (const [key,text,min,max,value] of [['pitch','Pitch (degrees)',20,55,45],['zoom','Zoom',flyoverLimits.minZoom,flyoverLimits.maxZoom,12.6]]) {
       const l=node('label',text,help), input=node('input','',l,`flyover-${key}`);
       input.type='range';input.min=min;input.max=max;input.step=.1;input.value=value;
-      input.oninput=()=>{refinements[key]=Number(input.value);cameraAction('manipulate');};
+      if (key==='zoom') {
+        input.disabled=true;input.oninput=()=>renderer?.setZoom(Number(input.value));
+      } else input.oninput=()=>{refinements[key]=Number(input.value);cameraAction('manipulate');};
     }
     const side=node('button','Swap side',help,'flyover-swap-side');
     side.onclick=()=>{refinements.side=refinements.side===-1 ? 1 : -1;cameraAction('setCameraMode','side');};
@@ -104,7 +118,9 @@ export function installRouteFlyover(parent,onSeek) {
       status.textContent=message+(name==='unavailable' ? ' Linked 2D/profile remains available. No automatic retry; enable again only if wanted.' : '');
       if (name==='unavailable') {
         stop();viewport.hidden=true;enable.disabled=false;controller.enable3D(false);
+        cameraControls(false);
       } else if (name==='ready') {
+        cameraControls(true);
         clearTimeout(deadline);
         const s=controller.getSnapshot();
         if (s.renderer.status!=='ready') controller.setRendererStatus(s.renderer.requestId,'ready');
@@ -112,6 +128,7 @@ export function installRouteFlyover(parent,onSeek) {
     }
     off.onclick=()=>{
       stop();controller.enable3D(false);viewport.hidden=true;enable.disabled=false;
+      cameraControls(false);
       state('standby','3D is off. Use the linked 2D route and profile below.');
     };
     viewport.hidden=true; root.dataset.status='standby';
@@ -126,6 +143,7 @@ export function installRouteFlyover(parent,onSeek) {
         const {mountRouteTerrain}=await import('./route-terrain-view.mjs');
         if(token!==epoch)return;
         const result=await mountRouteTerrain({container:map,analysis,snapshot:controller.getSnapshot(),signal:abort.signal,
+          camera,onCamera:()=>cameraControls(),
           onStatus:(name,message)=>{if(token===epoch)state(name,message);},
           onManual:()=>{manual=true;act('manipulate');status.textContent='Manual exploration · animation paused. Return to rider restores tracking.';}});
         if(token!==epoch)result?.dispose();else renderer=result;

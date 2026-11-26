@@ -3,8 +3,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
+import { execFileSync } from 'node:child_process';
 import { createServer } from 'node:http';
-import { mkdtemp,readdir,readFile,rm } from 'node:fs/promises';
+import { mkdtemp,mkdir,readdir,readFile,realpath,rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join,extname } from 'node:path';
 import { crc32,deflateSync } from 'node:zlib';
@@ -53,7 +54,80 @@ mapboxgl.Map=class extends mapboxgl.Map {
   }
 };`;
 
-async function fixture(t,{real=false,headless=true}={}) {
+// Passive observers in the served test artifact only. The production files,
+// sync ticket checks, storage results, camera commands and proof remain intact.
+// Exact-match guards make instrumentation drift a test error, not absent data.
+function traceFocusModule(path,bytes) {
+  let source=bytes.toString();
+  const replace=(from,to)=>{
+    assert.equal(source.split(from).length,2,`Unique lifecycle observation site: ${path}: ${from}`);
+    source=source.replace(from,to);
+  };
+  if(path.startsWith('js/local-routes-view.')) {
+    replace('const ticket=epoch, serial=++syncSerial;',
+      `const ticket=epoch, serial=++syncSerial;
+      window.focusLifecycle.record('sync.begin',{ticket,serial,epoch,syncSerial,ready});`);
+    replace('await storageBarrier();',`await storageBarrier();
+      window.focusLifecycle.record('sync.barrier',{ticket,serial,epoch,syncSerial,ready});`);
+    replace('const result=await storage.read();',`const result=await storage.read();
+      window.focusLifecycle.record('sync.read',{ticket,serial,epoch,syncSerial,ready});`);
+    replace('renderList();changed();',`renderList();
+      window.focusLifecycle.enterReconcile({epoch,syncSerial});
+      try { changed(); } finally { window.focusLifecycle.leaveReconcile(); }`);
+    replace("root.dataset.ready='true';",`root.dataset.ready='true';
+      window.focusLifecycle.record('library.ready',{epoch,syncSerial,ready});`);
+  } else if(path.startsWith('js/route-terrain-view.')) {
+    replace('if (stopped || !ready || !s.position || document.hidden) return;',
+      `window.focusLifecycle.record('update.request',{stopped,ready,hidden:document.hidden,force,
+      zooming:map?.isZooming(),manual,
+      pointing:typeof pointing==='undefined' ? null : pointing,
+      touching:typeof touching==='undefined' ? null : touching});
+    if (stopped || !ready || !s.position || document.hidden) return;
+    window.focusLifecycle.enterUpdate({force,phase:s.phase});`);
+    replace('if (!stopped && presentation.pending(now)) frame=requestAnimationFrame(tick);',
+      `if (!stopped && presentation.pending(now)) frame=requestAnimationFrame(tick);
+    window.focusLifecycle.leaveUpdate();`);
+    replace('proof={...proof,current:false};\n      container.dataset.frame=JSON.stringify(proof);',
+      `proof={...proof,current:false};
+      container.dataset.frame=JSON.stringify(proof);
+      window.focusLifecycle.record('proof.invalidated',{current:proof.current,poseSequence:proof.sequence});`);
+  } else if(path.startsWith('js/route-playback.')) {
+    replace('const requestId = state.requestId + 1;',`const requestId = state.requestId + 1;
+    window.focusLifecycle.record('playback.select',{requestId,distance,chapterId,stack:new Error().stack});`);
+    replace("state.phase = chapterId !== null || distance > 0 ? 'paused' : 'ready';",
+      `state.phase = chapterId !== null || distance > 0 ? 'paused' : 'ready';
+      window.focusLifecycle.record('playback.selected',{requestId,phase:state.phase,distanceM:state.distanceM});`);
+  } else if(path.startsWith('js/site-shell.')) {
+    replace("shell.dataset.ready = 'true';",`shell.dataset.ready = 'true';
+  window.focusLifecycle.record('shell.ready');`);
+  }
+  return source;
+}
+
+const focusLifecycleProbe=`
+(()=>{
+  const events=[],listeners=new Set(),reconciles=[],updates=[];
+  let sequence=0,focusId=0,updateId=0;
+  const record=(type,data={})=>{
+    const entry={sequence:++sequence,at:performance.now(),type,focusId,
+      reconcile:reconciles.at(-1),updateId:updates.at(-1),
+      libraryReady:document.getElementById('local-library')?.dataset.ready,...data};
+    events.push(entry);if(events.length>128)events.shift();
+    for(const listener of listeners)listener(entry);
+    return entry;
+  };
+  window.focusLifecycle={
+    events,listeners,record,
+    enterReconcile(data){reconciles.push(data);record('reconcile.enter');},
+    leaveReconcile(){record('reconcile.exit');reconciles.pop();},
+    enterUpdate(data){updates.push(++updateId);record('update.enter',data);},
+    leaveUpdate(){record('update.exit',{sample:window.pointerProbe?.sample()});updates.pop();}
+  };
+  window.addEventListener('focus',e=>{focusId++;record('focus',{trusted:e.isTrusted});});
+  window.addEventListener('blur',e=>record('blur',{trusted:e.isTrusted}));
+})();`;
+
+async function fixture(t,{real=false,headless=true,traceFocus=false}={}) {
   const temp=await mkdtemp(join(tmpdir(),'kotr-flyover-')),out=join(temp,'public');
   const cleanups=[],jobs=new Set(),errors=[],network=[],lifecycle=[];
   let server,ridge;
@@ -65,8 +139,20 @@ async function fixture(t,{real=false,headless=true}={}) {
     await Promise.all([...jobs]);await rm(temp,{recursive:true,force:true});
     assert.deepEqual(errors,[]);
   });
-  await build('.',out);
-  const {pack}=await readRoutePack('.'),files=await readdir(out,{recursive:true});
+  let source='.';
+  if(process.env.FLYOVER_BASELINE) {
+    const revision=process.env.FLYOVER_BASELINE;
+    assert.match(revision,/^[a-f0-9]{40}$/,'Baseline requires an exact commit');
+    source=join(temp,'source');await mkdir(source);source=await realpath(source);
+    // Only tracked public build inputs, never the dirty checkout, instructions
+    // or local/private files. The temporary source and build are both removed.
+    const archive=execFileSync('git',['archive',revision,'--','index.html','explore.html','assets','js',
+      'prototypes/rider-first/app.mjs','prototypes/rider-first/style.css'],{maxBuffer:64*1024*1024});
+    execFileSync('tar',['-x','-C',source],{input:archive});
+    t.diagnostic(`Pristine public build inputs: ${revision}`);
+  }
+  await build(source,out);
+  const {pack}=await readRoutePack(source),files=await readdir(out,{recursive:true});
   let sdk,css;
   if(real) {
     const js=process.env.MAPBOX_GL_215 ? await readFile(process.env.MAPBOX_GL_215,'utf8') :
@@ -96,7 +182,9 @@ async function fixture(t,{real=false,headless=true}={}) {
       return res.writeHead(200,{'Content-Type':'image/png'}).end(tile);
     }
     if(!files.includes(path) || !types[extname(path)])return res.writeHead(404).end();
-    const data=path.startsWith('js/config.') ? "window.KOTR_CONFIG={MAPBOX_TOKEN:'pk.fixture'};" : await readFile(join(out,path));
+    let data=path.startsWith('js/config.') ? "window.KOTR_CONFIG={MAPBOX_TOKEN:'pk.fixture'};" : await readFile(join(out,path));
+    if(traceFocus && /js\/(?:local-routes-view|route-terrain-view|route-playback|site-shell)\./.test(path))
+      data=traceFocusModule(path,data);
     res.writeHead(200,{'Content-Type':types[extname(path)],'Cache-Control':'no-store'}).end(data);
   }
   server=createServer((req,res)=>{
@@ -117,6 +205,7 @@ async function fixture(t,{real=false,headless=true}={}) {
     }
   },{headless});
   await b.cmd('Page.enable');await b.cmd('Network.enable');
+  if(traceFocus)await b.cmd('Page.addScriptToEvaluateOnNewDocument',{source:focusLifecycleProbe});
   await b.cmd('Page.setLifecycleEventsEnabled',{enabled:true});
   await b.cmd('Fetch.enable',{patterns:[{urlPattern:'https://*'}]});
   const base=`http://127.0.0.1:${server.address().port}/kotr27/`;
@@ -134,6 +223,10 @@ async function fixture(t,{real=false,headless=true}={}) {
     await until(()=>lifecycle.some(e=>e.loaderId===nav.loaderId && e.name==='DOMContentLoaded'));
     await until(()=>b.js(`!document.getElementById('route-flyover')?.hidden && !!document.getElementById('flyover-seek') &&
       document.getElementById('trip-planner')?.dataset.ready==='true'`));
+    // Planner/route snapshots may precede the shell's final startup render,
+    // which selects the URL distance again. Await the existing authoritative
+    // lifecycle promise before issuing a test seek; do not race that selection.
+    await evaluate(`import('./${shell}').then(m=>m.shellReady).then(()=>true)`);
     // The visible analysis panel can precede the shared controller's async
     // selection. Do not seek a null position before terrain is even enabled.
     await until(async()=>{
@@ -221,7 +314,12 @@ async function installPointerProbe(f) {
     const input=e=>push(events,{at:performance.now(),type:e.type,trusted:e.isTrusted,
       buttons:e.buttons,x:e.clientX,y:e.clientY,target:describe(e.target),state:sample({x:e.clientX,y:e.clientY})});
     const jump=nativeMap.jumpTo;
-    nativeMap.jumpTo=function(...args){push(updates,{at:performance.now(),stack:new Error().stack});return jump.apply(this,args);};
+    nativeMap.jumpTo=function(...args){
+      const stack=new Error().stack,limit=Error.stackTraceLimit;let fullStack;
+      try {Error.stackTraceLimit=32;fullStack=new Error().stack;}
+      finally {Error.stackTraceLimit=limit;}
+      push(updates,{at:performance.now(),stack,fullStack});return jump.apply(this,args);
+    };
     const mutations=new MutationObserver(()=>push(history,sample()));
     mutations.observe(container,{attributes:true,attributeFilter:['style','data-frame']});
     document.addEventListener('scroll',scroll,true);nativeMap.on('render',render);
@@ -319,7 +417,7 @@ async function nativeClick(f,id) {
 }
 
 test('native focus refresh retains terrain but invalidates stale proof before a verified drag', {timeout:120000},async t=>{
-  const f=await fixture(t,{real:true});
+  const f=await fixture(t,{real:true,traceFocus:true});
   await f.cmd('Emulation.setDeviceMetricsOverride',{width:800,height:900,deviceScaleFactor:1,mobile:false});
   await f.navigate(f.pack.catalog.routes.find(r=>r.name.startsWith('D1')));
   await f.command('seekDistance',(await f.snapshot()).totalDistanceM*.5);
@@ -333,21 +431,44 @@ test('native focus refresh retains terrain but invalidates stale proof before a 
     requestAnimationFrame(()=>requestAnimationFrame(resolve));
   })`);
   const old=await stableCanvas(f);
-  // Deterministic notification control, NOT a synthetic drag: exercise the
-  // real async focus/storage reconciliation and renderer's safety gate.
-  // Observe its unverified interval in a microtask, regardless of render speed.
-  // Presentation now stays continuous; visibility alone is not readiness.
-  const negative=await f.evaluate(`new Promise((resolve,reject)=>{
-    const container=document.getElementById('official-terrain');
-    const observer=new MutationObserver(()=>{
-      if(JSON.parse(container.dataset.frame||'{}').current!==false)return;
-      const hit=pointerProbe.sample(${JSON.stringify(old.point)});
-      observer.disconnect();clearTimeout(deadline);resolve(hit);
-    });
-    const deadline=setTimeout(()=>{observer.disconnect();reject(Error('Focus refresh did not exercise the frame gate'));},5000);
-    observer.observe(container,{attributes:true,attributeFilter:['data-frame']});
+  // Follow the accepted focus/storage sync into its synchronous renderer update.
+  // Observe proof at that update's return, before another render can replace it.
+  // A native focus may supersede the notification's ticket: observe the actual
+  // accepted reconciliation, never assume the first synthetic ticket won.
+  const result=await f.evaluate(`new Promise(resolve=>{
+    const probe=focusLifecycle,start=probe.record('control.begin').sequence;
+    const finish=value=>{
+      clearTimeout(deadline);probe.listeners.delete(observe);
+      resolve({...value,trace:probe.events.slice(),pointer:{
+        current:pointerProbe.sample(${JSON.stringify(old.point)}),updates:pointerProbe.updates,
+        focus:pointerProbe.focus,events:pointerProbe.events}});
+    };
+    const observe=e=>{
+      if(e.type==='reconcile.exit' && e.sequence>start && e.reconcile &&
+          probe.events.some(r=>r.type==='sync.read' && r.sequence>start &&
+            r.serial===e.reconcile.syncSerial && r.ticket===e.reconcile.epoch &&
+            r.serial===r.syncSerial && r.ticket===r.epoch)) {
+        const update=probe.events.findLast(r=>r.type==='update.exit' && r.sequence>start &&
+          r.reconcile?.syncSerial===e.reconcile.syncSerial && r.reconcile?.epoch===e.reconcile.epoch);
+        if(update)finish({update,reconciled:e});
+      }
+    };
+    const deadline=setTimeout(()=>finish({error:'No accepted focus sync completed a renderer update'}),5000);
+    probe.listeners.add(observe);
     window.dispatchEvent(new Event('focus'));
   })`);
+  // Print bounded causal evidence before any assertion, including on timeout.
+  t.diagnostic(`Focus lifecycle: ${JSON.stringify({...result,
+    trace:result.trace.map(({sample,...e})=>({...e,...(sample ? {proof:sample.render.proof} : {})})),
+    pointer:{...result.pointer,updateCount:result.pointer.updates.length,
+      legacyStackMatch:result.pointer.updates.some(e=>e.stack.includes('local-routes-view') && e.stack.includes('route-terrain-view')),
+      extendedStackMatch:result.pointer.updates.some(e=>e.fullStack.includes('local-routes-view') && e.fullStack.includes('route-terrain-view')),
+      updates:result.pointer.updates.slice(-2)}})}`);
+  assert.ok(!result.error,result.error);
+  const negative=result.update.sample;
+  const begin=result.trace.find(e=>e.type==='update.enter' && e.updateId===result.update.updateId);
+  assert.ok(begin && begin.reconcile.syncSerial===result.update.reconcile.syncSerial,
+    'Proof observation belongs to the accepted reconciliation renderer update');
   assert.equal(old.hitCanvas,true);
   assert.equal(negative.hitCanvas,true,'A transient revalidation must not hide a presented canvas.');
   assert.equal(negative.containerVisibility,'visible');
@@ -355,10 +476,7 @@ test('native focus refresh retains terrain but invalidates stale proof before a 
   assert.equal(negative.scroll.y,old.scroll.y);
   assert.equal(negative.render.status,'ready','Pose invalidation alone must not chatter ready/verifying.');
   assert.equal(negative.render.proof.current,false,'A previous frame cannot qualify the new camera update.');
-  const updates=await f.js('pointerProbe.updates');
-  assert.ok(updates.some(e=>e.stack.includes('local-routes-view') && e.stack.includes('route-terrain-view')));
-  assert.equal(await f.js('pointerProbe.events.length'),0,'No mouse input before the actual canvas is hittable.');
-  t.diagnostic(`Revalidation control: ${JSON.stringify({before:old,verifying:negative,source:updates[0].stack})}`);
+  assert.equal(result.pointer.events.length,0,'No mouse input before the actual canvas is hittable.');
   await nativeDrag(f,t);
   const after=await f.snapshot();
   for(const key of ['distanceM','position','estimatedRide','recordedClock'])assert.deepEqual(after[key],before[key]);
@@ -366,7 +484,7 @@ test('native focus refresh retains terrain but invalidates stale proof before a 
 });
 
 test('native same-preset reselection and refinements reconcile manual UI with the actual camera', {timeout:120000},async t=>{
-  const f=await fixture(t,{real:true});
+  const f=await fixture(t,{real:true,traceFocus:true});
   await f.cmd('Emulation.setDeviceMetricsOverride',{width:800,height:900,deviceScaleFactor:1,mobile:false});
   const route=f.pack.catalog.routes.find(r=>r.name.startsWith('D1'));
   await f.navigate(route);
@@ -385,9 +503,17 @@ test('native same-preset reselection and refinements reconcile manual UI with th
     for(const key of Object.keys(expected))assert.ok(Math.abs(actual[key]-expected[key])<(key==='zoom' ? 1e-4 : 1e-6),
       `${key}: expected ${expected[key]}, actual ${actual[key]}`);
   };
+  let trackingCaptured=false;
   async function assertTracking(mode,before) {
     await painted();
     const after=await f.snapshot();
+    if(!trackingCaptured || after.phase!=='paused') {
+      trackingCaptured=true;
+      t.diagnostic(`Tracking lifecycle: ${JSON.stringify({mode,before:{phase:before.phase,distanceM:before.distanceM},
+        after:{phase:after.phase,distanceM:after.distanceM},
+        trace:await f.js(`focusLifecycle.events.filter(e=>e.type.startsWith('playback.') ||
+          e.type.startsWith('sync.') || e.type==='focus' || e.type==='library.ready' || e.type==='shell.ready').slice(-24)`)})}`);
+    }
     for(const key of ['distanceM','position','estimatedRide','recordedClock'])assert.deepEqual(after[key],before[key]);
     assert.equal(after.cameraMode,mode);
     assert.equal(after.phase,'paused');
@@ -417,6 +543,13 @@ test('native same-preset reselection and refinements reconcile manual UI with th
       const input=document.getElementById('flyover-${key}');input.value=${value};
       input.dispatchEvent(new Event('input',{bubbles:true}));
     })()`);
+    if (key==='zoom') {
+      await painted();
+      assert.match(await f.js(`document.getElementById('flyover-status').textContent`),/Manual/);
+      assert.equal((await f.snapshot()).distanceM,before.distanceM);
+      assert.ok(Math.abs((await camera()).zoom-value)<1e-6);
+      await nativeClick(f,'flyover-return');
+    }
     await assertTracking('follow',before);
     const actual=await camera();
     assert.ok(Math.abs(actual.lng-before.position.lon)<1e-6 && Math.abs(actual.lat-before.position.lat)<1e-6);
@@ -440,7 +573,37 @@ test('native same-preset reselection and refinements reconcile manual UI with th
   const resetCamera=await camera();
   assert.ok(Math.abs(resetCamera.lng-start.position.lon)<1e-6 && Math.abs(resetCamera.lat-start.position.lat)<1e-6);
   assert.equal(await f.js(`document.getElementById('flyover-pitch').value`),'45');
-  assert.equal(await f.js(`document.getElementById('flyover-zoom').value`),'12.6');
+  assert.equal(await f.js(`document.getElementById('flyover-zoom').value`),'12','Restart preserves distance preference');
+  assert.deepEqual(f.exceptions,[]);
+});
+
+test('native rendered road proof rejects invisible ink and a visible route away from the rider',async t=>{
+  const f=await fixture(t,{real:true});
+  await f.cmd('Emulation.setDeviceMetricsOverride',{width:800,height:900,deviceScaleFactor:1,mobile:false});
+  const route=f.pack.catalog.routes.find(r=>r.name.startsWith('D1'));
+  await f.navigate(route);
+  await f.command('seekDistance',(await f.snapshot()).totalDistanceM*.5);
+  await f.js(`window.fixtureHeight=${(await f.snapshot()).position.rawElevationM}`);
+  await f.js(`document.getElementById('flyover-enable').click()`);
+  const proof=()=>f.js(`JSON.parse(document.getElementById('official-terrain').dataset.frame||'{}')`);
+  await until(async()=>{const p=await proof();return p.current && p.ok;});
+  await f.js(`nativeMap.setPaintProperty('route','line-opacity',0);void 0`);
+  await until(async()=>{const p=await proof();return p.current && p.road===false;});
+  assert.equal((await proof()).ok,false,'No colour ink is not a painted road');
+  await f.js(`nativeMap.setPaintProperty('route','line-opacity',1);void 0`);
+  await until(async()=>{const p=await proof();return p.current && p.ok;});
+  await f.js(`(()=>{
+    const m=nativeMap,source=m.getSource('route');window.originalRoute=structuredClone(source._data);
+    const center=m.project(m.getCenter());
+    source.setData({type:'Feature',properties:{},geometry:{type:'LineString',coordinates:[
+      m.unproject([center.x-50,center.y+100]).toArray(),m.unproject([center.x+50,center.y+100]).toArray()]}});
+  })()`);
+  await until(async()=>{const p=await proof();return p.current && p.road===false;});
+  assert.ok(await f.js(`nativeMap.queryRenderedFeatures({layers:['route']}).length>0`),
+    'A rendered feature elsewhere in the viewport is insufficient');
+  assert.equal((await proof()).ok,false);
+  await f.js(`nativeMap.getSource('route').setData(originalRoute);void 0`);
+  await until(async()=>{const p=await proof();return p.current && p.ok;});
   assert.deepEqual(f.exceptions,[]);
 });
 
@@ -586,7 +749,7 @@ test('native ridge may occlude the rider in manual mode but return restores stri
   // Mode-boundary injection on the actual GPU map, not a visibility override
   // or simulated depth result. The initial hidden canvas cannot take a trusted
   // click; ordinary trusted manual input is independently exercised above.
-  await f.js(`nativeMap.fire('movestart',{originalEvent:new MouseEvent('mousedown')});
+  await f.js(`nativeMap.fire('dragstart',{originalEvent:new MouseEvent('mousedown')});
     nativeMap.triggerRepaint();void 0`);
   await until(()=>f.js(`JSON.parse(document.getElementById('official-terrain').dataset.frame||'{}').mode==='manual' &&
     document.getElementById('route-flyover').dataset.status==='ready'`));

@@ -3,6 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
+import { execFileSync } from 'node:child_process';
 import { createServer } from 'node:http';
 import { mkdtemp, readFile, readdir, rm, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -11,7 +12,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { build } from '../tools/build-release.mjs';
 import { browser, until } from './browser.mjs';
 
-async function fixture(t) {
+async function fixture(t,{cameraBaseline}={}) {
   const tmp=await mkdtemp(join(tmpdir(),'kotr-home-')),out=join(tmp,'public'),cleanup=[];
   let server;
   t.after(async()=>{
@@ -23,6 +24,21 @@ async function fixture(t) {
   await build('.',out);
   const names=(await readdir(out,{recursive:true})).filter(p=>extname(p));
   const files=new Map(await Promise.all(names.map(async p=>[p,await readFile(join(out,p))])));
+  if(cameraBaseline) {
+    // Explicit negative control: serve the prior adapter body under this test
+    // artifact's import graph. Never modify source, the checkout or a release.
+    let old=execFileSync('git',['show',`${cameraBaseline}:js/route-terrain-view.mjs`],{encoding:'utf8'});
+    const path=names.find(p=>/^js\/route-terrain-view\./.test(p)),current=files.get(path).toString();
+    assert.ok(old.includes('export async function mountRouteTerrain'));
+    const imports=new Map([...current.matchAll(/await import\('([^']+)'\)/g)].map(([,path])=>
+      [path.replace(/\.[a-f0-9]{24}(?=\.)/,''),path]));
+    old=old.replace(/await import\('([^']+)'\)/g,(_,path)=>{
+      assert.ok(imports.has(path),`Baseline dependency not in built graph: ${path}`);
+      return `await import('${imports.get(path)}')`;
+    });
+    files.set(path,Buffer.from(current.slice(0,current.indexOf('export async function mountRouteTerrain'))+
+      old.slice(old.indexOf('export async function mountRouteTerrain'))));
+  }
   const types={'.html':'text/html','.mjs':'text/javascript','.js':'text/javascript',
     '.css':'text/css','.json':'application/json','.gpx':'application/xml'};
   const requests=[],fault={path:null,bytes:null};
@@ -53,6 +69,215 @@ const routes=[
 ];
 const seek = (b,value)=>b.js(`document.getElementById('seek').value=${value};
   document.getElementById('seek').dispatchEvent(new Event('input'))`);
+// A valid proof exists on the render event, then the next follow frame marks it
+// stale. Observe that event instead of aliasing the 200ms proof cadence with a
+// 500ms poll. No visibility/readiness/camera override.
+async function currentTerrain(b) {
+  const r=await b.cmd('Runtime.evaluate',{awaitPromise:true,returnByValue:true,expression:`new Promise((resolve,reject)=>{
+    const el=document.getElementById('terrain');
+    let timer;const observer=new MutationObserver(check);
+    function done(error,p){observer.disconnect();clearTimeout(timer);error?reject(Error(error)):resolve(p);}
+    function check(){
+      const p=JSON.parse(el.dataset.frame||'{}');
+      if(p.ok && p.current && p.distanceM===Number(el.dataset.distance) &&
+          document.getElementById('player').classList.contains('online'))done(null,p);
+      else if(document.getElementById('terrain-status').textContent.includes('unavailable'))
+        done(document.getElementById('terrain-status').textContent+' '+JSON.stringify(p));
+    }
+    observer.observe(el,{attributes:true,attributeFilter:['data-frame']});
+    timer=setTimeout(()=>done('No current rendered terrain proof'),14000);check();
+  })`});
+  assert.ok(!r.exceptionDetails,JSON.stringify(r.exceptionDetails));return r.result.value;
+}
+
+test('built moving camera: trusted wheel/buttons/keyboard/pinch retain zoom and the one ride clock at desktop/375',async t=>{
+  const f=await fixture(t,{cameraBaseline:process.env.RIDE_CAMERA_BASELINE});
+  for(const [width,height] of [[1440,900],[375,812]]) {
+    const b=await f.chrome();
+    await b.cmd('Page.enable');
+    await b.cmd('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
+    if(width===375)await b.cmd('Emulation.setTouchEmulationEnabled',{enabled:true,maxTouchPoints:2});
+    await b.cmd('Page.addScriptToEvaluateOnNewDocument',{source:`
+      Object.defineProperty(window,'mapboxgl',{configurable:true,set(gl){
+        Object.defineProperty(window,'mapboxgl',{value:gl,configurable:true});
+        gl.Map=new Proxy(gl.Map,{construct(T,args){return window.observedTerrain=new T(...args);}});
+      }});`});
+    await b.cmd('Page.navigate',{url:f.base});await ready(b);
+    const pointer=async id=>{
+      const p=await b.js(`(()=>{
+        const el=document.getElementById('${id}'),r=el.getBoundingClientRect();
+        return {x:r.x+r.width/2,y:r.y+r.height/2,hit:el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)),
+          width:r.width,height:r.height,bottom:r.bottom};
+      })()`);
+      assert.ok(p.hit && p.width>=44 && p.height>=44,JSON.stringify({id,...p}));
+      if(id.startsWith('zoom-')) assert.ok(p.bottom<await b.js(`document.querySelector('.player-bottom').getBoundingClientRect().top`));
+      await b.cmd('Input.dispatchMouseEvent',{type:'mousePressed',x:p.x,y:p.y,button:'left',clickCount:1});
+      await b.cmd('Input.dispatchMouseEvent',{type:'mouseReleased',x:p.x,y:p.y,button:'left',clickCount:1});
+    };
+    const state=()=>b.js(`({
+      zoom:observedTerrain.getZoom(),scale:observedTerrain.transform.worldSize,pitch:observedTerrain.getPitch(),
+      ...document.getElementById('cockpit').dataset,at:performance.now(),
+      playing:document.getElementById('play').getAttribute('aria-label')==='Pause route preview',
+      rate:document.getElementById('playback-rate').value,route:document.getElementById('player-route').value
+    })`);
+    await pointer('fly');await currentTerrain(b);
+    await pointer('profile-toggle');await pointer('main-climb');await pointer('profile-close');
+    await pointer('return-rider');await currentTerrain(b);
+    const start=await state();
+    assert.equal(start.zoom,12.6);
+    assert.equal(start.pitch,45);
+    await b.js(`(()=>{
+      window.zoomEvidence={frames:[],proofs:[],inputs:[],gestures:[],hidden:0};
+      const el=document.getElementById('terrain'),map=observedTerrain;
+      const input=e=>{if(zoomEvidence.inputs.length<100)zoomEvidence.inputs.push({type:e.type,trusted:e.isTrusted,target:e.target.tagName});};
+      for(const type of ['wheel','keydown','touchstart','click'])document.addEventListener(type,input,true);
+      const render=()=>{
+        const c=document.getElementById('cockpit');
+        zoomEvidence.frames.push({at:performance.now(),zoom:map.getZoom(),scale:map.transform.worldSize,
+          pitch:map.getPitch(),distance:Number(c.dataset.distance),seconds:Number(c.dataset.seconds),
+          playing:document.getElementById('play').getAttribute('aria-label')==='Pause route preview'});
+        if(getComputedStyle(el).visibility!=='visible')zoomEvidence.hidden++;
+      };
+      map.on('render',render);
+      for(const type of ['touchstart','touchmove','touchend','zoomstart','zoomend'])
+        map.on(type,e=>zoomEvidence.gestures.push({type,zoom:map.getZoom(),input:e.originalEvent?.type,
+          touches:e.originalEvent?.touches?.length}));
+      const observer=new MutationObserver(()=>{
+        const p=JSON.parse(el.dataset.frame||'{}');
+        if(p.current)zoomEvidence.proofs.push(p);
+      });observer.observe(el,{attributes:true,attributeFilter:['data-frame']});
+      zoomEvidence.dispose=()=>{map.off('render',render);observer.disconnect();
+        for(const type of ['wheel','keydown','touchstart','click'])document.removeEventListener(type,input,true);};
+    })()`);
+    await pointer('play');
+    const before=await state();
+    assert.equal(before.playing,true);
+    const x=width*.65,y=height*.45;
+    assert.equal(await b.js(`document.elementFromPoint(${x},${y}).tagName`),'CANVAS');
+    for(let i=0;i<5;i++) {
+      await b.cmd('Input.dispatchMouseEvent',{type:'mouseWheel',x,y,deltaX:0,deltaY:-100});
+      await sleep(180);
+    }
+    await until(()=>b.js(`!observedTerrain.isZooming()`));
+    const wheel=await state();
+    assert.equal(wheel.playing,true,JSON.stringify(wheel));
+    assert.ok(wheel.zoom>13.3 && wheel.zoom<=16,JSON.stringify(wheel));
+    assert.ok(wheel.scale>start.scale*1.6);
+    assert.equal(wheel.pitch,start.pitch);assert.equal(wheel.rate,before.rate);
+    await currentTerrain(b);
+    await screenshot(b,`moving-zoom-${width}-wheel`);
+    await sleep(3500);
+    const held=await state();
+    assert.ok(Math.abs(held.zoom-wheel.zoom)<.001,'No snapback over many follow frames (SDK terrain adjustment <.001)');
+    assert.equal(held.playing,true);
+    assert.ok(Number(held.distance)>Number(wheel.distance));
+    const rate=(Number(held.seconds)-Number(wheel.seconds))/((held.at-wheel.at)/1000);
+    assert.ok(Math.abs(rate-Number(held.rate))<1,JSON.stringify({rate,selected:held.rate}));
+    await pointer('zoom-farther');
+    const far=await state();assert.ok(far.zoom<held.zoom-.4);assert.equal(far.playing,true);
+    await pointer('zoom-nearer');
+    assert.ok(Math.abs((await state()).zoom-held.zoom)<.001);
+    // Focus the actual canvas by a trusted click; never Escape a native select
+    // (Escape bubbles into Back on this app).
+    await b.cmd('Input.dispatchMouseEvent',{type:'mousePressed',x,y,button:'left',clickCount:1});
+    await b.cmd('Input.dispatchMouseEvent',{type:'mouseReleased',x,y,button:'left',clickCount:1});
+    await b.cmd('Input.dispatchKeyEvent',{type:'keyDown',key:'-',code:'Minus',windowsVirtualKeyCode:189});
+    await b.cmd('Input.dispatchKeyEvent',{type:'keyUp',key:'-',code:'Minus',windowsVirtualKeyCode:189});
+    await sleep(500);
+    const key=await state();assert.ok(key.zoom<far.zoom);assert.equal(key.playing,true);
+    if(width===375) {
+      const points=gap=>[{x:width/2-gap,y,id:1},{x:width/2+gap,y,id:2}];
+      await b.cmd('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:points(25)});
+      for(let gap=30;gap<=60;gap+=5) {
+        await b.cmd('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:points(gap)});await sleep(35);
+      }
+      await b.cmd('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+      await until(()=>b.js(`!observedTerrain.isZooming()`));
+      const pinch=await state();assert.ok(pinch.zoom>key.zoom+.5,JSON.stringify({key,pinch,
+        gestures:await b.js('zoomEvidence.gestures'),inputs:await b.js('zoomEvidence.inputs')}));
+      assert.equal(pinch.playing,true);
+      assert.ok(await b.js(`zoomEvidence.inputs.some(e=>e.type==='touchstart' && e.trusted && e.target==='CANVAS')`));
+    }
+    // Buttons reach a substantially closer scale while still moving, not just
+    // a paused endpoint or a DOM value claiming that the camera changed.
+    for(let i=0;i<6 && (await state()).zoom<14.4;i++)await pointer('zoom-nearer');
+    const closeMoving=await state();
+    assert.ok(closeMoving.zoom>=14.4 && closeMoving.scale>start.scale*3.4);
+    await sleep(2500);await currentTerrain(b);
+    assert.equal((await state()).playing,true);
+    assert.ok(Math.abs((await state()).zoom-closeMoving.zoom)<.001);
+    await currentTerrain(b);
+    const near=await state();
+    await screenshot(b,`moving-zoom-${width}-controls`);
+    const evidence=await b.js(`zoomEvidence.dispose();({...zoomEvidence,dispose:undefined})`);
+    assert.equal(evidence.hidden,0);
+    assert.ok(evidence.frames.length>100);
+    assert.ok(evidence.frames.filter(p=>p.playing && p.zoom>13).length>60);
+    assert.ok(evidence.proofs.filter(p=>p.ok && p.mode==='follow' && p.road && p.clear).length>10);
+    assert.ok(evidence.inputs.filter(e=>e.type==='wheel' && e.trusted && e.target==='CANVAS').length===5);
+    assert.ok(evidence.inputs.some(e=>e.type==='keydown' && e.trusted && e.target==='CANVAS'));
+    const invalid=evidence.frames.filter(p=>!Number.isFinite(p.zoom) || p.zoom<10 || p.zoom>16 || Math.abs(p.pitch-45)>1e-8);
+    assert.deepEqual(invalid,[],'Finite bounded zoom and unchanged pitch on every rendered frame');
+    await pointer('play');const paused=await state();
+    await sleep(300);assert.equal((await state()).distance,paused.distance);
+    await pointer('play');await sleep(350);
+    assert.ok(Math.abs((await state()).zoom-near.zoom)<.001);
+    // Deliberate pan is still inspection and explicitly pauses; zoom isn't.
+    await b.cmd('Input.dispatchMouseEvent',{type:'mousePressed',x,y,button:'left',buttons:1,clickCount:1});
+    for(let i=1;i<=8;i++) {
+      await b.cmd('Input.dispatchMouseEvent',{type:'mouseMoved',x:x-i*8,y,button:'left',buttons:1});await sleep(30);
+    }
+    await b.cmd('Input.dispatchMouseEvent',{type:'mouseReleased',x:x-64,y,button:'left',clickCount:1});
+    await until(async()=>!(await state()).playing);
+    await currentTerrain(b);
+    assert.match(await b.js(`document.getElementById('terrain-status').textContent`),/Manual/);
+    await pointer('return-rider');assert.ok(Math.abs((await state()).zoom-near.zoom)<.001);
+    await currentTerrain(b);
+    // Source resolution stays fixed even at the finite closer bound.
+    // Cover the entire 10..16 range plus fractional native zoom, not an
+    // assumed integer starting point after the SDK's terrain adjustment.
+    for(let i=0;i<16;i++) {
+      if(await b.js(`document.getElementById('zoom-nearer').disabled`))break;
+      await pointer('zoom-nearer');
+    }
+    assert.ok(Math.abs((await state()).zoom-16)<.001,'Actual terrain-adjusted maximum zoom');
+    assert.equal(await b.js(`document.getElementById('zoom-nearer').disabled`),true);
+    await currentTerrain(b);
+    const budget=await b.js(`({requests:Number(document.getElementById('terrain').dataset.requests),
+      satellite:observedTerrain.getSource('satellite').maxzoom,dem:observedTerrain.getSource('dem').maxzoom})`);
+    assert.ok(budget.requests<=240);assert.equal(budget.satellite,12);assert.equal(budget.dem,11);
+    await screenshot(b,`moving-zoom-${width}-bound`);
+    await pointer('profile-toggle');
+    await b.js(`document.getElementById('player-profile').focus()`);
+    await b.cmd('Input.dispatchKeyEvent',{type:'keyDown',key:'ArrowRight',code:'ArrowRight',windowsVirtualKeyCode:39});
+    await b.cmd('Input.dispatchKeyEvent',{type:'keyUp',key:'ArrowRight',code:'ArrowRight',windowsVirtualKeyCode:39});
+    await pointer('profile-close');
+    await sleep(250);
+    await screenshot(b,`moving-zoom-${width}-seek`);
+    t.diagnostic(JSON.stringify({seekProof:await b.js(`(()=>{
+      const m=observedTerrain,rider=m._markers.find(m=>m.getElement().classList.contains('route-rider')).getLngLat();
+      const p=m.project(rider),line=m.getSource('route')._data.geometry.coordinates;
+      return {proof:JSON.parse(document.getElementById('terrain').dataset.frame||'{}'),
+        zoom:m.getZoom(),vertices:line.length,
+        approximatePointFeatures:m.queryRenderedFeatures([[p.x-8,p.y-8],[p.x+8,p.y+8]],{layers:['route']}).length,
+        renderedRoadFeatures:m.queryRenderedFeatures({layers:['route']}).length};
+    })()`)}));
+    await currentTerrain(b);
+    assert.ok(Math.abs((await state()).zoom-16)<.001,'Seek retains camera distance');
+    await select(b,'player-route','rwgps-57873112');await ready(b);await currentTerrain(b);
+    assert.equal((await state()).zoom,12.6,'New route resets distance');
+    await pointer('tools-toggle');await click(b,'offline');
+    assert.equal(await b.js(`document.getElementById('zoom-nearer').disabled && document.getElementById('zoom-farther').disabled`),true);
+    assert.match(await b.js(`document.getElementById('zoom-help').textContent`),/requires online terrain/);
+    assert.equal(await b.js(`document.querySelectorAll('#terrain canvas').length`),0);
+    await pointer('tools-close');
+    await pointer('back');
+    assert.deepEqual(b.exceptions,[]);
+    t.diagnostic(JSON.stringify({width,wheelZoom:wheel.zoom,heldZoom:held.zoom,actualRate:rate,
+      selectedRate:held.rate,closeMovingZoom:closeMoving.zoom,renderFrames:evidence.frames.length,
+      validProofs:evidence.proofs.filter(p=>p.ok).length,budget}));
+  }
+});
 async function screenshot(b,name) {
   const dir=process.env.RIDE_EXPLORER_EVIDENCE_DIR;
   if (!dir) return;
@@ -101,16 +326,7 @@ test('built baseline: first Grappa what-if loop in 2D and terrain, coherent cloc
     })`);
     const readyTerrain=async()=>{
       if (!terrain) return;
-      for (let i=0;i<34;i++) {
-        const s=await b.js(`({
-          proof:JSON.parse(document.getElementById('terrain').dataset.frame||'{}'),
-          online:document.getElementById('player').classList.contains('online'),
-          status:document.getElementById('terrain-status').textContent
-        })`);
-        if (s.online && s.proof.ok && s.proof.current) return;
-        assert.ok(!s.status.includes('unavailable'),JSON.stringify(s));await sleep(500);
-      }
-      assert.fail('Baseline journey terrain did not verify');
+      await currentTerrain(b);
     };
     await pointer('#fly');await readyTerrain();
     const storageBefore=await b.js(`[Object.keys(localStorage).sort(),Object.keys(sessionStorage).sort(),document.cookie]`);
@@ -742,13 +958,8 @@ test('built root live Chrome: Grappa play, off-rider manual pan/zoom/return, rou
       playing:document.getElementById('play').getAttribute('aria-label')==='Pause route preview'
     })`);
     const terrainReady=async()=>{
-      for (let i=0;i<34;i++) {
-        const s=await state();
-        if (s.proof.ok && s.proof.current && s.proof.distanceM===s.distance && s.online) return s;
-        assert.ok(!s.status.includes('unavailable'),JSON.stringify(s));
-        await sleep(500);
-      }
-      assert.fail('Live built entry terrain did not verify');
+      const proof=await currentTerrain(b);
+      return {...await state(),proof};
     };
     await click(b,'fly');await terrainReady();
     await click(b,'profile-toggle');await click(b,'main-climb');

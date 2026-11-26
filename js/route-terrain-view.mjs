@@ -1,8 +1,9 @@
-import { cameraPose, createRoutePresentation, followBearing, routeBounds, routeLine, routeSection, frameEvidence, flyoverLimits as limits } from './route-flyover.mjs';
+import { cameraPose, createRideCamera, createRoutePresentation, followBearing, routeBounds, routeLine, routeSection, frameEvidence, flyoverLimits as limits } from './route-flyover.mjs';
 
 // One lazy map, no preloading/retries or independent playback clock.
 // Only approved, already verified geometry may reach this adapter.
-export async function mountRouteTerrain({container,analysis,snapshot,onStatus,onManual,onPresent,signal}) {
+export async function mountRouteTerrain({container,analysis,snapshot,onStatus,onManual,onPresent,signal,
+  camera=createRideCamera(),onCamera}) {
   await import('../assets/terrain.js');
   if (signal.aborted) return;
   await import('./config.js');
@@ -21,7 +22,15 @@ export async function mountRouteTerrain({container,analysis,snapshot,onStatus,on
   let map, rider, ghost, ready=false, presented=false, stopped=false, manual=false, current=snapshot;
   let refinements={}, lastPaint=-Infinity, lastProof=-Infinity, timer, requests=0, updating=false;
   let bearing, frame, proofTimer, sequence=0, renderSequence=0, proofSequence=0, proof, status, outageAt;
-  let highlighted;
+  let highlighted, routeDetail;
+  const detailAt=s=>Math.floor((s.position?.pointIndexes?.[0] ?? 0)/limits.detailStep)*limits.detailStep;
+  const zoomIntent=e=> {
+    const input=e.originalEvent;
+    return input && (input.type==='wheel' || input.type==='dblclick' ||
+      input.type==='keydown' && ['+','=','-','_'].includes(input.key) ||
+      input.type.startsWith('touch') && input.touches?.length>=2);
+  };
+  let nativeZoom=false, touching=false, pointing=false;
   const presentation=createRoutePresentation(analysis);
   function announce(name,message) {
     const key=name+message;
@@ -45,6 +54,7 @@ export async function mountRouteTerrain({container,analysis,snapshot,onStatus,on
     if (stopped) return;
     stopped=true; clearTimeout(timer); clearTimeout(proofTimer); cancelAnimationFrame(frame);
     document.removeEventListener('visibilitychange',visibility);
+    document.removeEventListener('mouseup',releasePointer);
     signal.removeEventListener('abort',dispose);
     invalidate();
     container.style.visibility='hidden'; map?.remove();
@@ -74,12 +84,18 @@ export async function mountRouteTerrain({container,analysis,snapshot,onStatus,on
   }
   function visibility() {
     if (document.hidden) {
+      touching=false;pointing=false;
       cancelAnimationFrame(frame);frame=undefined;
       clearTimeout(proofTimer);proofTimer=undefined;
       invalidate();
     }
   }
   document.addEventListener('visibilitychange',visibility);
+  function releasePointer() {
+    pointing=false;
+    if (!stopped && ready) update(current);
+  }
+  document.addEventListener('mouseup',releasePointer);
   const withinPixels=()=>container.clientWidth*container.clientHeight*devicePixelRatio**2<=limits.maxPixels;
   if (!withinPixels()) {
     fail('This display exceeds the bounded 3D frame size. Use linked 2D/profile or a smaller window.');return;
@@ -92,7 +108,9 @@ export async function mountRouteTerrain({container,analysis,snapshot,onStatus,on
         satellite:{type:'raster',url:'mapbox://mapbox.satellite',tileSize:256,maxzoom:12},
         dem:{type:'raster-dem',url:'mapbox://mapbox.mapbox-terrain-dem-v1',tileSize:512,maxzoom:11},
       },layers:[{id:'satellite',type:'raster',source:'satellite',paint:{'raster-fade-duration':0}}]},
-      ...cameraPose(analysis,current),maxZoom:limits.maxZoom,maxPitch:limits.maxPitch,
+      ...cameraPose(analysis,current,{zoom:camera.zoom}),
+      minZoom:limits.minZoom,maxZoom:limits.maxZoom,maxPitch:limits.maxPitch,
+      scrollZoom:{around:'center'},touchZoomRotate:{around:'center'},
       maxTileCacheSize:limits.tileCache,fadeDuration:0,renderWorldCopies:false,
       antialias:false,refreshExpiredTiles:false,preserveDrawingBuffer:false,
       transformRequest(url,type) {
@@ -107,12 +125,41 @@ export async function mountRouteTerrain({container,analysis,snapshot,onStatus,on
     // Requests remain SDK-managed, visible-region only. No route-wide prefetch.
     map.on('error',()=>fail('Online imagery or elevation failed.'));
     map.on('webglcontextlost',()=>fail('WebGL context lost.'));
-    map.on('movestart',e=>{
+    // Gestures need samples before the SDK calls them zooming/dragging.
+    // A follow jumpTo/stop during recognition resets the native handler.
+    // Hold only camera following, not the ride clock; actual pan/rotation
+    // below explicitly transfers ownership and pauses the ride.
+    map.on('mousedown',()=>{pointing=true;});
+    map.on('touchstart',e=>{touching=e.originalEvent.touches.length>0;});
+    map.on('touchend',e=>{touching=e.originalEvent.touches.length>0;});
+    map.on('touchcancel',()=>{touching=false;});
+    const inspect=e=>{
       if (stopped || !e.originalEvent || updating) return;
+      // Two-finger translation is part of a pinch, not deliberate inspection.
+      if (e.type==='dragstart' && e.originalEvent.touches?.length>1) return;
       manual=true; onManual();
       status=undefined;
       invalidate();
       waiting();
+    };
+    for (const event of ['dragstart','rotatestart','pitchstart']) map.on(event,inspect);
+    map.on('movestart',e=>{
+      if (e.originalEvent?.type==='keydown' && e.originalEvent.key.startsWith('Arrow')) inspect(e);
+    });
+    map.on('zoomstart',e=>{if (!updating) nativeZoom=!!zoomIntent(e);});
+    map.on('zoom',e=>{
+      if (stopped || updating || !nativeZoom && !zoomIntent(e)) return;
+      const zoom=map.getZoom();
+      // SDK terrain anchoring can round an endpoint by a fraction of a pixel.
+      camera.setZoom(Math.abs(zoom-limits.maxZoom)<.001 ? limits.maxZoom :
+        Math.abs(zoom-limits.minZoom)<.001 ? limits.minZoom : zoom);
+      onCamera?.(camera.zoom);
+    });
+    map.on('zoomend',()=>{
+      // Finish the SDK's animation before applying follow again. jumpTo during
+      // that animation calls stop(), cancelling wheel/keyboard/pinch zoom.
+      nativeZoom=false;
+      if (!stopped && !updating) update(current);
     });
     map.on('move',()=>{if (!stopped) invalidate();});
     map.on('moveend',()=>{
@@ -129,8 +176,9 @@ export async function mountRouteTerrain({container,analysis,snapshot,onStatus,on
           scheme:sat.scheme,maxzoom:10});
         map.addLayer({id:'sat-cover',type:'raster',source:'sat-cover',
           paint:{'raster-fade-duration':0}},'satellite');
+        routeDetail=detailAt(current);
         map.addSource('route',{type:'geojson',tolerance:0,data:{type:'Feature',
-          properties:{},geometry:{type:'LineString',coordinates:routeLine(analysis)}}});
+          properties:{},geometry:{type:'LineString',coordinates:routeLine(analysis,routeDetail)}}});
         map.addLayer({id:'route',type:'line',source:'route',
           paint:{'line-color':'#ff932e','line-width':5}});
         map.addSource('selected-section',{type:'geojson',tolerance:0,
@@ -221,8 +269,14 @@ export async function mountRouteTerrain({container,analysis,snapshot,onStatus,on
     lastPaint=now;
     try {
       updating=true;
-      const pose=cameraPose(analysis,s,refinements);
+      const pose=cameraPose(analysis,s,{...refinements,zoom:camera.zoom});
       rider.setLngLat(pose.center);
+      const detail=detailAt(s);
+      if (detail!==routeDetail) {
+        routeDetail=detail;
+        map.getSource('route').setData({type:'Feature',properties:{},
+          geometry:{type:'LineString',coordinates:routeLine(analysis,routeDetail)}});
+      }
       ghostBeacon.hidden=!s.baseline?.position;
       if (s.baseline?.position) {
         ghost.setLngLat([s.baseline.position.lon,s.baseline.position.lat]);
@@ -235,7 +289,7 @@ export async function mountRouteTerrain({container,analysis,snapshot,onStatus,on
           {type:'FeatureCollection',features:[]});
         container.dataset.section=highlighted || '';
       }
-      if (!manual || force) {
+      if ((!manual || force) && ((!map.isZooming() && !touching && !pointing) || force)) {
         manual=false;
         if (reset) bearing=undefined;
         if (s.cameraMode==='follow') pose.bearing=followBearing(pose.bearing,bearing,elapsed);
@@ -258,5 +312,16 @@ export async function mountRouteTerrain({container,analysis,snapshot,onStatus,on
     } catch { fail('Selected route position or camera unavailable.'); }
     finally { updating=false; }
   }
-  return {update,dispose,resize:()=>map?.resize()};
+  function setZoom(value) {
+    if (stopped || !ready) return;
+    camera.setZoom(value);
+    // Button/slider zoom is immediate: no competing native animation and no
+    // second clock. Leave inspection ownership and the ride snapshot untouched.
+    updating=true;
+    try { map.stop();map.jumpTo({zoom:camera.zoom}); }
+    finally { updating=false; }
+    onCamera?.(camera.zoom);
+    update(current);
+  }
+  return {update,dispose,setZoom,resize:()=>map?.resize()};
 }
