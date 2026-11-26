@@ -25,26 +25,19 @@ const names = {
 const params = new URLSearchParams(location.search);
 document.body.classList.toggle('long-name',params.get('layout') === 'long-name');
 const reduced = matchMedia('(prefers-reduced-motion: reduce)');
-// Both sheets share the space between the live header/status and playbar.
-// Enlarged text can make the cockpit too tall to anchor Profile above it.
-const bar = document.querySelector('.playbar'), credit = document.querySelector('.player-credit');
+// The compact profile is in flow above the cockpit, never on top of it.
+// Expanded details/setup deliberately use more space, with accessible scrolling.
+const credit = document.querySelector('.player-credit');
 function layoutSheets() {
-  const headerBottom = Math.max(document.querySelector('.player-header').getBoundingClientRect().bottom,
-    document.querySelector('.player-status').getBoundingClientRect().bottom);
-  document.querySelector('.player-bottom').style.setProperty('--playbar-clearance',
-    `${bar.getBoundingClientRect().height+credit.getBoundingClientRect().height+8}px`);
-  document.querySelector('.player-bottom').style.setProperty('--sheet-max-height',
-    `${Math.max(0,bar.getBoundingClientRect().top-headerBottom-16)}px`);
   $('player').style.setProperty('--terrain-controls-top',
-    `${document.querySelector('.player-status').getBoundingClientRect().bottom+8}px`);
+    `${document.querySelector('.player-status').getBoundingClientRect().bottom+$('player').scrollTop+8}px`);
 }
 const sheetLayout = new ResizeObserver(layoutSheets);
-for (const el of [bar,credit,document.querySelector('.player-header'),
-  document.querySelector('.player-status'),document.querySelector('.player-bottom'),$('player')])
+for (const el of [document.querySelector('.player-header'),document.querySelector('.player-status'),$('player')])
   sheetLayout.observe(el);
 let pack, selected, analysis, inPlayer = false, playing = false, distance = 0;
 let generation = 0, routeController, terrainController, terrainHandle, frame, projection;
-let simulation, scheduler, pendingGear, pendingHistory, notice = '';
+let simulation, scheduler, notice = '';
 let comparison, comparisonSample, comparisonHistory, presentedSeconds, comparisonNotice = '';
 let selectedChapterId, highlightedChapterId, insights, lastHUD = -Infinity;
 let mode = 'experiment';
@@ -60,11 +53,10 @@ function cameraControls(available = terrainReady) {
   }
   $('zoom-nearer').disabled = !available || rideCamera.zoom >= flyoverLimits.maxZoom;
   $('zoom-farther').disabled = !available || rideCamera.zoom <= flyoverLimits.minZoom;
-  text('zoom-help', available ? manual ? 'Manual exploration · Return restores your chosen view.' :
-    camera!=='follow' ? 'Aerial framing · choose Rider to look forward.' : rideCamera.view==='rider' ?
-    'Rider · 2–9 m above approximate terrain; lifts on steep DEM. Not Street View.' :
-    'Closer view, same terrain detail. New route resets distance.' :
-    privateView ? 'Private route · camera zoom unavailable in 2D.' : 'Camera zoom requires online terrain.');
+  text('zoom-help', available ? manual ? 'Manual exploration · Return to follow' :
+    camera==='follow' && rideCamera.view==='rider' ? 'Approximate terrain · Rider 2–9 m' :
+    'Approximate terrain · Aerial' :
+    privateView ? 'Private route · 2D only' : 'Camera requires online terrain');
 }
 for (const [id,delta] of [['zoom-nearer',.5],['zoom-farther',-.5]])
   $(id).addEventListener('click',()=>terrainHandle?.setZoom(rideCamera.zoom+delta));
@@ -227,11 +219,11 @@ function renderInsights() {
   $('retry-section').disabled = false;
   $('player-profile').setAttribute('aria-disabled','false');
   text('road-current',finished ? 'Route complete · 0.0 km / +0 m left' :
-    remaining.inputAnomaly ? `${sectionName(analysis,current)} · processed input anomaly` :
+    remaining.inputAnomaly ? `${sectionName(analysis,current)} · slope uncertain` :
     `${sectionName(analysis,current)} · ${km(remaining.distanceM)} / +${format(remaining.ascentM)} m left`);
-  text('road-ahead',finished ? 'End of processed route · seek to explore again' :
-    ahead.inputAnomaly ? 'Ahead: processed input anomaly · unverified grade' :
-    `Next ${km(ahead.distanceM)} · processed ${grade(ahead.minGradePercent)} to ${grade(ahead.maxGradePercent)}`);
+  text('road-ahead',finished ? 'End of route · seek to explore again' :
+    ahead.inputAnomaly ? 'Ahead: slope uncertain' :
+    `Next ${km(ahead.distanceM)} · ${grade(ahead.minGradePercent)} to ${grade(ahead.maxGradePercent)}`);
   text('section-detail',`${sectionName(analysis,section)} selected · ${
     selectedRemaining.distanceM === 0 ? 'section complete; Play continues without resetting this trial.' :
     `${km(selectedRemaining.distanceM)} / +${format(selectedRemaining.ascentM)} m left.`} ${
@@ -271,8 +263,7 @@ function seekTo(target, chapterId) {
   pause();distance = Math.max(0,Math.min(analysis.distanceM,target));
   if (simulation?.status === 'available') simulation.seek(distance);
   selectedChapterId = chapterId;
-  pendingHistory = undefined;pendingGear = undefined;
-  notice = mode === 'experiment' ? 'New trial · time/work reset · paused.' : 'Steady arrival time · paused.';
+  notice = mode === 'experiment' ? 'New ride here · paused' : 'Steady arrival time · paused';
   clearComparison('Seek starts a new trial.');
   renderInsights();
   frameRoute(chapterId ? 'section' : 'follow');
@@ -285,6 +276,7 @@ function selectSection(id) {
 function renderCockpit() {
   $('player').classList.toggle('reliving',mode === 'relive');
   if (mode === 'relive') {
+    delete $('cockpit').dataset.work; // No modeled work may leak into actual replay.
     const available = !!relive.clock;
     for (const id of ['seek','restart','play']) $(id).disabled = !available;
     for (const button of document.querySelectorAll('[data-effort], #coast, #gear-easier, #gear-harder, #main-climb, #retry-section, [data-frame="section"]'))
@@ -313,22 +305,20 @@ function renderCockpit() {
   $('play').disabled = !available || (s.motion === 'finished' && s.trialOriginM === analysis.distanceM);
   for (const button of document.querySelectorAll('[data-effort], #coast, #gear-easier, #gear-harder'))
     button.disabled = !interactive;
-  if (pendingHistory !== undefined && s?.historyLength > pendingHistory) {
-    pendingHistory = undefined;pendingGear = undefined;
-  }
   $('cockpit').dataset.status = available ? 'available' : 'unavailable';
   $('cockpit').dataset.motion = s?.motion || 'unavailable';
   $('cockpit').dataset.seconds = s?.simulationSeconds ?? '';
   $('cockpit').dataset.origin = s?.trialOriginM ?? '';
   $('cockpit').dataset.history = s?.historyLength ?? '';
+  $('cockpit').dataset.work = s?.pedalWorkKJ ?? '';
   text('ride-speed', s ? (s.speedMps*3.6).toFixed(1) : '—');
-  text('speed-provenance',s ? `km/h · ${s.provenance.telemetry === 'example-model' ? 'example' : 'personal'} model` : 'km/h · unavailable');
+  text('speed-provenance',s ? 'km/h · estimate' : 'km/h · unavailable');
   text('ride-power', s ? `${Math.round(s.pedalPowerW)} W` : '—');
-  text('ride-effort', s ? `${Math.round(s.effortFraction*100)}% FTP target` : 'Unavailable');
+  text('ride-effort', s ? `${s.coast ? 'Coasting' : s.effortFraction === .6 ? 'Easy' : s.effortFraction === .9 ? 'Hard' : 'Steady'} · estimate` : 'Unavailable');
   text('ride-grade', s ? `${(s.grade*100).toFixed(1)}%` : '—');
   text('ride-gear', s ? `${s.gear.frontTeeth}×${s.gear.rearTeeth}` : '—');
   text('ride-cadence', s ? `${Math.round(s.cadenceRpm)} rpm` : '— rpm');
-  text('ride-elapsed', s ? `${mode === 'experiment' ? 'Trial' : 'Elapsed'} ${duration(s.simulationSeconds)}` : 'Estimates unavailable');
+  text('ride-elapsed', s ? `${duration(s.simulationSeconds)}` : 'Estimates unavailable');
   text('ride-remaining', s ? (s.remainingSeconds === null ? 'ETA unknown · live choices' :
     `${duration(s.remainingSeconds)} remaining`) : 'Profile & seek still available');
   text('model-provenance', s ? `${mode === 'experiment' ? 'Experiment' : 'Explore · Steady'} · ${
@@ -346,9 +336,8 @@ function renderCockpit() {
     pressed(button,!!s && s.effortFraction === Number(button.dataset.effort));
   pressed($('coast'),!!s?.coast);
   text('ride-notice', !available ? (simulation?.unavailableReasons?.join(' ') || 'Loading model…') :
-    pendingHistory !== undefined ? 'Pending · applies at the next model step when playing.' :
-    s.motion === 'finished' ? 'Finished · exact route endpoint. Restart trial or seek.' :
-    s.motion === 'stalled' ? 'Stalled · choose an effort to resume. No-momentum model.' :
+    s.motion === 'finished' ? 'Finished · restart or seek' :
+    s.motion === 'stalled' ? 'Coasting · stopped; choose effort' :
     notice || (playing ? 'Playing' : 'Paused'));
   renderComparison();
 }
@@ -397,7 +386,7 @@ function renderComparison() {
     text('comparison-detail','No active baseline.');return;
   }
   const s = comparisonSample;
-  text('comparison-gap',`◇ Baseline · live ${signed(s.distanceDeltaM)} m at equal trial time`);
+  text('comparison-gap',`◇ Baseline · live ${signed(s.distanceDeltaM)} m at equal ride time`);
   const detail = s.arrivalDeltaSeconds === null ? 'Common-distance arrival unavailable.' :
     `${signed(s.arrivalDeltaSeconds,1)} s arrival · ${signed(s.pedalWorkDeltaKJ,2)} kJ pedal work at ${(s.commonM/1000).toFixed(3)} km`;
   text('comparison-arrival',detail);
@@ -413,7 +402,7 @@ function pinBaseline() {
   }
   comparison = next;comparisonHistory = simulation.snapshot().historyLength;
   notice = '';
-  comparisonNotice = 'Pinned applied history; holds its last effort/gear/coast. Pending commands are excluded, even while paused.';
+  comparisonNotice = 'Pinned current choices and history; holds the last effort/gear/coast. Future timed commands are excluded.';
   sampleComparison();updatePosition();renderCockpit();
 }
 $('pin-baseline').addEventListener('click',pinBaseline);
@@ -423,7 +412,6 @@ $('remove-baseline').addEventListener('click',()=>{
 });
 function buildModel(originM = distance) {
   clearComparison('Rider or model changed; comparison needs the same identity.');
-  pendingGear = undefined;pendingHistory = undefined;
   scheduler = undefined;simulation = undefined;
   if (!analysis || mode === 'relive') {renderCockpit();return;}
   const rider = rideRiderFromInput({mass:$('rider-mass').value,enteredUnit:'kg',ftp:$('rider-ftp').value});
@@ -450,10 +438,11 @@ function buildModel(originM = distance) {
 }
 function command(action) {
   if (simulation?.status !== 'available' || mode !== 'experiment') return;
-  pendingHistory ??= simulation.snapshot().historyLength;
-  simulation.command(action);
-  if (action.type === 'gear') pendingGear = action.value;
-  notice = '';renderCockpit();
+  const before = simulation.snapshot(), s = simulation.command(action);
+  notice = action.type === 'gear' ?
+    `${s.cadenceRpm > before.cadenceRpm ? 'Faster' : s.cadenceRpm < before.cadenceRpm ? 'Slower' : 'Same'} legs · ${Math.round(s.cadenceRpm)} rpm · same km/h` :
+    s.coast ? 'Coasting · 0 W, 0 rpm' : `${Math.round(s.pedalPowerW)} W estimated · ${playing ? 'playing' : 'paused'}`;
+  sampleComparison();renderCockpit();
 }
 function updatePosition(force = false) {
   if (mode === 'relive') {
@@ -514,7 +503,7 @@ function pause() {
   // Flush the exact model boundary to every surface, without recentering a manual map.
   if (analysis) {updatePosition();renderCockpit();}
   if (terrainReady) $('terrain-status').textContent = manual ?
-    'Manual exploration · paused' : 'Satellite terrain · paused';
+    'Manual terrain view' : 'Approximate terrain';
 }
 function tick(time) {
   if (!playing || !inPlayer) return;
@@ -589,8 +578,7 @@ async function terrain() {
           clearTimeout(deadline);terrainReady = true;$('player').classList.add('online');
           cameraControls(true);
           $('camera').disabled = false;
-          status(manual ? 'Manual exploration · paused' :
-            playing ? 'Satellite terrain · preview playback' : 'Satellite terrain · paused');
+          status(manual ? 'Manual terrain view' : 'Approximate terrain');
         }
         if (state === 'verifying') {
           terrainReady = false;
@@ -739,13 +727,13 @@ $('play').addEventListener('click',()=>{
   if (!scheduler) return;
   if (distance >= analysis.distanceM) {
     clearComparison('Restart starts a new trial.');
-    distance = simulation.restart().distanceM;pendingHistory = undefined;pendingGear = undefined;
+    distance = simulation.restart().distanceM;
   }
   if (manual || camera === 'section') followRider();
   notice = '';scheduler.play();
   presentedSeconds = simulation.snapshot().simulationSeconds;
   playing = true;$('play').innerHTML = 'Ⅱ <span>Pause</span>';
-  if (terrainReady) $('terrain-status').textContent = 'Satellite terrain · preview playback';
+  if (terrainReady) $('terrain-status').textContent = 'Approximate terrain';
   $('play').setAttribute('aria-label','Pause route preview');
   frame = requestAnimationFrame(tick);
 });
@@ -786,6 +774,12 @@ $('retry-section').addEventListener('click',()=>selectSection(insights?.selected
 $('profile-close').addEventListener('click',()=>{
   $('profile-panel').hidden = true;$('profile-toggle').setAttribute('aria-expanded','false');$('profile-toggle').focus();
 });
+$('profile-details-toggle').addEventListener('click',()=>{
+  const details = $('profile-details');
+  details.hidden = !details.hidden;
+  $('profile-details-toggle').setAttribute('aria-expanded',String(!details.hidden));
+  if (!details.hidden) $('profile-details-toggle').scrollIntoView({block:'nearest'});
+});
 for (const button of document.querySelectorAll('[data-frame]'))
   button.addEventListener('click',()=>{pause();frameRoute(button.dataset.frame);});
 for (const [button,panel,otherButton,otherPanel] of [
@@ -796,7 +790,7 @@ for (const [button,panel,otherButton,otherPanel] of [
   $(button).setAttribute('aria-expanded',String(!$(panel).hidden));
   $(otherPanel).hidden = true;$(otherButton).setAttribute('aria-expanded','false');
   layoutSheets();
-  if (!$(panel).hidden) $(panel === 'profile-panel' ? 'seek' : 'tools-close').focus({preventScroll:true});
+  if (!$(panel).hidden) $(panel === 'profile-panel' ? 'player-profile' : 'tools-close').focus();
 });
 $('tools-close').addEventListener('click',()=>{
   $('tools-panel').hidden = true;$('tools-toggle').setAttribute('aria-expanded','false');$('tools-toggle').focus();
@@ -809,8 +803,7 @@ $('restart').addEventListener('click',()=>{
   pause();
   clearComparison('Restart starts a new trial.');
   distance = simulation?.status === 'available' ? simulation.restart().distanceM : 0;
-  pendingHistory = undefined;pendingGear = undefined;
-  notice = `Restarted at trial origin · paused. ${comparisonNotice}`;updatePosition(true);renderCockpit();
+  notice = 'Restarted · paused';updatePosition(true);renderCockpit();
 });
 $('playback-rate').addEventListener('change',()=>{
   pause();
@@ -855,7 +848,7 @@ const gears = exampleDrivetrain.frontTeeth.flatMap(frontTeeth=>
   .sort((a,b)=>a.frontTeeth/a.rearTeeth-b.frontTeeth/b.rearTeeth);
 for (const [id,delta] of [['gear-easier',-1],['gear-harder',1]])
   $(id).addEventListener('click',()=>{
-    const gear = pendingGear || simulation.snapshot().gear;
+    const gear = simulation.snapshot().gear;
     const i = gears.findIndex(g=>g.frontTeeth === gear.frontTeeth && g.rearTeeth === gear.rearTeeth);
     const next = Math.max(0,Math.min(gears.length-1,i+delta));
     if (i === next) {notice = delta < 0 ? 'Already in the easiest example gear.' : 'Already in the hardest example gear.';renderCockpit();return;}
@@ -896,7 +889,7 @@ $('routes-nav').addEventListener('click',()=>$('landing-route').focus());
 function configureRate(recorded) {
   $('playback-rate').replaceChildren(...(recorded?[.5,1,2,4]:[1,4,16,60]).map(n=>new Option(`${n}×`,n)));
   $('playback-rate').value=recorded?'1':'16';
-  document.querySelector('.playback-rate').firstChild.textContent=recorded?'Source time':'Ride time';
+  document.querySelector('.playback-rate').firstChild.textContent=recorded?'Replay':'Playback';
   $('profile-help').textContent=recorded ?
     'Raw source elevation dots by recorded elapsed. Tap to seek paused. Arrow keys step exact samples; Page keys 10 s; Home / End. Gaps remain unknown.' : profileHelp;
 }

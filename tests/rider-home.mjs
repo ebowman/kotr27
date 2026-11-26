@@ -527,6 +527,8 @@ test('built moving camera: trusted wheel/buttons/keyboard/pinch retain zoom and 
       }});`});
     await b.cmd('Page.navigate',{url:f.base});await ready(b);
     const pointer=async id=>{
+      if(['main-climb','profile-close'].includes(id))
+        await b.js(`document.getElementById('${id}').scrollIntoView({block:'center'})`);
       const p=await b.js(`(()=>{
         const el=document.getElementById('${id}'),r=el.getBoundingClientRect();
         return {x:r.x+r.width/2,y:r.y+r.height/2,hit:el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)),
@@ -544,7 +546,7 @@ test('built moving camera: trusted wheel/buttons/keyboard/pinch retain zoom and 
       rate:document.getElementById('playback-rate').value,route:document.getElementById('player-route').value
     })`);
     await pointer('fly');await currentTerrain(b);
-    await pointer('profile-toggle');await pointer('main-climb');await pointer('profile-close');
+    await pointer('profile-toggle');await pointer('profile-details-toggle');await pointer('main-climb');await pointer('profile-close');
     await pointer('return-rider');await currentTerrain(b);
     const start=await state();
     assert.equal(start.zoom,12.6);
@@ -709,6 +711,130 @@ async function screenshot(b,name) {
   await writeFile(join(dir,name+'.png'),Buffer.from(data,'base64'));
 }
 
+for (const [width,height] of [[1440,900],[375,812]])
+test(`built compact cockpit ${width}: native paused controls, road/profile, disclosures and 200% text`,async t=>{
+  const f=await fixture(t),b=await f.chrome();
+  await b.cmd('Page.enable');
+  await b.cmd('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
+  await b.cmd('Page.navigate',{url:f.base});await ready(b);
+  const pointer=async(selector,{scroll=false,fraction=.5}={})=>{
+    if(scroll)await b.js(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'center'})`);
+    const p=await b.js(`(()=>{
+      const el=document.querySelector(${JSON.stringify(selector)}),r=el.getBoundingClientRect();
+      const x=r.left+r.width*${fraction},y=r.top+r.height/2;
+      return {x,y,width:r.width,height:r.height,hit:el.contains(document.elementFromPoint(x,y))};
+    })()`);
+    assert.ok(p.hit && p.width>=44 && p.height>=44,JSON.stringify({selector,...p}));
+    await b.cmd('Input.dispatchMouseEvent',{type:'mousePressed',x:p.x,y:p.y,button:'left',clickCount:1});
+    await b.cmd('Input.dispatchMouseEvent',{type:'mouseReleased',x:p.x,y:p.y,button:'left',clickCount:1});
+  };
+  const state=()=>b.js(`({
+    ...document.getElementById('cockpit').dataset,
+    power:parseFloat(document.getElementById('ride-power').textContent),
+    speed:parseFloat(document.getElementById('ride-speed').textContent),
+    cadence:parseFloat(document.getElementById('ride-cadence').textContent),
+    gear:document.getElementById('ride-gear').textContent,
+    effort:document.querySelector('.efforts [aria-pressed=true]')?.textContent,
+    notice:document.getElementById('ride-notice').textContent,
+    play:document.getElementById('play').getAttribute('aria-label')
+  })`);
+  const space=()=>b.js(`(()=>{
+    const rect=s=>document.querySelector(s).getBoundingClientRect().toJSON();
+    return {camera:rect('.camera-distance'),bottom:rect('.player-bottom'),cockpit:rect('#cockpit'),
+      profile:rect('#profile-panel'),player:rect('#player'),scroll:document.getElementById('player').scrollWidth,
+      top:document.getElementById('player').scrollTop};
+  })()`);
+  const frozen=(a,b)=>assert.deepEqual([a.seconds,a.distance,a.work],[b.seconds,b.distance,b.work]);
+  await pointer('#fly');await currentTerrain(b);
+  await pointer('#view-rider');await currentTerrain(b);
+  let layout=await space();
+  await screenshot(b,`compact-${width}-closed`);
+  t.diagnostic(JSON.stringify(await b.js(`[...document.querySelectorAll('.telemetry,#road-card,.ride-actions,.gears,.efforts,.playbar,.player-status')]
+    .map(e=>({el:e.className||e.id,text:e.textContent,rect:e.getBoundingClientRect().toJSON()}))`)));
+  assert.ok(layout.bottom.top-layout.camera.bottom>=height/2,JSON.stringify(layout));
+  assert.equal(layout.top,0);assert.equal(layout.scroll,width);
+  await screenshot(b,`compact-${width}-closed`);
+  await pointer('#profile-toggle');
+  assert.equal(await b.js(`document.getElementById('profile-details').hidden`),true);
+  await pointer('#player-profile',{fraction:.2});
+  const proof=await currentTerrain(b);
+  assert.ok(proof.current && proof.ok && proof.road && proof.clearance,'Actual rendered terrain, not just camera inputs');
+  layout=await space();
+  assert.ok(layout.profile.bottom<=layout.cockpit.top,'Profile never overlays the cockpit');
+  assert.ok(layout.profile.height<=100,JSON.stringify(layout));
+  assert.ok(layout.profile.top-layout.camera.bottom>=height*.3,JSON.stringify(layout));
+  assert.equal(layout.top,0);
+  assert.match(await b.js(`document.getElementById('road-current').textContent`),/Climb 22.*km.*m left/);
+  assert.match(await b.js(`document.getElementById('road-ahead').textContent`),/Next 1.0 km.*%/);
+  const initial=await state();
+  assert.equal(initial.power,165);
+  await pointer('[data-effort="0.9"]');
+  const hard=await state();frozen(hard,initial);
+  assert.equal(hard.power,198);assert.equal(hard.effort,'Hard');assert.ok(hard.speed>initial.speed);
+  await pointer('#gear-easier');const easyGear=await state();frozen(easyGear,initial);
+  assert.notEqual(easyGear.gear,initial.gear);assert.ok(easyGear.cadence>hard.cadence);
+  assert.equal(easyGear.speed,hard.speed);assert.match(easyGear.notice,/Faster legs.*same km\/h/);
+  await pointer('#gear-harder');await pointer('#gear-easier');await pointer('#coast');
+  const coast=await state();frozen(coast,initial);
+  assert.equal(coast.effort,'Coast');assert.equal(coast.power,0);assert.equal(coast.cadence,0);
+  assert.equal(coast.speed,0);assert.equal(coast.motion,'stalled');
+  assert.match(coast.notice,/Coasting · stopped; choose effort/);
+  await pointer('#profile-close');
+  const coastingLayout=await space();
+  assert.ok(coastingLayout.bottom.top-coastingLayout.camera.bottom>=height/2,JSON.stringify(coastingLayout));
+  await pointer('#profile-toggle');
+  await pointer('[data-effort="0.6"]');const easy=await state();frozen(easy,initial);
+  assert.equal(easy.power,132);assert.equal(easy.effort,'Easy');assert.equal(Number(easy.history),6);
+  await screenshot(b,`compact-${width}-profile-immediate`);
+  // Keyboard seek remains on the same visible profile, then due-now pinning.
+  await pointer('#player-profile',{fraction:.2});
+  const beforeKey=await state();
+  for(const type of ['keyDown','keyUp'])await b.cmd('Input.dispatchKeyEvent',{type,key:'ArrowRight'});
+  assert.equal(Number((await state()).distance),Number(beforeKey.distance)+250);
+  await pointer('#profile-details-toggle');
+  await pointer('#main-climb',{scroll:true});
+  await pointer('#pin-baseline',{scroll:true});
+  assert.equal(await b.js(`document.getElementById('comparison-hud').hidden`),false);
+  await pointer('#profile-details-toggle',{scroll:true});
+  await pointer('[data-effort="0.9"]',{scroll:true});
+  const beforePlay=await state();
+  await pointer('#play');
+  await until(async()=>Number((await state()).seconds)>2);
+  await pointer('#play');
+  const afterPlay=await state();
+  assert.ok(Number(afterPlay.distance)>Number(beforePlay.distance));
+  assert.ok(Number(afterPlay.work)>Number(beforePlay.work));
+  assert.ok(await b.js(`Number(document.getElementById('comparison-hud').dataset.distanceDelta)>0`));
+  await currentTerrain(b);
+  await screenshot(b,`compact-${width}-resumed`);
+  await pointer('#profile-close');
+  // Enlarge actual CSS text, not viewport scaling. Scroll each real target
+  // into view and hit it natively; no simultaneous-visibility promise at 200%.
+  await b.js(`document.documentElement.style.fontSize='200%'`);
+  await pointer('#profile-toggle',{scroll:true});
+  const large=await space();
+  assert.equal(large.scroll,width);
+  assert.ok(large.profile.bottom<=large.cockpit.top);
+  await pointer('#profile-details-toggle',{scroll:true});
+  await pointer('#main-climb',{scroll:true});
+  await pointer('#profile-close',{scroll:true});
+  await pointer('#play',{scroll:true});
+  await until(async()=>Number((await state()).seconds)>1);
+  await pointer('#play',{scroll:true});
+  await screenshot(b,`compact-${width}-text200-controls`);
+  await pointer('#tools-toggle',{scroll:true});
+  await pointer('#tools-panel details summary',{scroll:true});
+  assert.match(await b.js(`document.querySelector('#tools-panel details[open]').textContent`),/Road surfaces and road cuts are not modeled/);
+  assert.equal((await space()).scroll,width);
+  await screenshot(b,`compact-${width}-text200-setup`);
+  await pointer('#tools-close',{scroll:true});
+  await pointer('#profile-toggle',{scroll:true});
+  await pointer('#back',{scroll:true});
+  assert.equal(await b.js(`document.getElementById('player').hidden`),true);
+  assert.deepEqual(b.exceptions,[]);
+  t.diagnostic(JSON.stringify({width,layout,initial,hard,easyGear,coast,easy,afterPlay,large}));
+});
+
 test('built baseline: first Grappa what-if loop in 2D and terrain, coherent clocks, phone and enlarged hit targets',async t=>{
   const f=await fixture(t);
   assert.ok(JSON.parse(f.files.get('offline-release.json')).common.some(p=>/^js\/ride-comparison\.[a-f0-9]{24}\.mjs$/.test(p)));
@@ -725,7 +851,7 @@ test('built baseline: first Grappa what-if loop in 2D and terrain, coherent cloc
         gl.Map=new Proxy(gl.Map,{construct(T,args){return window.observedTerrain=new T(...args);}});
       }});`});
     await b.cmd('Page.navigate',{url:f.base+(terrain?'':'?terrain=off')});await ready(b);
-    const pointer=async(selector,scroll=false)=>{
+    const pointer=async(selector,scroll=true)=>{
       if (scroll) await b.js(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'center'})`);
       const p=await b.js(`(()=>{
         const el=document.querySelector(${JSON.stringify(selector)}),r=el.getBoundingClientRect();
@@ -753,11 +879,11 @@ test('built baseline: first Grappa what-if loop in 2D and terrain, coherent cloc
     };
     await pointer('#fly');await readyTerrain();
     const storageBefore=await b.js(`[Object.keys(localStorage).sort(),Object.keys(sessionStorage).sort(),document.cookie]`);
-    await pointer('#profile-toggle');await pointer('#main-climb',true);
+    await pointer('#profile-toggle');await pointer('#profile-details-toggle');await pointer('#main-climb',true);
     await pointer('#pin-baseline',true);
     let s=await state();
     assert.equal(s.origin,10750);assert.equal(s.elapsed,0);assert.equal(s.active,true);
-    assert.equal(Number(s.distanceDelta),0);assert.match(s.notice,/Pending commands are excluded/);
+    assert.equal(Number(s.distanceDelta),0);assert.match(s.notice,/Future timed commands are excluded/);
     await pointer('#profile-close',true);await readyTerrain();
     const spatial=await b.js(`document.querySelector('.player-bottom').getBoundingClientRect().top-
       document.querySelector('.player-status').getBoundingClientRect().bottom`);
@@ -839,7 +965,8 @@ test('built baseline: first Grappa what-if loop in 2D and terrain, coherent cloc
         requestAnimationFrame(()=>requestAnimationFrame(resolve)))`,awaitPromise:true});
     }
     await pointer('#coast');
-    assert.match(await b.js(`document.getElementById('ride-notice').textContent`),/Pending/);
+    assert.equal((await state()).motion,'stalled');
+    assert.match(await b.js(`document.getElementById('ride-notice').textContent`),/Coasting/);
     await pointer('#play');await until(async()=>(await state()).motion==='stalled');
     const stalled=await state();await sleep(500);s=await state();
     assert.equal(s.distance,stalled.distance);assert.ok(Number(s.baselineDistance)>Number(stalled.baselineDistance));
@@ -875,6 +1002,7 @@ test('built baseline: first Grappa what-if loop in 2D and terrain, coherent cloc
       await pointer('#profile-close',true);
       await pointer('#tools-toggle');
       for (const selector of ['#back','#player-route','#play','#tools-toggle','#tools-close']) {
+        await b.js(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'center'})`);
         const ok=await b.js(`(()=>{
           const el=document.querySelector(${JSON.stringify(selector)}),r=el.getBoundingClientRect();
           return el.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2));
@@ -884,6 +1012,7 @@ test('built baseline: first Grappa what-if loop in 2D and terrain, coherent cloc
       await screenshot(b,'baseline-375-text-200-setup');
       await pointer('#tools-close');await pointer('#profile-toggle');
       for (const selector of ['#back','#player-route','#play','#profile-toggle']) {
+        await b.js(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'center'})`);
         const ok=await b.js(`(()=>{
           const el=document.querySelector(${JSON.stringify(selector)}),r=el.getBoundingClientRect();
           return el.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2));
@@ -940,13 +1069,13 @@ test('built sections: actual profile pointer/keyboard, shared paused trials, sev
   for (const [width,height] of [[1440,900],[375,812]]) {
     await b.cmd('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
     await b.cmd('Page.navigate',{url:f.base+'?terrain=off'});await ready(b);
-    await pointer('#fly');await pointer('#profile-toggle');await pointer('#main-climb');
+    await pointer('#fly');await pointer('#profile-toggle');await pointer('#profile-details-toggle');await pointer('#main-climb');
     let s=await state();
     assert.equal(s.distance,10750);assert.equal(s.seconds,0);assert.equal(s.history,0);
     assert.equal(s.play,'Play route preview');assert.equal(s.selected,'chapter-22');
     assert.equal(s.map,s.selected);assert.equal(s.profile,s.selected);
     assert.match(s.current,/Climb 22.*9.8 km.*853 m left/);
-    assert.match(s.ahead,/processed \+7.0% to \+9.4%/);
+    assert.match(s.ahead,/\+7.0% to \+9.4%/);
     assert.match(s.detail,/8.7% processed average/);
     assert.equal(await b.js(`document.getElementById('camera').value`),'section');
     await pointer('#profile-close');await sleep(50);
@@ -1006,8 +1135,8 @@ test('built sections: actual profile pointer/keyboard, shared paused trials, sev
       if (id==='rwgps-57874050') {
         await click(b,'profile-toggle');
         await b.js(`document.querySelector('[data-chapter-id="chapter-68"]').click()`);
-        assert.match((await state()).current,/input anomaly/);
-        assert.match((await state()).ahead,/unverified grade/);
+        assert.match((await state()).current,/slope uncertain/);
+        assert.match((await state()).ahead,/slope uncertain/);
         assert.equal(await b.js(`document.getElementById('play').disabled`),true);
         await click(b,'profile-close');
       }
@@ -1026,7 +1155,9 @@ test('built 375px enlarged Profile keeps navigation, seek and playback actual hi
   await b.cmd('Page.navigate',{url:f.base+'?terrain=off&layout=long-name'});await ready(b);
   await b.js(`document.documentElement.style.fontSize='200%'`);
   const hit = id=>b.js(`(()=>{
-    const el=document.getElementById(${JSON.stringify(id)}),r=el.getBoundingClientRect();
+    const el=document.getElementById(${JSON.stringify(id)});
+    el.scrollIntoView({block:'center'});
+    const r=el.getBoundingClientRect();
     const x=r.left+r.width/2,y=r.top+r.height/2,top=document.elementFromPoint(x,y);
     return {id:el.id,x,y,hit:top?.id||top?.tagName,accessible:!!top && el.contains(top),rect:r.toJSON()};
   })()`);
@@ -1041,13 +1172,15 @@ test('built 375px enlarged Profile keeps navigation, seek and playback actual hi
   await pointer('fly');
   await pointer('profile-toggle');
   await until(()=>b.js(`!document.getElementById('profile-panel').hidden`));
-  const targets=await Promise.all(['back','player-route','play','profile-toggle','seek'].map(hit));
+  const targets=[];
+  for(const id of ['back','player-route','play','profile-toggle','player-profile','profile-close'])
+    targets.push(await hit(id));
   assert.ok(targets.every(x=>x.accessible),JSON.stringify(targets));
   assert.ok(await b.js(`document.getElementById('profile-panel').getBoundingClientRect().top>=
     document.querySelector('.player-header').getBoundingClientRect().bottom`));
   assert.equal(await b.js(`document.documentElement.scrollWidth`),375);
   await screenshot(b,'correction-375-text-200-profile');
-  await pointer('seek');
+  await pointer('player-profile');
   assert.ok(await b.js(`Number(document.getElementById('cockpit').dataset.distance)>0`));
   await pointer('play');
   await until(()=>b.js(`document.getElementById('play').getAttribute('aria-label')==='Pause route preview' &&
@@ -1068,7 +1201,8 @@ test('built 375px enlarged Profile keeps navigation, seek and playback actual hi
   await b.js(`document.documentElement.style.fontSize='150%'`);
   await sleep(50);
   await b.js(`document.documentElement.style.fontSize='200%'`);
-  await until(async()=>(await hit('tools-close')).accessible && (await hit('back')).accessible);
+  assert.ok((await hit('tools-close')).accessible);
+  assert.ok((await hit('back')).accessible);
   assert.ok((await hit('player-route')).accessible);
   assert.ok((await hit('play')).accessible);
   await screenshot(b,'correction-375-text-200-setup');
@@ -1113,8 +1247,11 @@ test('built cockpit: actual Grappa effort/gear/coast, trial lifecycle, unavailab
     await select(b,'playback-rate','1');
     assert.equal((await state()).speed,baseline.speed,'Movie rate never changes km/h');
     await click(b,'gear-easier');
-    assert.equal((await state()).gear,baseline.gear,'Paused command must not pretend to be applied');
-    assert.match((await state()).notice,/Pending/);
+    assert.notEqual((await state()).gear,baseline.gear,'Paused commands apply in the shared model immediately');
+    assert.equal((await state()).seconds,baseline.seconds);
+    assert.equal((await state()).distance,baseline.distance);
+    assert.equal((await state()).work,baseline.work);
+    assert.match((await state()).notice,/Faster legs/);
     await click(b,'play');
     await until(async()=>Number((await state()).history)===1);
     await click(b,'play');
@@ -1128,14 +1265,14 @@ test('built cockpit: actual Grappa effort/gear/coast, trial lifecycle, unavailab
     await click(b,'play');
     assert.ok((await state()).speed>baseline.speed);
     await click(b,'coast');
-    assert.match((await state()).notice,/Pending/);
+    assert.equal((await state()).motion,'stalled');
     await click(b,'play');
     await until(async()=>(await state()).motion==='stalled');
     const stalled=await state();
     await sleep(350);
     assert.equal((await state()).distance,stalled.distance);
     assert.equal(stalled.speed,0);assert.equal(stalled.power,0);assert.equal(stalled.cadence,0);
-    assert.match(stalled.notice,/No-momentum/);
+    assert.match(stalled.notice,/Coasting · stopped; choose effort/);
     await b.js(`document.querySelector('[data-effort="0.75"]').click()`);
     await until(async()=>Number((await state()).distance)>Number(stalled.distance));
     await click(b,'play');
@@ -1230,7 +1367,8 @@ test('built cockpit: actual Grappa effort/gear/coast, trial lifecycle, unavailab
   await click(b,'tools-toggle');
   await screenshot(b,'cockpit-375-text-200-setup');
   assert.equal(await b.js(`document.documentElement.scrollWidth`),375);
-  assert.ok(await b.js(`document.getElementById('tools-panel').scrollHeight>document.getElementById('tools-panel').clientHeight`));
+  assert.ok(await b.js(`document.getElementById('player').scrollHeight>document.getElementById('player').clientHeight`),
+    'Enlarged setup scrolls in the player, never behind an overlapping sheet');
   await click(b,'tools-close');
   await screenshot(b,'cockpit-375-text-200-closed');
   assert.ok(await b.js(`[...document.querySelectorAll('#cockpit button,.playbar button,.playbar select')].every(e=>{

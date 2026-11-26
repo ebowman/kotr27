@@ -237,6 +237,10 @@ export function createRideSimulation(options) {
         number(action.atSeconds, seconds, Number.MAX_SAFE_INTEGER, 'command time') : seconds;
       pending.push(freeze({type: action.type, value, atSeconds}));
       pending.sort((a, b) => a.atSeconds - b.atSeconds); // stable order for equal times
+      // A command at the current boundary changes the shared physical solution,
+      // not the clock. Future commands remain queued, including while paused.
+      // History keeps every same-time action in order for frozen strategy replay.
+      if (atSeconds === seconds) { applyCommands(); sequence++; }
       return snapshot();
     },
     seek(distance) {

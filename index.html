@@ -71,13 +71,6 @@
     <div id="player-surface">
       <svg id="player-map" class="route-map" viewBox="0 0 640 580" role="img" aria-label="Actual route outline with moving preview position. Not a 3D terrain view."></svg>
       <div id="terrain" aria-label="Online satellite terrain"></div>
-      <div class="camera-distance glass" role="group" aria-label="Camera distance" aria-describedby="zoom-help">
-        <button id="view-rider" type="button" disabled aria-pressed="false">Rider</button>
-        <button id="view-aerial" type="button" disabled aria-pressed="true">Aerial</button>
-        <button id="zoom-nearer" type="button" disabled aria-label="Zoom nearer">+ Nearer</button>
-        <button id="zoom-farther" type="button" disabled aria-label="Zoom farther">− Farther</button>
-        <small id="zoom-help">Camera zoom requires online terrain.</small>
-      </div>
     </div>
     <header class="player-header">
       <button id="back" class="glass" aria-label="Back to Routes">← <span>Routes</span></button>
@@ -91,15 +84,24 @@
       <span id="terrain-status" role="status">Route outline · 2D preview</span>
       <span id="ride-notice" role="status">Paused</span>
     </div>
+    <div class="camera-distance glass" role="group" aria-label="Camera distance" aria-describedby="zoom-help">
+      <button id="view-rider" type="button" disabled aria-pressed="false">Rider</button>
+      <button id="view-aerial" type="button" disabled aria-pressed="true">Aerial</button>
+      <button id="zoom-nearer" type="button" disabled aria-label="Zoom nearer">+</button>
+      <button id="zoom-farther" type="button" disabled aria-label="Zoom farther">−</button>
+      <small id="zoom-help" class="sr-only">Camera requires online terrain</small>
+    </div>
     <div class="player-bottom">
       <section id="profile-panel" class="glass" aria-label="Elevation profile" hidden>
-        <div class="profile-heading"><span>Elevation <small>source track</small></span><output id="height" aria-live="off"></output></div>
+        <div class="profile-heading"><span>Elevation <output id="height" aria-live="off"></output></span><button id="profile-details-toggle" aria-expanded="false" aria-controls="profile-details">Details</button><button id="profile-close">Close ×</button></div>
         <svg id="player-profile" viewBox="0 0 640 100" preserveAspectRatio="none" role="slider" tabindex="0" aria-label="Seek on elevation profile" aria-valuemin="0" aria-valuemax="1000" aria-valuenow="0" aria-describedby="profile-help"></svg>
+        <div id="profile-details" hidden>
         <label for="seek" class="sr-only">Position along route</label>
         <input id="seek" type="range" min="0" max="1000" value="0">
         <div class="profile-scale"><span>Start</span><output id="position" aria-live="off"></output><span>Finish</span></div>
-        <p id="profile-help">Tap the profile to seek paused. Arrow keys: 250 m; Page keys: 1 km; Home / End. Experiment seeks start a new trial.</p>
-        <div class="section-actions"><button id="main-climb">Try the main climb</button><button id="profile-close">Close ×</button></div>
+        <p>Ride elapsed <span id="ride-elapsed">0:00:00</span> · <span id="progress">0.0 km</span></p>
+        <p id="profile-help">Tap the profile to seek paused. Arrow keys: 250 m; Page keys: 1 km; Home / End. Live rides start here with time and work reset. Elevation is from the source track.</p>
+        <div class="section-actions"><button id="main-climb">Try the main climb</button></div>
         <div class="section-actions" role="group" aria-label="Baseline strategy">
           <button id="pin-baseline">Pin baseline</button><button id="repin-baseline" disabled>Repin</button><button id="remove-baseline" disabled>Remove baseline</button>
         </div>
@@ -107,7 +109,7 @@
         <p id="comparison-detail"></p>
         <details><summary>About the diamond baseline</summary>
           <p>◇ Hollow diamond = pinned strategy; ● solid circle = live rider. Distance is live minus baseline at equal elapsed time from this trial’s origin. Arrival seconds and mechanical pedal kJ are live minus baseline at the common distance both have reached, before any stop there. Negative seconds means live arrived sooner, not a ranking.</p>
-          <p>A pin freezes route revision, rider/model, origin, stops, initial controls and applied actions; then holds the last effort/gear/coast. Pending commands are excluded: press Play to apply them before pinning. Seek, restart, route or rider/model changes clear the pin with a reason; live effort/gear choices do not. Repin replaces it without seeking. Nothing is saved or fetched.</p>
+          <p>A pin freezes route revision, rider/model, origin, stops, initial controls and applied actions; then holds the last effort/gear/coast. Choices apply immediately, even paused. Future timed commands are excluded until their time arrives. Seek, restart, route or rider/model changes clear the pin with a reason; live effort/gear choices do not. Repin replaces it without seeking. Nothing is saved or fetched.</p>
           <p>Estimates in constant conditions, no momentum or fatigue; uphill coasting stalls immediately. No future arrival is promised for a stalled baseline. Bounded to 24 ride hours, 1,024 applied actions, 2,048 windows and 8,192 indexed segments; beyond these limits start a shorter trial. Rider, drivetrain and still-air assumptions are in Setup.</p>
         </details>
         <div class="section-actions" role="group" aria-label="Route framing">
@@ -119,17 +121,18 @@
         <details id="sections"><summary>Survey sections <span id="section-count"></span></summary><ol id="section-list"></ol></details>
         <p>Algorithmic sections · processed averages from 250 m windows (the final window may be longer), not measured road gradients. Elevation errors can affect gain and grade. No surface, hazards or recovery guarantees.</p>
         <div class="ride-context"><span id="model-provenance">Example model</span><span id="ride-remaining">ETA unknown · live choices</span></div>
+        </div>
       </section>
       <section id="cockpit" class="glass" aria-label="Modeled riding cockpit">
         <div id="comparison-hud" aria-label="Live minus pinned baseline" hidden><span id="comparison-gap"></span><span id="comparison-arrival"></span></div>
         <div class="telemetry">
           <div><strong id="ride-speed">—</strong><small id="speed-provenance">km/h · example model</small></div>
-          <div><strong id="ride-power">—</strong><small id="ride-effort">75% FTP target</small></div>
-          <div><strong id="ride-grade">—</strong><small>processed grade</small></div>
+          <div><strong id="ride-power">—</strong><small id="ride-effort">Steady · estimate</small></div>
+          <div><strong id="ride-grade">—</strong><small>slope estimate</small></div>
         </div>
-        <div id="road-card" aria-label="Processed road ahead">
-          <div class="road-line"><span id="road-current"></span><span id="ride-elapsed">Trial 0:00:00</span></div>
-          <div class="road-line"><span id="road-ahead"></span><span id="progress">0.0 km</span></div>
+        <div id="road-card" aria-label="Estimated road ahead">
+          <div class="road-line"><span id="road-current"></span></div>
+          <div class="road-line"><span id="road-ahead"></span></div>
         </div>
         <div class="ride-actions">
           <div class="gears" role="group" aria-label="Gearing changes cadence, not speed">
@@ -138,27 +141,28 @@
             <button id="gear-harder" aria-label="Harder gear">Harder +</button>
           </div>
           <div class="efforts" role="group" aria-label="Target effort">
-            <button data-effort="0.6" aria-pressed="false">Easy <small>60%</small></button>
-            <button data-effort="0.75" aria-pressed="true">Steady <small>75%</small></button>
-            <button data-effort="0.9" aria-pressed="false">Hard <small>90%</small></button>
-            <button id="coast" aria-pressed="false">Coast <small>0 W</small></button>
+            <button data-effort="0.6" aria-pressed="false">Easy</button>
+            <button data-effort="0.75" aria-pressed="true">Steady</button>
+            <button data-effort="0.9" aria-pressed="false">Hard</button>
+            <button id="coast" aria-pressed="false">Coast</button>
           </div>
         </div>
       </section>
       <div class="playbar glass">
         <button id="play" class="primary" aria-label="Play route preview">▶ <span>Play</span></button>
-        <label class="playback-rate">Ride time<select id="playback-rate" aria-label="Playback rate, not riding speed"><option value="1">1×</option><option value="4">4×</option><option value="16" selected>16×</option><option value="60">60×</option></select></label>
+        <label class="playback-rate">Playback<select id="playback-rate" aria-label="Playback rate, not riding speed"><option value="1">1×</option><option value="4">4×</option><option value="16" selected>16×</option><option value="60">60×</option></select></label>
         <button id="profile-toggle" aria-expanded="false" aria-controls="profile-panel">Profile <span aria-hidden="true">⌃</span></button>
         <button id="tools-toggle" aria-expanded="false" aria-controls="tools-panel" aria-label="Rider setup and player options">Setup</button>
       </div>
       <section id="tools-panel" class="glass" aria-label="Player options" hidden>
         <div class="sheet-heading"><h2>Ride setup</h2><button id="tools-close" aria-label="Close ride setup">Close ×</button></div>
-        <label>Mode <select id="ride-mode"><option value="experiment">Experiment · live choices</option><option value="explore">Explore · steady 75%</option></select></label>
-        <p>Experiment: seek starts a new trial here, with elapsed/work reset. Restart returns to its origin. Explore: seek shows steady arrival time. Changes pause.</p>
+        <details><summary>About the camera approximation</summary><p>Satellite imagery and approximate terrain, not Street View or literal rider eyesight. Rider follows 2–9 m above the terrain and lifts on steep slopes. Road surfaces and road cuts are not modeled. Zoom changes viewing distance, not terrain detail or riding speed. A new route resets viewing distance.</p></details>
+        <label>Mode <select id="ride-mode"><option value="experiment">Live ride · your choices</option><option value="explore">Steady ride · 75%</option></select></label>
+        <p>Live ride: seeking starts here with elapsed time and work reset. Restart returns here. Steady ride: seeking shows estimated arrival time. Changes pause.</p>
         <label>Camera <select id="camera" disabled><option value="follow">Follow rider</option><option value="overview">Whole route</option><option value="section">Selected section</option></select></label>
         <p>2D Follow shows the route overview with the current rider. Section highlights use the selected route geometry.</p>
         <label class="check"><input id="offline" type="checkbox"> Use 2D only (no terrain requests)</label>
-        <button id="restart">Restart trial</button>
+        <button id="restart">Restart ride</button>
         <fieldset><legend>Rider · optional, never auto-saved</legend>
           <p>Blank fields use the example. Invalid entries disable estimates, not the route.</p>
           <label for="rider-mass">Rider mass · kg</label><input id="rider-mass" type="text" inputmode="decimal" placeholder="Example: 75" autocomplete="off">
@@ -169,6 +173,7 @@
         </fieldset>
         <p id="rider-assumptions"></p>
         <details><summary>What this model means</summary>
+          <p>Easy, Steady and Hard request 60%, 75% and 90% of FTP (sustainable power), using an example 220 W unless you supply it. Watts and km/h are estimates, not actual readings. Gears change leg speed (rpm) and pedal force, not speed at fixed power. Playback only changes how fast ride time passes on screen.</p>
           <p>Estimates, not sensors or pacing advice. Quasi-steady: no momentum, acceleration or fatigue. Coast on an uphill stops immediately in this approximation; choose an effort to resume.</p>
           <p id="drivetrain-assumptions"></p>
           <p id="physics-assumptions"></p>

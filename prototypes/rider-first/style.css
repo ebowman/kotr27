@@ -72,13 +72,15 @@ figcaption,.map-footer{display:flex;justify-content:space-between;padding:0 28px
 #load-status{font-size:13px;margin:0 5% 10px}
 #load-status:empty{display:none}
 #player{position:fixed;inset:0;height:100dvh;background:var(--green);color:var(--stone);isolation:isolate;overflow:hidden}
-#player-surface{position:absolute;inset:0}
+#player-surface{position:absolute;inset:0;z-index:0}
+.player-header,.player-status,.camera-distance,.player-bottom{z-index:1}
 #player-map{width:100%;height:100%;padding:115px 20px 120px}
 #terrain{position:absolute;inset:0}
 #terrain:empty{visibility:hidden}
-.camera-distance{position:absolute;top:var(--terrain-controls-top,160px);left:28px;display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:4px;max-width:230px}
+.camera-distance{position:relative;display:grid;grid-template-columns:1fr 1fr 44px 44px;gap:0;padding:0 4px;align-self:flex-start;margin:6px 24px 24dvh;flex-shrink:0;max-width:calc(100% - 48px)}
 .camera-distance button{min-width:44px;min-height:44px;padding:6px 10px}
-.camera-distance small{grid-column:1/-1;font-size:10px;line-height:1.3;padding:0 4px 2px;color:#bdcbbf}
+.camera-distance small{grid-column:1/-1;font-size:.625rem;line-height:1.3;padding:0 4px 2px;color:#bdcbbf}
+.camera-distance [aria-pressed=true]{color:#ffe097;background:#dfb76719;box-shadow:inset 0 -2px var(--ochre)}
 .player-header{position:absolute;top:24px;left:28px;right:28px;display:flex;align-items:start;gap:12px;pointer-events:none}
 .player-header>*{pointer-events:auto}
 .glass{background:#12352ef2;border:1px solid #68857577;box-shadow:0 6px 30px #081c1920;border-radius:4px}
@@ -173,7 +175,7 @@ dialog p{margin:18px 0 24px}
 .player-header{position:relative;inset:auto;margin:16px 24px 0;flex-shrink:0}
 .player-route select{min-height:44px;font-size:1.0625rem}
 .player-route label{font-size:.625rem}
-.player-status{position:relative;inset:auto;margin:8px 24px 0;align-self:flex-start;display:grid;grid-template-columns:6px 1fr;gap:2px 9px;flex-shrink:0;max-width:calc(100% - 48px)}
+.player-status{position:relative;inset:auto;margin:8px 24px 0;align-self:flex-start;display:flex;flex-wrap:wrap;gap:2px 9px;flex-shrink:0;max-width:calc(100% - 48px)}
 .player-status .status-dot{grid-row:1/3;align-self:center}
 #ride-notice{grid-column:2;font-size:.75rem;overflow-wrap:anywhere}
 #return-rider{grid-column:2;justify-self:start}
@@ -199,12 +201,16 @@ dialog p{margin:18px 0 24px}
 .playback-rate{display:flex;align-items:center;gap:5px;font-size:.7rem}
 .playback-rate select{min-width:62px;padding:8px}
 #tools-toggle{letter-spacing:0}
-#profile-panel{position:absolute;bottom:var(--playbar-clearance,88px);width:100%;margin:0;max-height:min(40dvh,var(--sheet-max-height,40dvh));overflow-y:auto;background:#12352e;z-index:2}
-#profile-panel{font-size:.8rem;overscroll-behavior:contain}
+#profile-panel{position:relative;bottom:auto;width:100%;margin:0 0 4px;padding:2px 8px 4px;max-height:none;background:#12352e;font-size:.8rem}
+#profile-details{max-height:40dvh;overflow-y:auto;overscroll-behavior:contain;padding:4px}
+.profile-heading{align-items:center;gap:4px;font-size:.75rem;flex-wrap:wrap}
+.profile-heading>span{margin-right:auto}
+.profile-heading output{display:block;font-size:.65rem}
+#profile-panel .profile-heading button{border:0;padding:6px;min-height:44px}
 #profile-panel p{margin:8px 0}
 #profile-panel button{border:1px solid #688575}
 #profile-panel summary{cursor:pointer;min-height:44px;padding:12px 0}
-#player-profile{cursor:crosshair;touch-action:pan-y}
+#player-profile{cursor:crosshair;touch-action:pan-y;height:44px;margin:0}
 .section-actions{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
 #section-list{list-style:none;padding:0;margin:0}
 #section-list button{display:block;width:100%;text-align:left;margin:4px 0}
@@ -215,8 +221,8 @@ dialog p{margin:18px 0 24px}
 .road-line{display:flex;justify-content:space-between;gap:8px}
 .road-line #ride-elapsed,.road-line #progress{flex-shrink:0}
 #seek{height:44px}
-#tools-panel{bottom:var(--playbar-clearance,88px);max-height:var(--sheet-max-height,calc(100dvh - 220px));overflow-y:auto;overscroll-behavior:contain;font-size:.85rem;z-index:2;background:#12352e}
-.sheet-heading{display:flex;justify-content:space-between;align-items:center;gap:8px;position:sticky;top:-16px;background:#12352e;z-index:1}
+#tools-panel{position:relative;bottom:auto;width:100%;max-height:none;overflow:visible;font-size:.85rem;background:#12352e}
+.sheet-heading{display:flex;justify-content:space-between;align-items:center;gap:8px;background:#12352e;position:sticky;top:0;z-index:2}
 .sheet-heading h2{font-size:1.1rem;margin:0}
 #tools-panel label{flex-wrap:wrap;min-height:44px}
 #tools-panel select{max-width:100%;min-width:0}
@@ -230,10 +236,13 @@ dialog p{margin:18px 0 24px}
 #tools-panel button{border:1px solid #688575}
 #tools-panel .check input{min-width:20px;min-height:20px}
 #player button{min-width:44px}
+#player button,#player p,#player summary{overflow-wrap:anywhere}
+#player .player-bottom{min-width:0}
 #player .mapboxgl-ctrl-group button{width:44px;height:44px;min-height:44px}
 #player .mapboxgl-ctrl-top-right{top:var(--terrain-controls-top,160px)!important}
 @media(max-width:800px){
   .player-header{margin:8px 12px 0}
+  .camera-distance{margin-left:12px;margin-right:12px;max-width:calc(100% - 24px)}
   .player-route{padding:2px 8px}
   .player-route label{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
   .player-route select{font-size:.8125rem}
@@ -252,7 +261,8 @@ dialog p{margin:18px 0 24px}
   .gears button{padding:4px 8px}
   .efforts button{font-size:.75rem}
   .playbar{gap:4px}
-  .playbar .primary{min-width:76px}
+  .playbar{padding:2px 6px}
+  .playbar .primary{min-width:76px;min-height:44px}
   .playback-rate{gap:4px;line-height:1.1;font-size:.6rem;flex-shrink:0}
   .playback-rate select{padding:4px 12px 4px 6px;min-width:52px;width:4.5em}
   #profile-toggle,#tools-toggle{font-size:.75rem;padding:6px}
@@ -269,7 +279,7 @@ dialog p{margin:18px 0 24px}
 @media(max-height:600px){
   #player{min-height:100dvh}
   .player-bottom{margin-top:30dvh}
-  #tools-panel{max-height:min(60dvh,var(--sheet-max-height,60dvh))}
+  #tools-panel{max-height:none}
 }
 /* Relive reuses the same dismissible sheet and playbar. Private data is text,
    not a second dashboard or provider layer. */

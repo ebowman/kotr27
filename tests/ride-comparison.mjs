@@ -60,6 +60,37 @@ test('hard effort gives coherent signed equal-time distance and common-arrival w
   assert.ok(model.snapshot().pedalWorkKJ-result.ghost.pedalWorkKJ>result.pedalWorkDeltaKJ);
 });
 
+test('pinning rapid paused same-time history is reproducible at origin and after resume',()=>{
+  const analysis=slope(),model=make(analysis);
+  for (const atSeconds of [0,12]) {
+    if(atSeconds)run(model,12);
+    model.pause();
+    model.command({type:'effort',value:.9});
+    model.command({type:'coast'});
+    model.command({type:'gear',value:{frontTeeth:34,rearTeeth:34}});
+    model.command({type:'effort',value:.6});
+    model.command({type:'effort',value:.9,atSeconds:atSeconds+500});
+    const snapshot=model.snapshot(),recipe=model.exportTrial(),baseline=pin(analysis,model);
+    assert.equal(recipe.history.filter(a=>a.atSeconds===atSeconds).length,4);
+    assert.equal(recipe.history.some(a=>a.atSeconds>atSeconds),false);
+    assert.equal(snapshot.simulationSeconds,atSeconds);
+    const index=available(indexRideTrial({analysis,trial:recipe}));
+    near(index.atSecond(atSeconds).distanceM,snapshot.distanceM);
+    near(index.atSecond(atSeconds).pedalWorkKJ,snapshot.pedalWorkKJ);
+    model.command({type:'gear',value:{frontTeeth:50,rearTeeth:11}});
+    near(compare(baseline,model).distanceDeltaM,0);
+    run(model,10);
+    let result=compare(baseline,model);
+    near(result.distanceDeltaM,0);near(result.pedalWorkDeltaKJ,0);
+    model.pause();model.command({type:'effort',value:.9});
+    near(compare(baseline,model).distanceDeltaM,0);
+    run(model,10);result=compare(baseline,model);
+    assert.ok(result.distanceDeltaM>0);assert.ok(result.arrivalDeltaSeconds<0);
+    assert.deepEqual(baseline.recipe,recipe,'Later same-time edits cannot change the pin');
+    model.restart();
+  }
+});
+
 test('shared numerical higher-mass and higher-power trends; incompatible rider identity is refused',()=>{
   const analysis=slope();
   const normal=make(analysis),heavy=make(analysis,{rider:{riderKg:90}}),power=make(analysis,{rider:{ftpW:270}});

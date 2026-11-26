@@ -179,6 +179,60 @@ test('commands use simulation times, split large steps and export immutable repl
   compare(run(replay, pin.capturedSeconds), large);
 });
 
+test('rapid due-now paused choices change physical feedback/history without time, distance or work', () => {
+  const sim = make(), original = sim.snapshot();
+  const unchanged = s => {
+    assert.equal(s.phase, 'paused');
+    assert.deepEqual([s.distanceM, s.simulationSeconds, s.pedalWorkKJ],
+      [original.distanceM, original.simulationSeconds, original.pedalWorkKJ]);
+  };
+  sim.command({type:'coast', atSeconds:5}); // Must not be flushed with due-now choices.
+  let s = sim.command({type:'effort', value:.9});
+  unchanged(s); assert.equal(s.pedalPowerW,198); assert.ok(s.speedMps>original.speedMps);
+  const hardSpeed = s.speedMps, hardCadence = s.cadenceRpm, hardTorque = s.crankTorqueNm;
+  s = sim.command({type:'gear', value:{frontTeeth:34,rearTeeth:34}});
+  unchanged(s); assert.equal(s.speedMps,hardSpeed);
+  assert.ok(s.cadenceRpm>hardCadence); assert.ok(s.crankTorqueNm<hardTorque);
+  s = sim.command({type:'coast'});
+  unchanged(s); assert.equal(s.motion,'stalled');
+  assert.equal(s.pedalPowerW,0); assert.equal(s.cadenceRpm,0); assert.equal(s.speedMps,0);
+  s = sim.command({type:'effort', value:.6, atSeconds:0});
+  unchanged(s); assert.equal(s.pedalPowerW,132); assert.equal(s.historyLength,4);
+  assert.deepEqual(sim.exportTrial().history.map(a=>[a.type,a.atSeconds]),
+    [['effort',0],['gear',0],['coast',0],['effort',0]]);
+  const pin = sim.exportTrial(), replay = make();
+  for (const {type,value,atSeconds} of pin.history)
+    replay.command({type,atSeconds,...(type !== 'coast' && {value})});
+  compare(sim.snapshot(),replay.snapshot());
+  compare(run(sim,4),run(replay,4));
+  assert.equal(sim.advance(1).motion,'stalled');
+  assert.equal(sim.snapshot().historyLength,5);
+  assert.equal(pin.history.length,4,'Frozen history excludes the future action');
+  const restarted=sim.restart();
+  unchanged(restarted);assert.equal(restarted.effortFraction,.75);
+  assert.deepEqual(restarted.gear,original.gear);assert.equal(restarted.historyLength,0);
+});
+
+test('paused choices at a nonzero scheduler boundary resume coherently; future commands keep their time', () => {
+  const sim=make(), scheduler=createSimulationScheduler(sim,{rate:1});
+  scheduler.play();scheduler.frame(0);scheduler.frame(100);scheduler.pause();
+  const paused=sim.snapshot();
+  sim.command({type:'effort',value:.9,atSeconds:paused.simulationSeconds+.1});
+  sim.command({type:'coast'});
+  sim.command({type:'effort',value:.6});
+  const current=sim.snapshot();
+  assert.equal(current.simulationSeconds,paused.simulationSeconds);
+  assert.equal(current.distanceM,paused.distanceM);assert.equal(current.pedalWorkKJ,paused.pedalWorkKJ);
+  assert.equal(current.pedalPowerW,132);
+  assert.equal(scheduler.frame(500).current.pedalPowerW,132);
+  scheduler.play();scheduler.frame(1000);scheduler.frame(1080);
+  assert.equal(sim.snapshot().pedalPowerW,132);
+  scheduler.frame(1120);
+  near(sim.snapshot().simulationSeconds,paused.simulationSeconds+.12);
+  assert.equal(sim.snapshot().pedalPowerW,198);
+  near(sim.snapshot().pedalWorkKJ-paused.pedalWorkKJ,(132*.1+198*.02)/1000);
+});
+
 test('pause, seeks, restart and changed inputs never retrofit completed trial history', () => {
   const analysis = slope(), sim = make({analysis});
   sim.command({type: 'effort', value: .9});

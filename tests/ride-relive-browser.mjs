@@ -186,7 +186,7 @@ for(const width of [1440,375])test(`built Relive ${width}: source samples, pause
   await f.pointer('#relive-next',{scroll:true});
   await f.screenshot(`relive-${width}-200-sheet`);await f.pointer('#tools-close');
   assert.equal(await f.js(`document.documentElement.scrollWidth>innerWidth`),false);
-  await f.pointer('#play');await f.pointer('#play');await f.pointer('#back');
+  await f.pointer('#play',{scroll:true});await f.pointer('#play');await f.pointer('#back',{scroll:true});
   await until(()=>f.js(`document.getElementById('fly').disabled===false`));
   assert.equal(await f.js(`document.getElementById('player-route').value`),'rwgps-57873019');
   assert.equal(await f.js(`document.getElementById('local-status').textContent`),'');
@@ -209,8 +209,10 @@ test('built Relive library: FIT/missing sensors, course alternative, errors, can
   assert.equal((await f.state()).power,'— W');assert.equal((await f.state()).speed,'—');
   await f.click('relive-alternative');
   assert.equal(await f.js(`document.getElementById('ride-mode').value`),'experiment');
-  assert.match(await f.js(`document.getElementById('speed-provenance').textContent`),/model/);
+  assert.equal(await f.js(`document.getElementById('speed-provenance').textContent`),'km/h · estimate');
+  assert.match(await f.js(`document.getElementById('model-provenance').textContent`),/model/i);
   await f.select('ride-mode','relive');assert.equal((await f.state()).power,'— W');
+  assert.equal(await f.js(`document.getElementById('cockpit').dataset.work`),undefined,'No modeled work in actual replay');
   // A loaded private source keeps replay/controls usable on disconnection.
   await f.cmd('Network.emulateNetworkConditions',{offline:true,latency:0,downloadThroughput:0,uploadThroughput:0});
   await f.elapsed(1);assert.equal((await f.state()).seconds,'1');
@@ -222,7 +224,7 @@ test('built Relive library: FIT/missing sensors, course alternative, errors, can
   await f.upload(syntheticGPX());
   assert.equal(await f.js(`document.getElementById('ride-mode').value`),'explore');
   assert.match(await f.js(`document.getElementById('relive-message').textContent`),/timestamped.*Geometry-only/);
-  assert.match(await f.js(`document.getElementById('speed-provenance').textContent`),/model/);
+  assert.equal(await f.js(`document.getElementById('speed-provenance').textContent`),'km/h · estimate');
   await f.upload('not a GPX file','invalid.gpx');
   assert.equal(await f.js(`document.getElementById('local-status').textContent`),'Text outside XML root.');
   assert.equal((await f.state()).status,'unavailable');

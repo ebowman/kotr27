@@ -23,9 +23,9 @@ const actionFor = fraction => fraction === 0 ? {type:'coast'} : {type:'effort',v
 
 /**
  * Compile once per APPLIED strategy change, not per animation frame.
- * A second shared simulation is only a control-boundary motion probe: flush its
- * command near route start, then seek to the exact queried position. This avoids
- * inventing physics or changing the reviewed next-step command semantics.
+ * A second shared simulation is only a control-boundary motion probe: apply its
+ * command without advancing time, then seek to the exact queried position.
+ * Physics and due-now command semantics remain owned by the shared model.
  * The replay itself advances exactly at window/stop/command boundaries and
  * records indexed linear segments. No time-stepping through an entire route.
  */
@@ -74,7 +74,7 @@ export function indexRideTrial({analysis,trial}) {
     } else {
       while (analysis.windows[windowIndex]?.endM <= s.distanceM) windowIndex++;
       if (probeFraction !== fraction) {
-        probe.seek(0);probe.command(actionFor(fraction));probe.play();probe.advance(.02);
+        probe.seek(0);probe.command(actionFor(fraction));
         probeFraction = fraction;
       }
       const motion = probe.seek(s.distanceM);
