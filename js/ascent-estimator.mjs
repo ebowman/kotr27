@@ -13,12 +13,25 @@ function bounded(value, low, high, label, context) {
   return value;
 }
 
-function modelWindow(run, rise, systemKg, targetW) {
+// Shared quasi-steady primitive. Route/profile callers still validate complete
+// coverage; this boundary also validates standalone window-motion requests.
+export function solveWindowMotion(run, rise, systemKg, targetW) {
+  bounded(run, 1, 1000000, 'horizontal run');
+  bounded(rise, -500000, 500000, 'rise');
+  bounded(rise / run, -0.5, 0.5, 'window grade');
+  bounded(systemKg, 23, 310, 'systemKg');
+  bounded(targetW, 0, 585, 'targetW');
   const roadM = Math.hypot(run, rise);
   const loadN = systemKg * physics.gravityMps2 *
     (rise + physics.rollingCoefficient * run) / roadM;
   const drag = 0.5 * physics.airDensityKgM3 * physics.dragAreaM2;
   const wheelW = v => (loadN + drag * v * v) * v;
+  if (targetW === 0) {
+    const speedMps = loadN >= 0 ? 0 : Math.min(physics.speedCapMps, Math.sqrt(-loadN / drag));
+    return {speedMps, horizontalSpeedMps: speedMps * run / roadM,
+      pedalPowerW: 0, targetPowerW: 0, capped: speedMps === physics.speedCapMps,
+      stalled: speedMps === 0};
+  }
   let speed = physics.speedCapMps;
   let pedalW = Math.max(0, wheelW(speed) / physics.drivetrainEfficiency);
   if (pedalW > targetW) {
@@ -33,8 +46,15 @@ function modelWindow(run, rise, systemKg, targetW) {
     speed = (lo + hi) / 2;
     pedalW = targetW;
   }
-  const movingSeconds = roadM / speed;
-  return { movingSeconds, pedalWorkKJ: pedalW * movingSeconds / 1000 };
+  return {speedMps: speed, horizontalSpeedMps: speed * run / roadM,
+    pedalPowerW: pedalW, targetPowerW: targetW,
+    capped: speed === physics.speedCapMps, stalled: false};
+}
+
+function modelWindow(run, rise, systemKg, targetW) {
+  const {speedMps, pedalPowerW} = solveWindowMotion(run, rise, systemKg, targetW);
+  const movingSeconds = Math.hypot(run, rise) / speedMps;
+  return { movingSeconds, pedalWorkKJ: pedalPowerW * movingSeconds / 1000 };
 }
 
 const zero = () => ({ movingSeconds: 0, pedalWorkKJ: 0 });

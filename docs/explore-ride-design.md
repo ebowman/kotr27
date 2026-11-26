@@ -173,6 +173,62 @@ Controller-owned scheduling wraps this pure core; the core performs no I/O,
 RAF, storage or map calls. Recorded mode supplies its own source elapsed,
 sample identity/age and signals rather than pretending to be this simulation.
 
+#### Implemented pure boundary (kotr27-1ry.3)
+
+`js/ride-simulation.mjs` now exports `createRideSimulation(options)`,
+`createSimulationScheduler(model, {rate:16})`, `rideRiderFromInput(input)`,
+`rideSimulationModel`, `simulationStepSeconds` and `exampleDrivetrain`.
+The proposed names above are design intent; **no cockpit or ghost UI is added**.
+
+- Options: complete supported `analysis`; optional numeric `rider` with
+  `riderKg/bikeKitKg/ftpW`; shared `scenario` (default Steady), custom `fraction`,
+  chapter-entry `stops`; `mode:'explore'|'experiment'` (default Experiment);
+  `originM` (default 0); example `gear:{frontTeeth,rearTeeth}`; optional exact
+  exported `modelVersion`. All Day resolves once on the whole route.
+  Invalid options return `status:'unavailable'`, `issues` and
+  `unavailableReasons`, without a usable model. Omitted rider fields alone
+  use labelled examples. `rideRiderFromInput({mass,enteredUnit,ftp})` reuses
+  the existing text validator and returns either `{status:'available',rider}`
+  or unavailable; never pass an unavailable result's missing rider as `{}`.
+- An available model exposes `snapshot()`, `play()`, `pause()`,
+  `advance(seconds)`, `command(action)`, `seek(distanceM)`, `restart()` and
+  `exportTrial()`. It starts paused; advance while paused is a no-op.
+  Commands are Experiment-only: `{type:'effort',value:0.4..0.9}`,
+  `{type:'gear',value:{frontTeeth,rearTeeth}}`, or `{type:'coast'}`.
+  They apply at the next advance boundary. Optional `atSeconds` schedules
+  a non-past simulation-time action; integration splits there, with stable
+  insertion order for ties. Invalid runtime actions throw before mutation.
+- Explore uses `createRouteClock` directly; seek chooses shared arrival
+  seconds/work. Experiment seek starts a new zero-time/zero-work trial with
+  the current applied controls, clearing applied and pending actions.
+  Restart resets to that trial's origin and initial controls, also clearing
+  actions. Both pause. Instantiate a new model for route/rider/scenario/mode
+  changes; do not amend old history. Full route finish is exact and paused.
+- Frozen snapshots include route `identity`, full `modelIdentity`,
+  `sequence`, `phase`, `motion`, `positionAt` position, horizontal distance,
+  simulation seconds, delivered/target crank watts, fractional FTP, gear,
+  cadence, crank torque (null at zero rpm), mechanical kJ, units and
+  provenance. Processed grade remains visible during a stop. `coast` is an
+  explicit control choice; requested positive effort may also deliver zero
+  watts at a gravity-only cap, with zero modeled cadence. No HR is generated.
+  `remainingSeconds` is available only for steady Explore or at finish,
+  otherwise null (no speculative interactive ETA).
+- `exportTrial()` freezes model identity (route revision, rider, resolved
+  scenario, assumptions and version), origin, initial controls, applied
+  action history, capture time and stops. Pending future actions are excluded;
+  replay holds the last applied action. A later pin consumer can construct
+  the same model/origin/controls and schedule those actions; seek or changed
+  model identity must clear its comparison. This task does not implement a
+  second replay controller or pin persistence.
+- The optional pure scheduler has `play/pause/setRate/frame(timestampMs)`.
+  Frame results contain adjacent `previous/current` snapshots, fractional
+  `alpha`, `steps`, `rate` and `notice`. It uses 0.02-second steps, ≤750 per
+  callback; >250 ms gaps or non-monotonic timestamps pause/discard debt.
+  Rate changes pause/rebase. The UI must call pause on hidden/manual movement,
+  and explicitly Play on return. External seek/restart/pause rebases by
+  sequence. No extrapolation across discontinuities; camera/UI integration
+  belongs to the next task.
+
 ### Units and gearing: explicit v1 simplification
 
 Use SI internally: horizontal route metres, road speed m/s, seconds, kg, watts,
