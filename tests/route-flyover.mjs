@@ -106,6 +106,17 @@ test('pinned current DEM read fails closed for absent, obsolete, wrong-source an
     getSource:()=>source,painter:{terrain:{enabled:true,sourceCache:cache}}};
   const p=[.001,-.001],read=()=>riderTerrainElevation(map,p,'2.15.0');
   assert.ok(Number.isFinite(read().height));assert.equal(read().via,'current-source-tile');
+  const analysis={identity:{geometrySha256:'dem-handoff'},status:'supported',distanceM:100,
+    points:[{lon:.001,lat:-.001,distanceM:0},{lon:.002,lat:-.001,distanceM:100}],
+    windows:[{startM:0,endM:100,startElevationM:0,endElevationM:0}],
+    chapters:[{id:'one',startM:0,endM:100}]};
+  const snapshot={identity:analysis.identity,distanceM:10};
+  const geometry=()=>riderGeometry(analysis,snapshot,12.6,
+    p=>riderTerrainElevation(map,p,'2.15.0')?.height);
+  assert.equal(riderGeometry(analysis,snapshot,12.6,p=>map.queryTerrainElevation(p)),null,
+    'Public-only camera geometry loses its pose during the cached-tile handoff');
+  assert.ok(geometry(),'The same current uploaded texels keep geometry and proof coherent');
+  assert.equal(geometry().ground,riderTerrainElevation(map,geometry().position,'2.15.0').height);
   const before=JSON.stringify(cache._cache);read();assert.equal(JSON.stringify(cache._cache),before,'Read does not mutate cache');
   assert.equal(riderTerrainElevation(map,p,'3.0.0'),null);
   for(const [object,key,value] of [
@@ -116,7 +127,9 @@ test('pinned current DEM read fails closed for absent, obsolete, wrong-source an
     [tile.tileID.canonical,'x',8193],[tile.tileID.canonical,'z',13],
   ]) {
     const old=object[key];object[key]=value;
-    assert.equal(read(),null,key);object[key]=old;
+    assert.equal(read(),null,key);
+    assert.equal(geometry(),null,`Camera geometry must also fail closed: ${key}`);
+    object[key]=old;
   }
   map.getSource=()=>({...source});assert.equal(read(),null,'Source instance replaced');
   map.getSource=()=>source;
@@ -415,7 +428,7 @@ test('follow yaw uses broad actual Grappa context and bounded shortest-angle tur
 
 // Execute the actual adapter with a deterministic SDK/clock, retaining the real
 // camera and frame-proof functions. This is lifecycle evidence, not map imagery.
-async function terrainFixture() {
+async function terrainFixture({initialView='aerial',loadDelay=0}={}) {
   const source=(await readFile(new URL('../js/route-terrain-view.mjs',import.meta.url),'utf8'))
     .replace(/^import .*;\n/,'')
     .replace(/await import\('[^']+'\);/g,'')
@@ -437,6 +450,12 @@ async function terrainFixture() {
     once(name,fn){this.on(name,fn);}
     emit(name,e={}){this.events[name]?.({type:name,...e});}
     addControl(){} addSource(){} addLayer(){} setTerrain(){} triggerRepaint(){} resize(){}
+    // Rider lifecycle tests deliberately keep geometry/DEM absent. These SDK
+    // stubs enable the real adapter's entry/seek/timer path, not a render proof.
+    scrollZoom={enable(){},disable(){}};touchZoomRotate=this.scrollZoom;
+    doubleClickZoom=this.scrollZoom;keyboard=this.scrollZoom;
+    setMaxZoom(){} setMaxPitch(){} getLayer(){return false;}
+    getStyle(){return {layers:[]};}
     getSource(){return {tiles:[],tileSize:256};}
     getCanvasContainer(){return surface;}
     zooming=false;zoom=12.6;
@@ -465,10 +484,12 @@ async function terrainFixture() {
   const mount=new Function('window','document','devicePixelRatio','performance','setTimeout','clearTimeout',
     'cameraPose','createRideCamera','followBearing','routeBounds','routeLine','frameEvidence','limits',
     'createRoutePresentation','requestAnimationFrame','cancelAnimationFrame','riderLimits','createTerrainBudget',
+    'riderGeometry','riderTerrainCeiling','riderFrameEvidence',
     source+'\nreturn mountRouteTerrain;')(window,document,1,{now:()=>now},
     (fn,ms)=>{const id=++nextTimer;timers.set(id,{fn,at:now+ms});return id;},
     id=>timers.delete(id),cameraPose,createRideCamera,followBearing,routeBounds,routeLine,proof,flyoverLimits,
-    createRoutePresentation,fn=>{const id=++nextTimer;frames.set(id,fn);return id;},id=>frames.delete(id),riderLimits,createTerrainBudget);
+    createRoutePresentation,fn=>{const id=++nextTimer;frames.set(id,fn);return id;},id=>frames.delete(id),riderLimits,createTerrainBudget,
+    ()=>null,()=>null,()=>({ok:false,mode:'rider',elevation:false}));
   const identity={revisionId:'test',geometrySha256:'test'};
   const position={lon:11,lat:45,rawElevationM:100,elevationM:100,distanceM:0};
   const analysis={identity,status:'supported',distanceM:100,
@@ -477,11 +498,13 @@ async function terrainFixture() {
     chapters:[{id:'one',startM:0,endM:100}]};
   const snapshot={identity,position:positionAt(analysis,0),distanceM:0,phase:'playing',cameraMode:'follow'};
   const controller=new AbortController();
-  const handle=await mount({container,analysis,snapshot,signal:controller.signal,
+  const camera=createRideCamera();
+  camera.setView(initialView);
+  const handle=await mount({container,analysis,snapshot,camera,signal:controller.signal,
     onPresent:s=>presented.push(s),
     onStatus:(state,message)=>statuses.push({state,message}),onManual(){manualCalls++;}});
-  map.emit('load');
-  return {map,handle,container,statuses,transitions,controller,gl,snapshot,timers,frames,poses,presented,analysis,document,surface,
+  now=loadDelay;map.emit('load');
+  return {map,handle,camera,container,statuses,transitions,controller,gl,snapshot,timers,frames,poses,presented,analysis,document,surface,
     manualCalls:()=>manualCalls,
     async replace(){
       const handle=await mount({container,analysis,snapshot,signal:new AbortController().signal,
@@ -679,6 +702,66 @@ test('terrain outages keep a fixed deadline; terminal failures dispose once with
     assert.equal(f.timers.size,0);
     assert.equal(f.gl.maxParallelImageRequests,16);
   }
+});
+
+test('Rider entry has one fixed load deadline after aerial proof, never renewed by frames or source traffic',async()=>{
+  const f=await terrainFixture();f.map.emit('render');f.advance(1000);
+  f.camera.setView('rider');f.handle.update({...f.snapshot,phase:'paused'},true);
+  const entry=[...f.timers.values()].find(t=>t.at===13000);
+  assert.ok(entry,'Use existing 12s load budget, not 2.5s coverage');
+  for(let i=0;i<23;i++){
+    f.advance(500);f.map.emit('sourcedata',{sourceId:'rider-dem'});f.map.emit('render');
+    assert.equal(f.map.removed,0);
+    assert.equal(f.container.style.visibility,'hidden','Missing DEM never becomes presented');
+    assert.equal(JSON.parse(f.container.dataset.frame).ok,false);
+    assert.ok([...f.timers.values()].includes(entry),'Same deadline survives retries/damping');
+  }
+  f.advance(500);
+  assert.equal(f.map.removed,1);
+  assert.match(f.statuses.at(-1).message,/Selected Rider terrain.*12 seconds/);
+  assert.equal(f.timers.size,0);
+  const count=f.statuses.length;
+  f.map.emit('sourcedata',{sourceId:'rider-dem'});f.map.emit('render');entry.fn();
+  assert.equal(f.statuses.length,count,'Late tiles and callbacks cannot resurrect');
+});
+
+test('initial Rider setup and mode flips before any proof retain the original mount deadline',async()=>{
+  const f=await terrainFixture({initialView:'rider',loadDelay:3000});
+  const initial=[...f.timers.values()].find(t=>t.at===12000);
+  assert.ok(initial,'SDK load/first Rider paint cannot restart the initial load budget');
+  f.map.emit('render');assert.equal(JSON.parse(f.container.dataset.frame).ok,false);
+  f.advance(1000);f.map.imagery=false;
+  f.camera.setView('aerial');f.handle.update(f.snapshot,true);f.map.emit('render');
+  assert.ok([...f.timers.values()].includes(initial),'Unproved initial mode flip keeps its bounded budget');
+  f.advance(7999);assert.equal(f.map.removed,0);
+  f.advance(1);assert.equal(f.map.removed,1);
+  assert.match(f.statuses.at(-1).message,/Online terrain.*12 seconds/);
+  assert.equal(f.timers.size,0);
+});
+
+test('Rider explicit seek, mode exit, reentry and disposal isolate their acquisition deadlines',async()=>{
+  const f=await terrainFixture();f.map.emit('render');f.advance(1000);
+  f.camera.setView('rider');f.handle.update({...f.snapshot,phase:'paused'},true);
+  const first=[...f.timers.values()].find(t=>t.at===13000);
+  assert.ok(first);f.advance(3000);
+  const seek={...f.snapshot,phase:'paused',distanceM:50,position:positionAt(f.analysis,50)};
+  f.handle.update(seek,true);
+  const second=[...f.timers.values()].find(t=>t.at===16000);
+  assert.ok(second,'Explicit new destination starts its own one acquisition');
+  assert.ok(![...f.timers.values()].includes(first));
+  first.fn();assert.equal(f.map.removed,0,'Stale prior-scene deadline is inert');
+  for(let i=0;i<4;i++){f.advance(500);f.handle.update(seek,true);f.map.emit('render');}
+  assert.ok([...f.timers.values()].includes(second),'Same destination/reset does not renew');
+  f.camera.setView('aerial');f.handle.update(seek,true);f.advance(200);f.map.emit('render');
+  assert.equal(JSON.parse(f.container.dataset.frame).ok,true);
+  assert.equal(f.container.style.visibility,'visible');
+  second.fn();assert.equal(f.map.removed,0);
+  assert.equal(f.timers.size,0,'Mode exit/first aerial proof clear prior loading');
+  f.camera.setView('rider');f.handle.update(seek,true);
+  const third=[...f.timers.values()].find(t=>t.at===18200);
+  assert.ok(third);
+  f.handle.dispose();third.fn();f.advance(20000);
+  assert.equal(f.map.removed,1);assert.equal(f.timers.size,0);assert.equal(f.frames.size,0);
 });
 
 test('actual occlusion retains honest fallback and never flattens the selected camera',async()=>{

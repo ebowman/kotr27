@@ -145,6 +145,12 @@ for (const [width,height] of [[1440,900],[375,812]]) {
     };
     const select=async(id,value)=>{
       await b.js('inputTrace=[]');
+      const visible=await b.js(`(()=>{
+        const el=document.getElementById(${JSON.stringify(id)}),r=el.getBoundingClientRect();
+        return r.width>=44 && r.height>=44 &&
+          el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));
+      })()`);
+      assert.ok(visible,`${id} must be discoverable and hit-testable before native selection`);
       const label=await b.js(`(()=>{
         const el=document.getElementById(${JSON.stringify(id)});
         return [...el.options].find(o=>o.value===${JSON.stringify(value)})?.textContent;
@@ -246,10 +252,15 @@ for (const [width,height] of [[1440,900],[375,812]]) {
       await writeFile(join(process.env.RIDE_EXPLORER_EVIDENCE_DIR,`integrated-${width}-${name}.png`),Buffer.from(data,'base64'));
     };
     await pointer('#fly');await terrainReady();
+    const initial=await state();
+    assert.equal(await b.js(`document.getElementById('playback-rate').value`),'16');
+    await select('playback-rate','1');
+    const normal=await state();
+    assert.deepEqual([normal.seconds,normal.distance,normal.power],[initial.seconds,initial.distance,initial.power]);
     await select('playback-rate','4');await select('playback-rate','16');
-    await pointer('#profile-toggle');await pointer('#main-climb',true);
+    await pointer('#profile-toggle');await pointer('#profile-details-toggle');await pointer('#main-climb',true);
     await pointer('#pin-baseline',true);await pointer('#profile-close',true);
-    await pointer('#return-rider');await terrainReady();
+    assert.equal((await terrainReady()).proof.mode,'follow','Main-climb seek already follows the rider');
     assert.equal(Number((await state()).distance),10750);
     await pointer('#play');await until(async()=>Number((await state()).seconds)>5);
     assert.ok(Math.abs(Number((await state()).comparison.distanceDelta))<.02);
@@ -316,8 +327,10 @@ for (const [width,height] of [[1440,900],[375,812]]) {
     // Asolo must retain manual pan/scroll and paused Return, not reuse Grappa.
     await select('player-route','rwgps-57873112');
     await until(()=>b.js(`!document.getElementById('fly').disabled`));await terrainReady();
-    await pointer('#profile-toggle');await pointer('#main-climb',true);await pointer('#profile-close',true);
-    await pointer('#return-rider');await terrainReady();
+    await pointer('#profile-toggle');
+    if(await b.js(`document.getElementById('profile-details').hidden`))await pointer('#profile-details-toggle');
+    await pointer('#main-climb',true);await pointer('#profile-close',true);
+    assert.equal((await terrainReady()).proof.mode,'follow','Asolo main-climb seek already follows the rider');
     assert.notEqual(Number((await state()).distance),10750);
     await pointer('#play');await sleep(300);
     const y=height*.4;

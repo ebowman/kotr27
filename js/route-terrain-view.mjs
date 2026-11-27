@@ -1,4 +1,4 @@
-import { cameraPose, createRideCamera, createTerrainBudget, createRoutePresentation, followBearing, shortestAngle, routeBounds, routeLine, routeSection, frameEvidence, riderGeometry, riderOrbit, riderFrameEvidence, riderRasterEvidence, riderTerrainCeiling, riderLimits, flyoverLimits as limits } from './route-flyover.mjs';
+import { cameraPose, createRideCamera, createTerrainBudget, createRoutePresentation, followBearing, shortestAngle, routeBounds, routeLine, routeSection, frameEvidence, riderGeometry, riderOrbit, riderFrameEvidence, riderRasterEvidence, riderTerrainElevation, riderTerrainCeiling, riderLimits, flyoverLimits as limits } from './route-flyover.mjs';
 
 // One lazy map, no preloading/retries or independent playback clock.
 // Only approved, already verified geometry may reach this adapter.
@@ -22,6 +22,7 @@ export async function mountRouteTerrain({container,analysis,snapshot,onStatus,on
   let map, rider, ghost, ready=false, presented=false, stopped=false, manual=false, current=snapshot;
   let refinements={}, lastPaint=-Infinity, lastProof=-Infinity, timer, updating=false;
   let bearing, frame, proofTimer, sequence=0, renderSequence=0, proofSequence=0, proof, status, outageAt;
+  let sceneLoading=true, hasPresented=false, deadlineVersion=0;
   let highlighted, routeDetail;
   let forward, riderView=false, riderRelocation=false, imageryReady, zoomStart, zoomPreference;
   const budget=createTerrainBudget();
@@ -121,7 +122,7 @@ export async function mountRouteTerrain({container,analysis,snapshot,onStatus,on
   for (const key of ['frame','pose','renderSequence','distance','requests','uniqueRequests','camera','input']) delete container.dataset[key];
   function dispose() {
     if (stopped) return;
-    stopped=true; clearTimeout(timer); clearTimeout(proofTimer); cancelAnimationFrame(frame);
+    stopped=true; clearDeadline(); clearTimeout(proofTimer); cancelAnimationFrame(frame);
     cancelPinch();
     for(const cleanup of inputCleanup) cleanup();
     document.removeEventListener('visibilitychange',visibility);
@@ -138,20 +139,38 @@ export async function mountRouteTerrain({container,analysis,snapshot,onStatus,on
     if (stopped) return;
     dispose(); announce('unavailable',reason);
   }
+  function clearDeadline() {
+    clearTimeout(timer);timer=null;deadlineVersion++;
+  }
+  function deadline(ms,reason) {
+    clearDeadline();
+    const version=deadlineVersion;
+    timer=setTimeout(()=>{if(version===deadlineVersion)fail(reason);},ms);
+  }
+  function beginRiderScene() {
+    sceneLoading=true;presented=false;outageAt=undefined;
+    deadline(limits.loadMs,'Selected Rider terrain did not become ready within 12 seconds.');
+    invalidate();container.style.visibility='hidden';
+    announce('relocating','Loading selected Rider terrain · 2D preview.');
+  }
   function waiting() {
     // Initial proof gates presentation, not every camera/tile refinement.
     // Keep an already presented map during the bounded verification interval;
     // this is NOT a valid-frame claim. Terminal failure still removes it.
     if (!presented) container.style.visibility='hidden';
+    // A newly requested scene has never had current proof. It gets the same
+    // finite acquisition budget as initial map loading, not the short outage
+    // budget of an established view. Traffic and render retries never renew it.
+    if(sceneLoading)return;
     outageAt ??= performance.now();
     // A single transient missed proof is not a new cockpit/ARIA announcement.
     if (presented && performance.now()-outageAt>=400)
       announce('verifying',manual ? 'Manual exploration · verifying viewport terrain.' :
         'Satellite terrain · verifying the current rider view.');
     // One deadline per coverage outage. Motion/tile traffic cannot extend it.
-    timer ??= setTimeout(()=>fail(manual ?
+    if(timer===null || timer===undefined)deadline(limits.coverageMs,manual ?
       'Manual viewport imagery, elevation or rendered depth could not be verified.' :
-      'Imagery, elevation or an unobstructed rider view could not be verified.'),limits.coverageMs);
+      'Imagery, elevation or an unobstructed rider view could not be verified.');
   }
   function visibility() {
     if (document.hidden) {
@@ -172,7 +191,7 @@ export async function mountRouteTerrain({container,analysis,snapshot,onStatus,on
   if (!withinPixels()) {
     fail('This display exceeds the bounded 3D frame size. Use linked 2D/profile or a smaller window.');return;
   }
-  timer=setTimeout(()=>fail('Online terrain did not become ready within 12 seconds.'),limits.loadMs);
+  deadline(limits.loadMs,'Online terrain did not become ready within 12 seconds.');
   try {
     map=new gl.Map({
       container,accessToken:window.KOTR_CONFIG.MAPBOX_TOKEN,
@@ -354,7 +373,7 @@ export async function mountRouteTerrain({container,analysis,snapshot,onStatus,on
               },limits.frameMs);
               return;
             }
-            clearTimeout(timer); timer=null;
+            clearDeadline();sceneLoading=false;hasPresented=true;
             outageAt=undefined;
             presented=true;
             container.style.visibility='visible';
@@ -389,6 +408,7 @@ export async function mountRouteTerrain({container,analysis,snapshot,onStatus,on
   }
   function paint(s,now,force=false,reset=false) {
     const elapsed=now-lastPaint;
+    const previousDistance=current.distanceM;
     current=s;
     lastPaint=now;
     try {
@@ -396,6 +416,13 @@ export async function mountRouteTerrain({container,analysis,snapshot,onStatus,on
       // Deliberate inspection pauses and uses the existing aerial/manual proof
       // (no sky exemption). Return restores the requested Rider view/distance.
       const nextRider=wantsRider(s) && (!manual || force);
+      if(hasPresented && nextRider &&
+          (!riderView || reset && s.distanceM!==previousDistance))beginRiderScene();
+      else if(hasPresented && riderView && !nextRider && sceneLoading) {
+        // Explicitly leaving an unproved Rider scene cancels its deadline.
+        // The returned aerial/manual view still has to obtain its own proof.
+        clearDeadline();sceneLoading=false;outageAt=undefined;
+      }
       if (nextRider!==riderView) {
         riderView=nextRider;forward=undefined;reset=true;
         riderRelocation=riderView;
@@ -449,7 +476,16 @@ export async function mountRouteTerrain({container,analysis,snapshot,onStatus,on
         bearing=pose.bearing;
         container.dataset.camera=JSON.stringify({bearing:pose.bearing,pitch:pose.pitch});
         if (riderView) {
-          let next=riderGeometry(analysis,s,camera.zoom,p=>map.queryTerrainElevation(p),forward,elapsed,reset);
+          // Continuous geometry needs the same current-source DEM lookup as frame proof.
+          // The public lookup can omit an uploaded tile just outside the active
+          // frustum. Dropping the pose there freezes the camera while the one
+          // ride clock continues. This reads guarded current texels, not a held
+          // height, route elevation or an invented surface.
+          // Entry/seeks still require the local active viewport: a cached tile
+          // at a distant destination cannot establish its SDK camera orbit.
+          const continuousDEM=s.phase==='playing' && !reset && !riderRelocation;
+          let next=riderGeometry(analysis,s,camera.zoom,p=>continuousDEM ?
+            riderTerrainElevation(map,p,gl.version)?.height : map.queryTerrainElevation(p),forward,elapsed,reset);
           const ceiling=riderTerrainCeiling(map,next?.position ?? pose.center,gl.version);
           const missingDetail=!next || !ceiling || Math.abs(ceiling.height-next.ground)>.01;
           // Explicit entry/paused seek is a new scene, not continuous motion.

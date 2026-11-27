@@ -664,3 +664,422 @@ diagnostics are not newly certified. No source sensor, road-condition, safety,
 fatigue or pacing guarantees follow from modeled speed/work. Parent must assess
 root experience criteria independently and verify actual public homepage and
 Explore interactions **after** any authorized publication.
+
+## 9. Moving Rider release qualification — kotr27-svk.4
+
+Implementer qualification on `epic/kotr27-svk`, based on
+`0bacc1e91ba917b17afc92bcc4fcf03d86cee8af`. **Not independent PASS or publication.**
+The fresh reviewer must start with an amateur black-box browser journey on the
+retained artifact **before reading this walkthrough or implementation**.
+
+### Artifact and scope
+
+Final retained directory: **`/tmp/kotr27-svk4-release-r3`**, served by the tests
+under `/kotr27/`, not the prototype URL. Release:
+`39b767274f50dfc62e14a55882f1413e11feb81c80e0427fa91616c9e89e826a`.
+The deterministic independent-build audit passed: **76 files, 4,200,381 bytes**,
+all seven original route IDs/revisions and geometry hashes unchanged, final-byte
+content hashes and transitive imports closed. Explicit allowlist excludes
+private imports, original FITs, fixtures, tests, docs and evidence.
+Earlier `/tmp/kotr27-svk4-release` and `-r2` are superseded diagnostic artifacts.
+
+One runtime integration fix: continuous Rider geometry now uses the same guarded
+current-source DEM sampler already used by rendered-frame verification. It
+does not reuse a previous height, substitute GPX elevation, relax depth/road
+proof, change provider budgets, or alter the model clock/rate. Entry and seeks
+still require the active local viewport, not a cached remote destination.
+Test changes exercise this handoff, permit the retained artifact in the home
+fixture, and open the intentional Profile → Details disclosure before main-climb
+and baseline actions. Playback selection now requires a visible, ≥44 px,
+hit-testable control and trusted native change, including **1×**.
+
+### Experience, actual rendering and honest limits
+
+* **Desktop 1440×900 and emulated 375×812:** visible Rider/Aerial and ± controls,
+  trusted wheel/keyboard/buttons and phone CDP pinch changed the actual rendered
+  camera while playback continued; chosen distance survived follow, pause/resume,
+  pan/Return and distant seek. Aerial return retained rate, route and model
+  identity/history. No silent “slow down when choosing Rider” behavior.
+* **Sustained lower/upper Grappa and Asolo, 1× and 16×:** twelve observed regions,
+  **33,804 actual render frames**, no hidden frames or unknown under-camera DEM,
+  actual clearance **2.524–7.404 m**, and no disagreement between bounded heading
+  and actual SDK heading. Of **2,713 current proof samples**, **2,704** passed
+  location/elevation/nearby-road proof. Nine isolated 16× samples rejected road
+  ink (one also rejected imagery); subsequent proof recovered, without hiding
+  terrain. These are not nine successful proofs, nor continuous pixel-level
+  visibility certification. Ground sampling was public for 33,802 frames and
+  guarded current-source texels for two.
+* **Motion/appearance:** Rider is unmistakably forward rather than helicopter
+  framing; the near route line and approaching bends can be followed, with
+  hills/valley orientation especially clear on upper Grappa. Satellite pixels
+  stretch into coarse sloping surfaces; the road is an overlay, not a reconstructed
+  road cut or Street View. Asolo shows the next bend but not road-surface detail.
+  At 1× the observed regional maximum yaw rates were about **23–58°/s**; at 16×
+  some turns reached **1,440°/s**. Accelerated tight turns are emphatically **not
+  a calm normal-speed ride**. Playback is persistently labelled beside Play,
+  and native 1× selection is reachable at both widths without opening Setup.
+  Normal rate is the useful choice for inspecting a bend; 16× remains a fast
+  preview. Independent amateur judgement of usability/information/fun remains
+  mandatory, not inferred from these numbers.
+* **Continuous integrated aerial journey:** 30-second Grappa observations gave
+  1,801/1,800 changing poses (desktop/phone); median **16.7 ms**, p95 **18.6/18.3 ms**,
+  max **23.5/20.0 ms**. Zero ≥200 ms holds, hidden frames, model-distance
+  mismatches or status churn. Asolo native pan produced verified manual terrain;
+  Return restored current Follow proof at unchanged distance while paused.
+* **Climb and immediate controls:** at the test climb, paused Hard changed
+  165→198 W and 6.4→7.7 km/h; Easier changed 50→57 rpm at the same speed.
+  Coast immediately showed 0 W/0 rpm and genuine uphill stall. Elapsed,
+  distance and work stayed fixed until Play. The 96 px profile stayed above,
+  not over, the cockpit; closed-profile phone road space was 408.8/812 px.
+  Native 200% text journeys scrolled to Back/Play/Close without horizontal
+  overflow; this is not a promise that all controls fit simultaneously.
+* **Privacy/data:** all seven approved variants retain exact identities;
+  Brentha Standard's unsupported physics remains explicitly unavailable, not
+  normalized into fabricated estimates. First-party 2D and installed offline
+  paths remain usable; cold offline/denied storage remain honest. Relive fixtures
+  are explicitly synthetic recordings, not a person's ride or measured field
+  study. Integrated private import had zero private provider inputs/requests;
+  the dedicated transition test separately observed twelve queued **old public**
+  viewport tiles after disposal, checked against those bounds. Storage withdrawal,
+  Forget, stale grants, private deeplinks and provider-failure paths remain tested.
+
+### Reproduction and correction history
+
+Run from the physical project root. Build to a **new absent** external directory
+for reproduction; do not overwrite the retained review artifact.
+
+```sh
+node tools/build-release.mjs /tmp/kotr27-svk4-release-r3
+KOTR_INTEGRATION_BUILD=/tmp/kotr27-svk4-release-r3 \
+RIDE_EXPLORER_EVIDENCE_DIR=/tmp/kotr27-svk4-r3-evidence \
+node --test --test-name-pattern='built forward rider|built Asolo Rider DEM handoff|built moving camera|built compact cockpit' tests/rider-home.mjs
+
+node --test tests/route-flyover.mjs
+node --test --test-name-pattern='final public artifact' tests/final-qualification.mjs
+node --check js/route-terrain-view.mjs
+node --check tests/explore-integration.mjs
+node --check tests/rider-home.mjs
+node --check tests/route-flyover.mjs
+```
+
+Final results: **8/8 browser cases**, **25/25 camera/DEM/model cases**,
+**1/1 deterministic artifact audit**, syntax checks passed.
+Before the camera-only correction, the broad model/release command from §8
+(ascent/time/pace/clock/simulation/flyover/playback/analysis/insights/comparison/
+recorded/local/controls/release/pack files) passed **195/195**. No physics or
+route-data implementation changed; this is baseline evidence, not a claim
+that those 195 cases were all rerun after the camera fix.
+
+Final stable-source integrated/legacy command:
+
+```sh
+KOTR_INTEGRATION_BUILD=/tmp/kotr27-svk4-release-r3 \
+RIDE_EXPLORER_EVIDENCE_DIR=/tmp/kotr27-svk4-r3-legacy-evidence \
+RIDE_RELIVE_EVIDENCE_DIR=/tmp/kotr27-svk4-r3-legacy-evidence \
+node --test --test-concurrency=1 \
+  --test-name-pattern='terrain readiness|integrated packaged|packaged|built baseline|built sections|built 375px|built cockpit|built root|built Relive|built public terrain|built denied|native |manifest binds|opt-in|atomic update|worker termination|delete fences|network withdrawal|homepage withdrawal|first-ever|worker-disabled|preferences fixture|held planner' \
+  tests/explore-integration.mjs tests/rider-home.mjs tests/ride-relive-browser.mjs \
+  tests/offline-packs.mjs tests/release-lifecycle.mjs tests/local-routes-browser.mjs \
+  tests/route-flyover-browser.mjs tests/trip-planner-browser.mjs \
+  tests/route-briefing-browser.mjs tests/route-pace-browser.mjs \
+  tests/route-comparison-browser.mjs tests/event-guide-browser.mjs \
+  tests/preferences-browser.mjs
+```
+
+Result: **116 passed, zero failed, one explicitly deferred fullscreen case**
+(117 including nested cases). This is a complete green **selected invocation**,
+not every test in the repository. The name filter excludes the separately run
+sustained Rider/resource diagnostics. Home/integration consumed the retained
+artifact; companion fixtures independently built the same stable source.
+Real-provider cold WebGL, legacy Grappa/Asolo manual controls, road/depth
+negative controls, denied SDK, imagery/DEM HTTP failure and context-loss
+fallback completed in this invocation. That establishes availability during
+these observations, not a provider uptime guarantee or an explanation for
+earlier uninstrumented connection failures.
+
+Failures are retained, not relabelled:
+
+1. Initial integration: **1 pass, 2 fail**, both hit-testing hidden main-climb
+   controls. Opening Details and asserting the seek's already-active Follow
+   state fixed the obsolete test journey; unchanged native Asolo pan/Return
+   remained mandatory. Corrected integration passed **3/3**.
+2. Initial sustained camera selection: **6 pass, 1 fail**. At Asolo 14.609–14.651 km,
+   26 phone render frames held the camera while model distance advanced; the
+   heading equality assertion caught it. This was **not attributed to provider
+   connection timeout**. Public-only geometry can return no pose at a DEM
+   handoff although guarded current-source texels remain usable. The new
+   deterministic unit case demonstrates that null-pose mechanism and preserves
+   wrong-source/stale/LOD/upload/expiry fail-closed checks for geometry too.
+   The new 35-second Asolo diagnostic crosses the affected region and records
+   actual lookup misses/fallbacks without altering returned provider values.
+3. An overly broad first correction also admitted cached terrain on distant
+   paused seeks. Its focused run passed the Asolo case but failed the existing
+   Grappa 80% seek proof (requested and actual cameras differed). Restricting
+   fallback to established **continuous playback** preserved relocation. The
+   final complete eight-case run passed, including both distant seeks. A new
+   synthetic unit fixture initially lacked supported-analysis metadata; that
+   fixture was completed, not its assertions relaxed.
+4. One broad diagnostic invocation was stopped when its negative name filter
+   unexpectedly admitted expensive already-qualified cases; it has **no whole-run
+   PASS**. A subsequent explicitly selected run passed **113**, with **one
+   operator-deferred fullscreen case**. Earlier inherited legacy invocations
+   that each had failures remain failed invocations; passing cases spread across
+   them never became a green whole run.
+
+Evidence retained outside the release:
+`/tmp/kotr27-svk4-r3-evidence/` contains regional `rider-{1,16}x-{1440,375}-*.json`,
+native-control/seek records, current-camera/DEM/depth/road proof and
+`*-approach.png`, `*-moving.png`, `*-native-return.png` images.
+`asolo-dem-handoff.json` contains the separate actual handoff observation
+(2,107 render frames, six public-query misses with guarded fallback available).
+`/tmp/kotr27-svk4-r3-legacy-evidence/` contains the integrated/Relive images.
+Original failure evidence remains under `/tmp/kotr27-svk4-evidence/` and
+`/tmp/kotr27-svk4-r2-evidence/`, not overwritten with successful results.
+
+Environment: Apple M4 Max, macOS, installed isolated headless Chrome
+158.0.8127.88, DPR 1. No human study, physical phone, Safari, fullscreen or Pages
+publication claimed. Parent owns fresh independent review, scoped commit and
+actual public desktop/phone verification after publication.
+
+Final preservation check matched all 298 baseline fingerprints except the five
+owned runtime/test/doc paths; the 47 unrelated instruction edits' binary diff,
+empty index, HEAD and branch were unchanged. The retained artifact matched an
+independent final-source build byte-for-byte (76 files). Scoped `git diff
+--check` passed. Own test browsers/servers exited; parent preview 4177 was left
+running. No Beads writes, discovered adjacent tasks, commits, merge or push.
+
+### Independent review FAIL: Asolo entry investigation
+
+The subsequent independent review **did not PASS**. Its 16× desktop case failed
+entering Rider at Asolo **12,074.07 m** after the Grappa regions: `loading-rider`,
+pitch 0°, missing ground/clearance and false proofs ended in the existing bounded
+2D fallback. The other seven camera cases, 25 unit cases, artifact audit and
+complete selected legacy invocation (116 pass, zero fail, one fullscreen
+deferral) passed. This does **not** make the root release qualified. Original
+failure evidence is preserved at
+`/tmp/kotr27-svk4-review-independent-camera/rider-16x-1440-failure.json` and
+`rider-16x-1440-asolo-failed.png`. That run did not capture request/source events,
+so a provider failure is **not established** retrospectively.
+
+Correction work first adds bounded, public-only diagnostics to the existing
+browser tests: query-free snapshots of source load/active DEM/tiles/upload state,
+actual camera and ownership events; original geometry/orbit query results and
+their viewport coordinates; sanitized request start/response/finish/failure
+timings/status. URL query strings are discarded. No SDK result, height, proof,
+clock, rate, deadline or source cache is changed. Extra diagnostic elevation
+queries were removed after inspecting the pinned SDK's memoized lookup behavior;
+the passive trace observes calls the app already makes, rather than priming it.
+
+The proposed **entry-frustum deadlock is not supported at this exact point**.
+In `/tmp/kotr27-svk4-entry-passive/entry-16x-1440-asolo.json`, all 22 missing
+geometry-query observations were at the rider center or its forward aim, both
+inside the initial viewport and the same z14 tile **8730/5842**. The center is
+at least about 340 m from that tile's edges, beyond the 10 m aim and bounded
+128 m orbit search. The actual DEM request returned HTTP 200 in **55.7 ms**;
+geometry became available after its arrival, and all 20 recorded orbit queries
+were finite. No wider framing, stale-height fallback or longer timer was added
+on the strength of the unconfirmed hypothesis. This successful trace does not
+explain why the reviewer's tile/ground remained unavailable.
+
+The focused ordering matrix uses actual provider response bodies, with selected
+metadata, DEM tile or satellite tile arrivals held by 600 ms, plus uncached and
+preceding-Grappa-scene controls. Every delayed case asserts that its intended
+real response was actually held and still requires unchanged current
+location/elevation/road/imagery proof. An early broad Fetch interceptor captured
+an obsolete old-Grappa request and produced `Invalid InterceptionId`; that
+diagnostic invocation failed (seven pass, two fail including the parent case).
+The interceptor now exists only for a delayed case and its explicitly selected
+entry resource, not disposed-map traffic; the protocol-error assertion remains.
+
+```sh
+KOTR_INTEGRATION_BUILD=/tmp/kotr27-svk4-release-r3 \
+RIDE_EXPLORER_EVIDENCE_DIR=/tmp/kotr27-svk4-entry-passive \
+node --test --test-name-pattern='built forward rider 16x 1440|built Rider entry ordering' tests/rider-home.mjs
+```
+
+Result: **10 passed, zero failed** (eight ordering/history subcases, their parent,
+and the full desktop 16× journey). Earlier progressively instrumented desktop
+diagnostics also completed, under `/tmp/kotr27-svk4-entry-diagnostic/` and
+`/tmp/kotr27-svk4-entry-query-diagnostic/`; these are successful observations,
+**not a correction or a retrospective explanation of the independent failure**.
+Public runtime bytes still match release
+`39b767274f50dfc62e14a55882f1413e11feb81c80e0427fa91616c9e89e826a`.
+
+The full review-order selection was then run with passive diagnostics to test
+cross-case request pressure, rather than only isolated desktop entry:
+
+```sh
+KOTR_INTEGRATION_BUILD=/tmp/kotr27-svk4-release-r3 \
+RIDE_EXPLORER_EVIDENCE_DIR=/tmp/kotr27-svk4-entry-review-order \
+node --test --test-name-pattern='built forward rider|built Asolo Rider DEM handoff|built moving camera|built compact cockpit' tests/rider-home.mjs
+node --check tests/rider-home.mjs
+git --no-pager diff --check -- tests/rider-home.mjs docs/explore-ride-design.md
+node tools/build-release.mjs /tmp/kotr27-svk4-entry-observation
+```
+
+Result: **8/8 passed**, syntax/diff checks passed. The new observation artifact
+matched all **76 r3 files byte-for-byte**, with the same release ID; it is **not
+a product correction**. The correction-baseline's 298 fingerprints changed only
+for `tests/rider-home.mjs` and this document; runtime, unrelated work, index,
+HEAD and branch were preserved.
+
+**State after those diagnostic-only passes:** why the independent failed entry never acquired
+its current DEM is still unknown. Neither an application cause nor an external
+request failure has been established for that invocation. Do not waive it based
+on these green diagnostic runs or call it provider flakiness. The missing
+evidence is a failed entry's correlated request completion/failure, active-source
+tile/upload state and original query results; the updated test now retains
+those under `entry-16x-1440-failure.json` if the refusal recurs. No speculative
+runtime change or altered acceptance is justified by the observed healthy
+cases. Further disposition/reproduction must retain this blocker and original
+failure evidence. Own helpers exited; parent previews 4177/4189 were not changed.
+
+### Controlled scene-acquisition deadline correction
+
+A different, falsifiable policy hypothesis **did reproduce an application
+defect**. After aerial proof clears the initial 12-second timer, the old adapter
+gave a newly selected Rider source only the **2.5-second established-coverage
+budget**. Holding its actual successful DEM metadata response for 3.5 seconds
+reproduced `loading-rider`, pitch 0°, missing ground and terminal 2D fallback.
+This is not evidence that the historical independent failure had that precise
+network timing; that invocation's external cause remains unknown.
+
+Negative control, unchanged retained r3:
+
+```sh
+KOTR_INTEGRATION_BUILD=/tmp/kotr27-svk4-release-r3 \
+RIDER_ENTRY_CASE=metadata:3500 \
+RIDE_EXPLORER_EVIDENCE_DIR=/tmp/kotr27-svk4-entry-deadline-before \
+node --test --test-name-pattern='built Rider entry ordering' tests/rider-home.mjs
+```
+
+Result: **zero pass, two fail** including the parent case, as expected for this
+negative control. The trace records initial load timers cleared by aerial proof,
+then a 2,500 ms timer starting at browser time **2,824.1 ms** and firing at
+**5,325.0 ms**. The intercepted real HTTP 200 response was held **3,501 ms**.
+The map was removed before it could acquire that healthy response. No request
+failure or invented DEM was needed to reproduce the defect.
+
+The adapter now starts one **existing `loadMs=12000` acquisition deadline** for
+explicit Rider entry or a new forced destination after prior proof. It stays
+honestly 2D until first current proof. Render/source/damping retries and repeated
+resets at the same destination cannot renew it. Success clears it; mode exit,
+replacement and disposal cancel it, and obsolete callbacks are inert. Initial
+SDK setup/mode flips before any proof retain the original mount deadline rather
+than extending it. Established coverage still gets exactly **`coverageMs=2500`**;
+continuous playback does not enter the relocation/hiding path. Geometry,
+current-source/upload/expiry checks, rendered road/depth/imagery proof, camera
+motion, rate and the single model clock are unchanged.
+
+The final retained artifact is `/tmp/kotr27-svk4-release-r5`, release
+`9d39629ec23741cfac34907ac1c121b4e5dbefe7bdf4172f6589cb3c2bebc2c9`
+(**76 files, 4,201,762 bytes**). A separate final-source build at
+`/tmp/kotr27-svk4-release-r5-verify` matches every byte. Original r3 and all
+historical failure evidence remain intact. No tests/docs/evidence/private
+fixtures enter the explicit public graph; all seven route revisions remain
+identical.
+
+Actual final-artifact delayed-source observations in
+`/tmp/kotr27-svk4-r5-evidence/entry-order-{metadata-3500,tile-3500,metadata-13000}.json`:
+
+* Metadata held 3.5 s: one 12 s timer, cleared after **3,730.8 ms**, actual
+  current Rider location/elevation/road/imagery proof passed.
+* DEM tile held 3.5 s: one 12 s timer, cleared after **3,595.4 ms**, the same
+  strict rendered proof passed.
+* Metadata held 13 s: the one timer fired after **12,001.0 ms**; zero online
+  presentation observations, explicit terminal 2D status, and late HTTP 200
+  arrival did not resurrect the map. All three had zero interception errors.
+
+These are real provider bodies held at the response boundary, not substituted
+terrain. Reproduce an individual case with `RIDER_ENTRY_CASE=metadata:3500`,
+`tile:3500` or `metadata:13000`, the r5 build path and the ordering-test command
+above. Bounded test-only timer observations retain actual start/clear/fire
+events without changing deadlines or SDK query results.
+
+```sh
+node --test tests/route-flyover.mjs
+node --test --test-name-pattern='release/offline graph' tests/release.mjs
+node --test --test-name-pattern='final public artifact' tests/final-qualification.mjs
+node tools/build-release.mjs /tmp/kotr27-svk4-release-r5-verify
+```
+
+Results: **28/28** camera/lifecycle unit cases; **1/1** release graph test;
+**1/1** independent public-artifact audit. New deterministic real-adapter tests
+cover missing DEM to the exact deadline, source/frame nonrenewal, initial SDK
+delay, mode flips, explicit seek, stale callbacks and disposal. Existing
+continuous-coverage/visibility tests remain green. Those lifecycle fixtures
+deliberately have no Rider geometry; they are timer evidence, not claims about
+WebGL. The browser cases above supply actual rendered proof.
+
+Final built-candidate browser commands:
+
+```sh
+KOTR_INTEGRATION_BUILD=/tmp/kotr27-svk4-release-r5 \
+RIDE_EXPLORER_EVIDENCE_DIR=/tmp/kotr27-svk4-r5-evidence \
+node --test --test-name-pattern='built Rider entry ordering|built forward rider|built Asolo Rider DEM handoff|built moving camera|built compact cockpit' tests/rider-home.mjs
+
+KOTR_INTEGRATION_BUILD=/tmp/kotr27-svk4-release-r5 \
+RIDE_EXPLORER_EVIDENCE_DIR=/tmp/kotr27-svk4-r5-focused-evidence \
+RIDE_RELIVE_EVIDENCE_DIR=/tmp/kotr27-svk4-r5-focused-evidence \
+node --test --test-concurrency=1 \
+  --test-name-pattern='built Rider entry ordering|terrain readiness|integrated packaged|built public terrain' \
+  tests/rider-home.mjs tests/explore-integration.mjs tests/ride-relive-browser.mjs
+```
+
+The first invocation had **18 pass, two fail** including the ordering parent:
+all **eight sustained/native camera/cockpit cases passed**, but a new diagnostic
+assertion incorrectly required entry to wait for one specific satellite
+refinement. Actual current imagery already passed strict proof after 207.7 ms,
+before that 600 ms refinement arrived. Existing rendered-pixel proof permits
+real bound parent imagery; waiting for that particular high-resolution tile was
+never an acceptance requirement. The timing assertion now applies to the
+necessary held DEM, not optional satellite refinement. All location, DEM,
+depth, road, imagery, actual-held-response and protocol-error assertions remain.
+The failed invocation/evidence are retained, **not called a whole-run PASS**.
+One early new unit fixture also requested two proofs at the same fake instant
+(three pass, one fail); advancing by the existing 200 ms proof cadence fixed the
+fixture, not the proof rules.
+
+The second, corrected invocation passed **16/16, zero failures**: all eleven
+entry scenarios plus their parent, readiness observer, desktop/375 integrated
+journeys and public→private→public disposal. No runtime change or repeated
+long-camera run was needed for that test-only correction.
+
+The eight successful camera cases on the unchanged r5 runtime include the
+previously failing **16× desktop Asolo entry after Grappa**, both remote seeks,
+native zoom/pinch/keyboard/buttons and aerial return. All twelve regional
+observations total **33,764 actual render frames**, **zero hidden or
+unknown-ground frames**, zero actual-heading mismatches and **2.524–7.404 m**
+clearance. Of **2,705** current proof samples, **2,699** passed: six isolated
+road-ink rejections, one also imagery, remained honestly rejected and recovered
+within the unchanged coverage budget without hiding terrain. Separate Asolo
+handoff evidence has **2,108 frames**, six public-query misses and six guarded
+current-texel fallbacks.
+
+Integrated native journeys each observed 1,800 poses, median 16.7 ms spacing,
+p95 18.7/18.1 ms, no >200 ms holds, hidden frames, mismatches or status chatter.
+Asolo native pan/Return and paused native Playback 1× remained usable; camera
+operations did not change rate. Private input/request counts were zero. The
+separate disposal case identified twelve queued **old public** viewport requests,
+not private geometry leakage. The earlier complete legacy116/model195 results
+remain baseline evidence; those whole selections were not rerun after this
+timer-only correction.
+
+Visual checks still show forward route ink/turns, visible camera and effort/
+climb controls, but coarse/stretched imagery and DEM slopes that do not model
+road cuts. Normal 1× regional yaw peaks remain approximately 23–58°/s; default
+16× accelerated turns can reach 1,440°/s. No Street View, human study, physical
+phone, Safari, fullscreen or Pages publication claim is added.
+
+**Handoff:** the demonstrated premature-entry policy defect is corrected and
+the candidate is ready for **fresh independent review**, not declared root PASS.
+The precise historical review request timing remains unknown. Review the
+retained r5 artifact, not parent server 4189's old r3. Parent owns independent
+acceptance, commit and public verification. No adjacent task was discovered;
+no Beads writes, commits or publication were performed.
+
+Final syntax/scoped diff checks passed. All 298 recorded file fingerprints
+matched except the four correction-owned paths (adapter, its unit/browser tests
+and this document); HEAD, branch and empty index were unchanged. Own isolated
+browsers/servers exited; only the two parent previews remained running, with
+4177 and old-r3 4189 still listening. Retained artifacts/evidence remain available.

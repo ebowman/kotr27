@@ -13,7 +13,8 @@ import { build } from '../tools/build-release.mjs';
 import { browser, until } from './browser.mjs';
 
 async function fixture(t,{cameraBaseline}={}) {
-  const tmp=await mkdtemp(join(tmpdir(),'kotr-home-')),out=join(tmp,'public'),cleanup=[];
+  const tmp=await mkdtemp(join(tmpdir(),'kotr-home-'));
+  const out=process.env.KOTR_INTEGRATION_BUILD||join(tmp,'public'),cleanup=[];
   let server;
   t.after(async()=>{
     for (const close of cleanup.reverse()) await close();
@@ -21,7 +22,7 @@ async function fixture(t,{cameraBaseline}={}) {
     if (server) await new Promise(resolve=>server.close(resolve));
     await rm(tmp,{recursive:true,force:true});
   });
-  await build('.',out);
+  if(!process.env.KOTR_INTEGRATION_BUILD)await build('.',out);
   const names=(await readdir(out,{recursive:true})).filter(p=>extname(p));
   const files=new Map(await Promise.all(names.map(async p=>[p,await readFile(join(out,p))])));
   if(cameraBaseline) {
@@ -88,6 +89,107 @@ async function currentTerrain(b) {
     timer=setTimeout(()=>done('No current rendered terrain proof'),14000);check();
   })`});
   assert.ok(!r.exceptionDetails,JSON.stringify(r.exceptionDetails));return r.result.value;
+}
+
+// Public-map-only, bounded diagnostics. Never record credentials/query strings,
+// private geometry, or rewrite an SDK result. Keep the final pre-disposal state.
+function observeTerrainDeadlines() {
+  const start=window.setTimeout,clear=window.clearTimeout,pending=new Map();
+  window.terrainDeadlines=[];
+  const record=event=>{terrainDeadlines.push({at:performance.now(),...event});
+    if(terrainDeadlines.length>128)terrainDeadlines.shift();};
+  window.setTimeout=function(fn,ms,...args) {
+    if(typeof fn!=='function'||![2500,12000].includes(ms)||
+      !new Error().stack.includes('route-terrain-view'))return start.call(this,fn,ms,...args);
+    const id=start.call(this,function(...a){pending.delete(id);record({type:'fire',id,ms});return fn.apply(this,a);},ms,...args);
+    pending.set(id,ms);record({type:'start',id,ms});return id;
+  };
+  window.clearTimeout=function(id){
+    if(pending.has(id)){record({type:'clear',id,ms:pending.get(id)});pending.delete(id);}
+    return clear.call(this,id);
+  };
+}
+
+function observeTerrainEntry(m,version) {
+  window.terrainEntries??=[];
+  const record={created:performance.now(),events:[],states:[],queries:[]};
+  terrainEntries.push(record);
+  const push=(list,value,limit)=>{list.push(value);if(list.length>limit)list.shift();};
+  const event=(type,detail={})=>push(record.events,{at:performance.now(),type,...detail},512);
+  const snapshot=reason=>{
+    try {
+      const el=document.getElementById('terrain'),p=m.getFreeCameraOptions().position,ll=p.toLngLat();
+      const sources=['dem','rider-dem','rider-satellite'].map(id=>{
+        const c=m.style?._otherSourceCaches?.[id],source=m.getSource(id);
+        const tiles=Object.values(c?._tiles??{}).map(t=>({
+          id:t.tileID.canonical,state:t.state,uses:t.uses,aborted:!!t.aborted,
+          dem:!!t.dem,demUid:t.dem?.uid,uid:t.uid,texture:!!t.demTexture,
+          needsUpload:t.needsDEMTextureUpload,requested:t.timeAdded,
+        }));
+        return {id,exists:!!source,loaded:c?._sourceLoaded,paused:c?._paused,tiles};
+      });
+      push(record.states,{at:performance.now(),reason,
+        center:m.getCenter().toArray(),zoom:m.getZoom(),pitch:m.getPitch(),
+        moving:m.isMoving(),zooming:m.isZooming(),terrain:m.getTerrain(),
+        activeDEM:m.painter?.terrain?.sourceCache?.getSource()?.id,
+        // Do not add a diagnostic elevation query: the SDK memoizes lookups.
+        // Observe the application's returned queries below, without priming it.
+        position:ll,altitude:p.toAltitude(),lastQuery:record.queries.at(-1),
+        camera:JSON.parse(el.dataset.camera||'{}'),pose:JSON.parse(el.dataset.pose||'{}'),
+        proof:JSON.parse(el.dataset.frame||'{}'),sources,
+        status:document.getElementById('terrain-status').textContent},80);
+    } catch {event('snapshot-unavailable',{reason});}
+  };
+  for(const name of ['jumpTo','setTerrain','setMaxZoom']) {
+    const fn=m[name];
+    m[name]=function(...args) {
+      event(name,{argument:args[0]});
+      return fn.apply(this,args);
+    };
+  }
+  const query=m.queryTerrainElevation;
+  m.queryTerrainElevation=function(point,...args) {
+    const height=query.call(this,point,...args);
+    if(!window.entryQueryTrace)return height;
+    const stack=new Error().stack;
+    const stage=stack.includes('riderGeometry')?'geometry':stack.includes('riderOrbit')?'orbit':null;
+    if(stage) {
+      const xy=m.project(point);
+      push(record.queries,{at:performance.now(),stage,point,height,pixel:xy,
+        viewport:{width:m.getCanvas().clientWidth,height:m.getCanvas().clientHeight},
+        activeDEM:m.painter?.terrain?.sourceCache?.getSource()?.id},256);
+    }
+    return height;
+  };
+  for(const name of ['sourcedataloading','sourcedata','idle','error'])m.on(name,e=>{
+    event(name,{sourceId:e.sourceId,dataType:e.sourceDataType,loaded:e.isSourceLoaded,
+      tile:e.coord?.canonical,error:e.error?{name:e.error.name,status:e.error.status}:undefined});
+    if(name==='error'||e.sourceId==='rider-dem')snapshot(name);
+  });
+  let last=-Infinity;
+  m.on('render',()=>{
+    if(performance.now()-last<200)return;
+    last=performance.now();snapshot('render');
+  });
+  const remove=m.remove;
+  m.remove=function(...args){snapshot('before-remove');event('remove');return remove.apply(this,args);};
+}
+
+function publicNetworkTrace() {
+  const requests=new Map();
+  return {requests,onEvent(e) {
+    const p=e.params;
+    if(e.method==='Network.requestWillBeSent' && /^https?:/.test(p.request.url)) {
+      const u=new URL(p.request.url);
+      requests.set(p.requestId,{path:u.origin+u.pathname,start:p.timestamp,wall:p.wallTime,type:p.type});
+      if(requests.size>8000)requests.delete(requests.keys().next().value);
+    }
+    const r=requests.get(p?.requestId);if(!r)return;
+    if(e.method==='Network.responseReceived')Object.assign(r,{response:p.timestamp,status:p.response.status,
+      cached:p.response.fromDiskCache||p.response.fromServiceWorker});
+    if(e.method==='Network.loadingFinished')Object.assign(r,{finished:p.timestamp,bytes:p.encodedDataLength});
+    if(e.method==='Network.loadingFailed')Object.assign(r,{failed:p.timestamp,error:p.errorText,canceled:p.canceled});
+  }};
 }
 
 async function installRiderSampler(b,f) {
@@ -208,19 +310,216 @@ test('pinned DEM boundary lifecycle diagnostic',async t=>{
   }
 });
 
+test('built Rider entry ordering: actual Asolo DEM metadata and tile arrivals retain strict proof',async t=>{
+  for(const [kind,delay,cold] of [['metadata',0],['metadata',600],['tile',600],['satellite',600],
+    ['metadata',0,true],['tile',600,true],['history',0],['history',0,true],
+    ['metadata',3500],['tile',3500],['metadata',13000]].filter(([kind,delay])=>
+      !process.env.RIDER_ENTRY_CASE||process.env.RIDER_ENTRY_CASE===`${kind}:${delay}`)) {
+    await t.test(`${kind} +${delay}ms${cold?' uncached':''}`,async t=>{
+      const f=await fixture(t);
+      let entering=false,outcome,failure;
+      const trace=publicNetworkTrace(),holds=[],jobs=new Set(),protocolErrors=[];
+      const b=await f.chrome((e,cmd)=>{
+        trace.onEvent(e);
+        if(e.method!=='Fetch.requestPaused')return;
+        const p=e.params,u=new URL(p.request.url),path=u.origin+u.pathname;
+        const selected=entering && (kind==='metadata'?/terrain-dem-v1\.json$/.test(path):
+          kind==='tile'?/terrain-dem-v1\/14\//.test(path):/mapbox\.satellite/.test(path));
+        const row={path,at:Date.now(),status:p.responseStatusCode,delay:selected?delay:0};
+        holds.push(row);
+        const job=(async()=>{
+          if(selected)await sleep(delay);
+          await cmd('Fetch.continueRequest',{requestId:p.requestId});
+          row.released=Date.now();
+        })().catch(e=>protocolErrors.push(e.message)).finally(()=>jobs.delete(job));
+        jobs.add(job);
+      });
+      await b.cmd('Page.enable');
+      await b.cmd('Network.enable');
+      if(cold)await b.cmd('Network.setCacheDisabled',{cacheDisabled:true});
+      await b.cmd('Emulation.setDeviceMetricsOverride',{width:1440,height:900,deviceScaleFactor:1,mobile:false});
+      await b.cmd('Page.addScriptToEvaluateOnNewDocument',{source:`
+        (${observeTerrainDeadlines.toString()})();
+        window.observeTerrainEntry=${observeTerrainEntry.toString()};
+        Object.defineProperty(window,'mapboxgl',{configurable:true,set(gl){
+          Object.defineProperty(window,'mapboxgl',{value:gl,configurable:true});
+          gl.Map=new Proxy(gl.Map,{construct(T,args){
+            const m=window.observedTerrain=new T(...args);observeTerrainEntry(m,gl.version);return m;
+          }});
+        }});`});
+      try {
+        await b.cmd('Page.navigate',{url:f.base});await ready(b);
+        await click(b,'fly');await currentTerrain(b);
+        if(kind==='history') {
+          await seek(b,190);await currentTerrain(b);
+          await click(b,'view-rider');await currentTerrain(b);
+          for(const target of [222,800,190,310,350]) {
+            await seek(b,target);await currentTerrain(b);
+          }
+          await click(b,'view-aerial');await currentTerrain(b);
+        }
+        await select(b,'player-route','rwgps-57873112');await ready(b);await currentTerrain(b);
+        await seek(b,210);await currentTerrain(b);
+        // Intercept only the explicit entry's selected real resources, never
+        // disposed-map requests during the preceding Grappa scene history.
+        if(delay)await b.cmd('Fetch.enable',{patterns:[{urlPattern:kind==='metadata'?
+          '*mapbox.mapbox-terrain-dem-v1.json*':kind==='tile'?
+          '*mapbox.mapbox-terrain-dem-v1/14/8730/5842.*':'*mapbox.satellite/18/139691/93475.*',
+          requestStage:'Response'}]});
+        const deadlineStart=await b.js('terrainDeadlines.length');
+        entering=true;await b.js(`entryQueryTrace=true;
+          window.entryPresentation=[];
+          window.entryPresentationObserver=new MutationObserver(()=>{
+            const el=document.getElementById('terrain'),p=JSON.parse(el.dataset.frame||'{}');
+            entryPresentation.push({at:performance.now(),
+              online:document.getElementById('player').classList.contains('online'),
+              visibility:getComputedStyle(el).visibility,ok:p.ok,current:p.current});
+            if(entryPresentation.length>256)entryPresentation.shift();
+          });
+          entryPresentationObserver.observe(document.getElementById('player'),
+            {attributes:true,attributeFilter:['class']});
+          entryPresentationObserver.observe(document.getElementById('terrain'),
+            {attributes:true,attributeFilter:['style','data-frame']});`);
+        await click(b,'view-rider');
+        if(delay>12000) {
+          const r=await b.cmd('Runtime.evaluate',{awaitPromise:true,returnByValue:true,expression:`
+            new Promise((resolve,reject)=>{
+              const el=document.getElementById('terrain-status');
+              const observer=new MutationObserver(check);
+              const timeout=setTimeout(()=>{observer.disconnect();reject(Error('Entry exceeded its finite deadline'));},14000);
+              function check(){
+                if(!el.textContent.includes('unavailable'))return;
+                observer.disconnect();clearTimeout(timeout);
+                resolve({at:performance.now(),status:el.textContent,
+                  online:document.getElementById('player').classList.contains('online'),
+                  visibility:getComputedStyle(document.getElementById('terrain')).visibility});
+              }
+              observer.observe(el,{childList:true,subtree:true,characterData:true});check();
+            })`});
+          assert.ok(!r.exceptionDetails,JSON.stringify(r.exceptionDetails));
+          outcome=r.result.value;
+          assert.match(outcome.status,/Selected Rider terrain.*12 seconds/);
+          assert.equal(outcome.online,false);assert.equal(outcome.visibility,'hidden');
+          await Promise.all([...jobs]);await sleep(300);
+          assert.equal(await b.js(`document.getElementById('player').classList.contains('online')`),false,
+            'Late actual provider arrival cannot resurrect terminal entry');
+        } else {
+          const proof=await currentTerrain(b);
+          outcome=proof;
+          assert.equal(proof.mode,'rider');assert.equal(proof.located,true);
+          assert.ok(proof.elevation&&proof.road&&proof.imagery);
+        }
+        await b.js('entryPresentationObserver.disconnect()');
+        const presentation=await b.js('entryPresentation');
+        assert.ok(presentation.some(p=>!p.online&&p.visibility==='hidden'),'New entry is honestly 2D before proof');
+        assert.ok(presentation.every(p=>!p.online || p.ok),'Never publish an unproved entry');
+        const deadlines=(await b.js('terrainDeadlines')).slice(deadlineStart);
+        const start=deadlines.find(p=>p.type==='start');
+        assert.ok(start);assert.equal(start.ms,12000);
+        const end=deadlines.find(p=>p.id===start.id&&p.type===(delay>12000?'fire':'clear'));
+        assert.ok(end);
+        assert.equal(deadlines.filter(p=>p.type==='start'&&p.at<=end.at).length,1,
+          'One acquisition, never renewed by frame/tile traffic');
+        if(delay>12000)assert.ok(end.at-start.at>=11999&&end.at-start.at<13500);
+        // The selected DEM gates entry geometry. One high-resolution imagery
+        // refinement does not: already-bound real parent imagery can satisfy
+        // the unchanged rendered-pixel proof before that refinement arrives.
+        else if(delay && kind!=='satellite')assert.ok(end.at-start.at>=delay);
+        if(delay)assert.ok(holds.some(r=>r.delay===delay),'The intended real response was actually held');
+        assert.deepEqual(b.exceptions,[]);
+      } catch(error) {
+        failure=error.message;throw error;
+      } finally {
+        await Promise.all([...jobs]);
+        const dir=process.env.RIDE_EXPLORER_EVIDENCE_DIR;
+        if(dir) {
+          await mkdir(dir,{recursive:true});
+          await writeFile(join(dir,`entry-order-${kind}-${delay}${cold?'-uncached':''}.json`),JSON.stringify({
+            network:[...trace.requests.values()],holds,outcome,failure,protocolErrors,
+            deadlines:await b.js('terrainDeadlines'),
+            presentation:await b.js('window.entryPresentation'),
+            entries:await b.js('terrainEntries'),timeOrigin:await b.js('performance.timeOrigin')},null,2));
+        }
+        if(!failure)assert.deepEqual(protocolErrors,[]);
+      }
+    });
+  }
+});
+
+test('built Asolo Rider DEM handoff: current sampled geometry never freezes behind the moving rider',async t=>{
+  const f=await fixture(t),b=await f.chrome();
+  await b.cmd('Page.enable');
+  await b.cmd('Emulation.setDeviceMetricsOverride',{width:375,height:812,deviceScaleFactor:1,mobile:false});
+  await b.cmd('Page.addScriptToEvaluateOnNewDocument',{source:`
+    window.demMisses=[];window.cameraFrames=[];
+    Object.defineProperty(window,'mapboxgl',{configurable:true,set(gl){
+      Object.defineProperty(window,'mapboxgl',{value:gl,configurable:true});
+      gl.Map=new Proxy(gl.Map,{construct(T,args){
+        const m=window.observedTerrain=new T(...args),query=m.queryTerrainElevation;
+        let probing=false;
+        m.queryTerrainElevation=function(p,...rest){
+          const value=query.call(this,p,...rest);
+          if(value===null && !probing && window.riderSampler && demMisses.length<1000) {
+            probing=true;
+            try {demMisses.push({at:performance.now(),point:p,fallback:riderSampler(m,p,gl.version)});}
+            finally {probing=false;}
+          }
+          return value;
+        };
+        m.on('render',()=>{
+          if(!window.sampling)return;
+          const el=document.getElementById('terrain'),pos=m.getFreeCameraOptions().position;
+          cameraFrames.push({at:performance.now(),bearing:m.getBearing(),
+            position:pos.toLngLat(),camera:JSON.parse(el.dataset.camera||'{}'),
+            distance:Number(document.getElementById('cockpit').dataset.distance),
+            hidden:getComputedStyle(el).visibility!=='visible'});
+        });return m;
+      }});
+    }});`});
+  await b.cmd('Page.navigate',{url:f.base});await ready(b);
+  await installRiderSampler(b,f);
+  await click(b,'fly');await currentTerrain(b);
+  await select(b,'player-route','rwgps-57873112');await ready(b);await currentTerrain(b);
+  assert.equal(await b.js(`document.getElementById('player-route').value`),'rwgps-57873112');
+  // Approach through the preceding DEM tiles: a direct seek past them does
+  // not exercise the active→cached tile handoff observed during playback.
+  await seek(b,210);await currentTerrain(b);
+  await click(b,'view-rider');await currentTerrain(b);
+  await b.js('sampling=true;demMisses=[]');
+  await click(b,'play');await sleep(35000);await currentTerrain(b);
+  await b.js('sampling=false');
+  const evidence=await b.js('({frames:cameraFrames,misses:demMisses})');
+  const dir=process.env.RIDE_EXPLORER_EVIDENCE_DIR;
+  if(dir){await mkdir(dir,{recursive:true});await writeFile(join(dir,'asolo-dem-handoff.json'),JSON.stringify(evidence,null,2));}
+  t.diagnostic(JSON.stringify({frames:evidence.frames.length,misses:evidence.misses.length,
+    fallbacks:evidence.misses.filter(x=>x.fallback).length,distance:evidence.frames.at(-1)?.distance}));
+  assert.ok(evidence.frames.length>200);
+  assert.ok(evidence.frames[0].distance<14600 && evidence.frames.at(-1).distance>14700);
+  for(const frame of evidence.frames) {
+    assert.equal(frame.hidden,false);
+    assert.equal(frame.camera.view,'rider',JSON.stringify(frame));
+    assert.equal(frame.camera.riderDistanceM,frame.distance);
+    assert.ok(Math.abs((frame.camera.bearing-frame.bearing+540)%360-180)<.001,JSON.stringify(frame));
+  }
+  assert.deepEqual(b.exceptions,[]);
+});
+
 for(const playbackRate of [1,16]) for(const [width,height] of [[1440,900],[375,812]])
 test(`built forward rider ${playbackRate}x ${width}: current DEM, actual camera and nearby rendered road on Grappa and Asolo`,async t=>{
   const f=await fixture(t,{cameraBaseline:process.env.RIDE_CAMERA_BASELINE});
   {
-    const b=await f.chrome();
-    await b.cmd('Page.enable');
+    const {requests,onEvent}=publicNetworkTrace(),b=await f.chrome(onEvent);
+    await b.cmd('Page.enable');await b.cmd('Network.enable');
     await b.cmd('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
     if(width===375)await b.cmd('Emulation.setTouchEmulationEnabled',{enabled:true,maxTouchPoints:2});
     await b.cmd('Page.addScriptToEvaluateOnNewDocument',{source:`
+      (${observeTerrainDeadlines.toString()})();
+      window.observeTerrainEntry=${observeTerrainEntry.toString()};
       Object.defineProperty(window,'mapboxgl',{configurable:true,set(gl){
         Object.defineProperty(window,'mapboxgl',{value:gl,configurable:true});
         gl.Map=new Proxy(gl.Map,{construct(T,args){
           const m=window.observedTerrain=new T(...args);
+          observeTerrainEntry(m,gl.version);
           const actual=()=>{
             const p=m.getFreeCameraOptions().position,ll=p.toLngLat(),ground=m.queryTerrainElevation(ll);
             return {scale:m.transform.worldSize,zoom:m.getZoom(),altitude:p.toAltitude(),ground,
@@ -272,10 +571,20 @@ test(`built forward rider ${playbackRate}x ${width}: current DEM, actual camera 
       if(label==='asolo') {await select(b,'player-route',route);await ready(b);await currentTerrain(b);}
       await seek(b,process.env.RIDER_SEEK?Number(process.env.RIDER_SEEK):target);await currentTerrain(b);
       const paused=await state();
+      await b.js('entryQueryTrace=true');
       await pointer('view-rider');
       try {await currentTerrain(b);} catch(e) {
         await screenshot(b,`rider-${playbackRate}x-${width}-${label}-failed`);
         t.diagnostic(JSON.stringify(await state()));throw e;
+      }
+      await b.js('entryQueryTrace=false');
+      if(process.env.RIDE_EXPLORER_EVIDENCE_DIR) {
+        await mkdir(process.env.RIDE_EXPLORER_EVIDENCE_DIR,{recursive:true});
+        await writeFile(join(process.env.RIDE_EXPLORER_EVIDENCE_DIR,
+          `entry-${playbackRate}x-${width}-${label}.json`),JSON.stringify({
+            network:[...requests.values()],entry:await b.js('terrainEntries.at(-1)'),
+            deadlines:await b.js('terrainDeadlines'),
+            timeOrigin:await b.js('performance.timeOrigin')},null,2));
       }
       assert.equal((await state()).distance,paused.distance);
       assert.equal((await state()).playing,false);
@@ -506,6 +815,10 @@ test(`built forward rider ${playbackRate}x ${width}: current DEM, actual camera 
       if(dir)await writeFile(join(dir,`rider-${playbackRate}x-${width}-failure.json`),
         JSON.stringify({state:await state(),recent:await b.js(`window.riderEvidence && ({
           frames:riderEvidence.frames.slice(-200),proofs:riderEvidence.proofs.slice(-20),hidden:riderEvidence.hidden})`)},null,2));
+      if(dir)await writeFile(join(dir,`entry-${playbackRate}x-${width}-failure.json`),
+        JSON.stringify({network:[...requests.values()],entries:await b.js('terrainEntries'),
+          deadlines:await b.js('terrainDeadlines'),
+          timeOrigin:await b.js('performance.timeOrigin')},null,2));
       t.diagnostic(JSON.stringify({failure:await state(),
         status:await b.js(`document.getElementById('terrain-status').textContent`)}));
       throw error;
